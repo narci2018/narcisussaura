@@ -40,14 +40,14 @@ node_modules/
 .pnp.js
 
 # ==========================================
-# 3. 核心二进制可执行文件 (Core Engine Binaries)
+# 3. 核心二进制可执行文件与内置引擎 (Core Engine Binaries)
 # ==========================================
-# 外部内核与驱动（体积庞大，不宜直接提交到 git 仓库）
-src-tauri/binaries/*.exe
-src-tauri/binaries/*.dll
+# 忽略临时或第三方单体可执行文件与外部缓存
 aether_bin/
 
-# 保留规则目录和基础配置文本文件
+# 【必须保留】客户端打包必须内嵌的核心引擎与驱动（缺失会导致打包后无法连接节点）
+!src-tauri/binaries/*.exe
+!src-tauri/binaries/*.dll
 !src-tauri/binaries/rules/
 !src-tauri/binaries/server_entries.txt
 !src-tauri/binaries/aether-masque.toml

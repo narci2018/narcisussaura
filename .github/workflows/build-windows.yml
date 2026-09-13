@@ -108,38 +108,39 @@ jobs:
       - name: Install Frontend Dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Tauri Windows Installer
+      - name: Build Tauri Windows EXE Installer
         shell: pwsh
         run: |
-          pnpm tauri build
+          pnpm tauri build --bundles nsis
 
-      - name: Verify Generated Installer Size
+      - name: Verify Generated EXE Installer Size
         shell: pwsh
         run: |
-          $installers = Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Include *.exe, *.msi
+          $installers = Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe"
+          if ($installers.Count -eq 0) {
+            Write-Error "FATAL: No NSIS exe installer found in src-tauri/target/release/bundle/nsis"
+            exit 1
+          }
           foreach ($inst in $installers) {
             $mb = [math]::Round($inst.Length / 1MB, 2)
             Write-Host "Generated installer: $($inst.FullName) - $mb MB"
             if ($mb -lt 30) {
-              Write-Warning "WARNING: Installer size ($mb MB) is under 30MB, which may indicate missing embedded binaries."
+              Write-Error "ERROR: Installer size ($mb MB) is suspiciously under 30MB! Core binaries may be missing."
+              exit 1
             }
           }
 
       - name: Upload Build Artifacts (Actions Tab)
         uses: actions/upload-artifact@v4
         with:
-          name: NarcissusAura-Windows-Setup
-          path: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
+          name: NarcissusAura-Windows-Setup-EXE
+          path: src-tauri/target/release/bundle/nsis/*.exe
 
       - name: Publish to GitHub Releases
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/msi/*.msi
+          files: src-tauri/target/release/bundle/nsis/*.exe
           draft: false
           prerelease: false
           generate_release_notes: true

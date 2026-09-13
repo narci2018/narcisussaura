@@ -1,0 +1,91 @@
+import React, { useState, useEffect } from 'react';
+import { Minus, Square, Copy, X, Shield } from 'lucide-react';
+import { api } from '../services/api';
+import { useAppStore } from '../stores/appStore';
+
+export const TitleBar: React.FC = () => {
+  const { status, connectedNode } = useAppStore();
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  useEffect(() => {
+    api.isWindowMaximized().then(setIsMaximized).catch(() => {});
+  }, []);
+
+  const handleMinimize = () => {
+    api.minimizeWindow().catch(console.error);
+  };
+
+  const handleToggleMaximize = async () => {
+    try {
+      const max = await api.toggleMaximize();
+      setIsMaximized(max);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleClose = () => {
+    api.closeWindow().catch(console.error);
+  };
+
+  return (
+    <div
+      data-tauri-drag-region
+      onDoubleClick={handleToggleMaximize}
+      className="h-10 bg-[#090a0f] border-b border-[#1c1f2b] flex items-center justify-between px-3 select-none z-50 text-xs font-medium text-gray-400 cursor-default"
+    >
+      {/* Left: Brand & Status pill */}
+      <div className="flex items-center gap-2.5 pointer-events-none" data-tauri-drag-region>
+        <div className="w-5 h-5 rounded-md bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/20">
+          <Shield className="w-3.5 h-3.5" />
+        </div>
+        <span className="font-semibold tracking-wide text-gray-200">Narci'ssus Aura</span>
+        <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">v0.2.0</span>
+
+        <div className="h-3.5 w-px bg-[#262a3b] mx-1" />
+
+        {status === 'connected' ? (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Connected: {connectedNode?.name || 'Proxy Active'}</span>
+          </div>
+        ) : status === 'connecting' ? (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
+            <span>Connecting...</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-800/40 text-gray-400 border border-gray-700/30 text-[11px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+            <span>Disconnected</span>
+          </div>
+        )}
+      </div>
+
+      {/* Right: Window Controls */}
+      <div className="flex items-center gap-1 no-drag">
+        <button
+          onClick={handleMinimize}
+          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"
+          title="Minimize"
+        >
+          <Minus className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={handleToggleMaximize}
+          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"
+          title={isMaximized ? 'Restore' : 'Maximize'}
+        >
+          {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
+        </button>
+        <button
+          onClick={handleClose}
+          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-500/80 hover:text-white text-gray-400 transition-colors"
+          title="Close"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+};

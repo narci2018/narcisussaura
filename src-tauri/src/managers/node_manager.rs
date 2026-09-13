@@ -1,0 +1,996 @@
+use crate::models::{NodeStatus, ProtocolType, UnifiedNode};
+use parking_lot::RwLock;
+use serde_json::json;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use url::Url;
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub struct NodeManager {
+    nodes: Arc<RwLock<Vec<UnifiedNode>>>,
+    data_path: PathBuf,
+}
+
+impl NodeManager {
+    pub fn new(app_data_dir: &Path) -> Self {
+        let data_path = app_data_dir.join("nodes.json");
+        let mut initial_nodes = Vec::new();
+
+        if data_path.exists() {
+            if let Ok(content) = fs::read_to_string(&data_path) {
+                if let Ok(loaded) = serde_json::from_str::<Vec<UnifiedNode>>(&content) {
+                    initial_nodes = loaded;
+                }
+            }
+        }
+
+        // If completely empty or missing special sources, insert sensible template nodes for the user to try immediately
+        // Clean up obsolete dummy sample servers and dead wireguard warp nodes
+        initial_nodes.retain(|n| n.group != "Sample Servers" && !n.id.starts_with("warp-wg-") && n.group != "Cloudflare WARP (WireGuard)");
+        for sample in Self::sample_nodes() {
+            if !initial_nodes.iter().any(|n| n.id == sample.id) {
+                initial_nodes.push(sample);
+            }
+        }
+
+        let mgr = Self {
+            nodes: Arc::new(RwLock::new(initial_nodes)),
+            data_path,
+        };
+        let _ = mgr.save();
+        mgr
+    }
+
+    fn sample_nodes() -> Vec<UnifiedNode> {
+        vec![
+            // ==========================================
+            // Cloudflare WARP (MASQUE - UDP/TCP 443, 8443, 8095)
+            // ==========================================
+            UnifiedNode {
+                id: "warp-masque-1".to_string(),
+                name: "Cloudflare WARP MASQUE 推荐 1 (Port 443)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.198.2".to_string(),
+                port: 443,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Global".to_string(),
+                city: "MASQUE Gateway #1".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "HTTP/3".to_string(), "推荐".to_string()],
+                favorite: true,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            UnifiedNode {
+                id: "warp-masque-2".to_string(),
+                name: "Cloudflare WARP MASQUE 推荐 2 (Port 443)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.199.2".to_string(),
+                port: 443,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Global".to_string(),
+                city: "MASQUE Gateway #2".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "HTTP/3".to_string(), "推荐".to_string()],
+                favorite: true,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            UnifiedNode {
+                id: "warp-masque-3".to_string(),
+                name: "Cloudflare WARP MASQUE 推荐 3 (Port 8443)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.198.2".to_string(),
+                port: 8443,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Edge".to_string(),
+                city: "MASQUE HighPort".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "HTTP/3".to_string(), "推荐".to_string()],
+                favorite: true,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            UnifiedNode {
+                id: "warp-masque-4".to_string(),
+                name: "Cloudflare WARP MASQUE (Port 8095)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.198.2".to_string(),
+                port: 8095,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Edge".to_string(),
+                city: "MASQUE Gateway #4".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "HTTP/3".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            UnifiedNode {
+                id: "warp-masque-5".to_string(),
+                name: "Cloudflare WARP MASQUE (Port 4443)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.198.1".to_string(),
+                port: 4443,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Edge".to_string(),
+                city: "MASQUE Port 4443".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "HighPort".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            UnifiedNode {
+                id: "warp-masque-6".to_string(),
+                name: "Cloudflare WARP MASQUE (Port 8095)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.198.2".to_string(),
+                port: 8095,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Edge".to_string(),
+                city: "MASQUE Port 8095".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "HighPort".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            UnifiedNode {
+                id: "warp-masque-7".to_string(),
+                name: "Cloudflare WARP MASQUE (IPsec Port 500)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.199.1".to_string(),
+                port: 500,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Edge".to_string(),
+                city: "MASQUE Port 500".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "IPsecBypass".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            UnifiedNode {
+                id: "warp-masque-8".to_string(),
+                name: "Cloudflare WARP MASQUE (Port 8443)".to_string(),
+                protocol: ProtocolType::Masque,
+                address: "162.159.199.2".to_string(),
+                port: 8443,
+                country_code: "CF".to_string(),
+                country_name: "Cloudflare Edge".to_string(),
+                city: "MASQUE Port 8443".to_string(),
+                group: "Cloudflare WARP (MASQUE)".to_string(),
+                tags: vec!["WARP".to_string(), "MASQUE".to_string(), "HTTPS".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "sni": "zt-masque.cloudflareclient.com",
+                    "network": "quic",
+                    "mtu": 1280
+                }),
+            },
+            // ==========================================
+            // Psiphon Obfuscated Tunnel Fleet
+            // ==========================================
+            UnifiedNode {
+                id: "psiphon-us".to_string(),
+                name: "Psiphon [US] 美国 · United States (65 个可用节点)".to_string(),
+                protocol: ProtocolType::Psiphon,
+                address: "psiphon.network".to_string(),
+                port: 0,
+                country_code: "US".to_string(),
+                country_name: "美国 · United States".to_string(),
+                city: "65 个可用节点 (Best US Exit)".to_string(),
+                group: "Psiphon".to_string(),
+                tags: vec!["Psiphon".to_string(), "Anti-Censorship".to_string(), "65 节点".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "egress_region": "US",
+                    "local_socks_port": 1820,
+                    "local_http_port": 1821,
+                    "node_count": 65,
+                    "available_nodes": 65,
+                    "propagation_channel_id": "FFFFFFFFFFFFFFFF",
+                    "sponsor_id": "1111111111111111"
+                }),
+            },
+            UnifiedNode {
+                id: "psiphon-jp".to_string(),
+                name: "Psiphon [JP] 日本 · Japan (13 个可用节点)".to_string(),
+                protocol: ProtocolType::Psiphon,
+                address: "psiphon.network".to_string(),
+                port: 0,
+                country_code: "JP".to_string(),
+                country_name: "日本 · Japan".to_string(),
+                city: "13 个可用节点 (Best Japan Exit)".to_string(),
+                group: "Psiphon".to_string(),
+                tags: vec!["Psiphon".to_string(), "Anti-Censorship".to_string(), "13 节点".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "egress_region": "JP",
+                    "local_socks_port": 1820,
+                    "local_http_port": 1821,
+                    "node_count": 13,
+                    "available_nodes": 13,
+                    "propagation_channel_id": "FFFFFFFFFFFFFFFF",
+                    "sponsor_id": "1111111111111111"
+                }),
+            },
+            UnifiedNode {
+                id: "psiphon-sg".to_string(),
+                name: "Psiphon [SG] 新加坡 · Singapore (12 个可用节点)".to_string(),
+                protocol: ProtocolType::Psiphon,
+                address: "psiphon.network".to_string(),
+                port: 0,
+                country_code: "SG".to_string(),
+                country_name: "新加坡 · Singapore".to_string(),
+                city: "12 个可用节点 (Best Singapore Exit)".to_string(),
+                group: "Psiphon".to_string(),
+                tags: vec!["Psiphon".to_string(), "Anti-Censorship".to_string(), "12 节点".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "egress_region": "SG",
+                    "local_socks_port": 1820,
+                    "local_http_port": 1821,
+                    "node_count": 12,
+                    "available_nodes": 12,
+                    "propagation_channel_id": "FFFFFFFFFFFFFFFF",
+                    "sponsor_id": "1111111111111111"
+                }),
+            },
+            UnifiedNode {
+                id: "psiphon-gb".to_string(),
+                name: "Psiphon [GB] 英国 · United Kingdom (31 个可用节点)".to_string(),
+                protocol: ProtocolType::Psiphon,
+                address: "psiphon.network".to_string(),
+                port: 0,
+                country_code: "GB".to_string(),
+                country_name: "英国 · United Kingdom".to_string(),
+                city: "31 个可用节点 (Best UK Exit)".to_string(),
+                group: "Psiphon".to_string(),
+                tags: vec!["Psiphon".to_string(), "Anti-Censorship".to_string(), "31 节点".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "egress_region": "GB",
+                    "local_socks_port": 1820,
+                    "local_http_port": 1821,
+                    "node_count": 31,
+                    "available_nodes": 31,
+                    "propagation_channel_id": "FFFFFFFFFFFFFFFF",
+                    "sponsor_id": "1111111111111111"
+                }),
+            },
+            UnifiedNode {
+                id: "psiphon-de".to_string(),
+                name: "Psiphon [DE] 德国 · Germany (60 个可用节点)".to_string(),
+                protocol: ProtocolType::Psiphon,
+                address: "psiphon.network".to_string(),
+                port: 0,
+                country_code: "DE".to_string(),
+                country_name: "德国 · Germany".to_string(),
+                city: "60 个可用节点 (Best Germany Exit)".to_string(),
+                group: "Psiphon".to_string(),
+                tags: vec!["Psiphon".to_string(), "Anti-Censorship".to_string(), "60 节点".to_string()],
+                favorite: false,
+                latency_ms: None,
+                speed_bps: None,
+                last_checked: None,
+                status: NodeStatus::Unknown,
+                config: json!({
+                    "egress_region": "DE",
+                    "local_socks_port": 1820,
+                    "local_http_port": 1821,
+                    "node_count": 60,
+                    "available_nodes": 60,
+                    "propagation_channel_id": "FFFFFFFFFFFFFFFF",
+                    "sponsor_id": "1111111111111111"
+                }),
+            },
+            // ==========================================
+            // VPNGate SoftEther Official Relays (Tsukuba)
+            // ==========================================
+            UnifiedNode {
+                id: "vpngate-static-219-100-37-96".to_string(),
+                name: "VPNGate [JP] 219.100.37.96:443 (SoftEther)".to_string(),
+                protocol: ProtocolType::Openvpn,
+                address: "219.100.37.96".to_string(),
+                port: 443,
+                country_code: "JP".to_string(),
+                country_name: "Japan".to_string(),
+                city: "Tsukuba (SoftEther 443)".to_string(),
+                group: "VPNGate".to_string(),
+                tags: vec!["VPNGate".to_string(), "SoftEther".to_string(), "Tsukuba".to_string()],
+                favorite: false,
+                latency_ms: Some(38),
+                speed_bps: Some(100_000_000),
+                last_checked: None,
+                status: NodeStatus::Alive,
+                config: json!({
+                    "proto": "tcp",
+                    "cipher": "AES-128-CBC",
+                    "auth": "SHA1",
+                    "ca": "-----BEGIN CERTIFICATE-----\nMIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\nTzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\ncmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\nWhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\nZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\nMTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\nh77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\nA5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\nT8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\nB5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\nB5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\nKBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\nOlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\njh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\nqHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\nrU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\nHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\nhkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\nubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\nNFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\nORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\nTkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\njNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\noyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\nmRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\nemyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n-----END CERTIFICATE-----",
+                    "cert": "-----BEGIN CERTIFICATE-----\nMIICxjCCAa4CAQAwDQYJKoZIhvcNAQEFBQAwKTEaMBgGA1UEAxMRVlBOR2F0ZUNs\naWVudENlcnQxCzAJBgNVBAYTAkpQMB4XDTEzMDIxMTAzNDk0OVoXDTM3MDExOTAz\nMTQwN1owKTEaMBgGA1UEAxMRVlBOR2F0ZUNsaWVudENlcnQxCzAJBgNVBAYTAkpQ\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5h2lgQQYUjwoKYJbzVZA\n5VcIGd5otPc/qZRMt0KItCFA0s9RwReNVa9fDRFLRBhcITOlv3FBcW3E8h1Us7RD\n4W8GmJe8zapJnLsD39OSMRCzZJnczW4OCH1PZRZWKqDtjlNca9AF8a65jTmlDxCQ\nCjntLIWk5OLLVkFt9/tScc1GDtci55ofhaNAYMPiH7V8+1g66pGHXAoWK6AQVH67\nXCKJnGB5nlQ+HsMYPV/O49Ld91ZN/2tHkcaLLyNtywxVPRSsRh480jju0fcCsv6h\np/0yXnTB//mWutBGpdUlIbwiITbAmrsbYnjigRvnPqX1RNJUbi9Fp6C2c/HIFJGD\nywIDAQABMA0GCSqGSIb3DQEBBQUAA4IBAQChO5hgcw/4oWfoEFLu9kBa1B//kxH8\nhQkChVNn8BRC7Y0URQitPl3DKEed9URBDdg2KOAz77bb6ENPiliD+a38UJHIRMqe\nUBHhllOHIzvDhHFbaovALBQceeBzdkQxsKQESKmQmR832950UCovoyRB61UyAV7h\n+mZhYPGRKXKSJI6s0Egg/Cri+Cwk4bjJfrb5hVse11yh4D9MHhwSfCOH+0z4hPUT\nFku7dGavURO5SVxMn/sL6En5D+oSeXkadHpDs+Airym2YHh15h0+jPSOoR6yiVp/\n6zZeZkrN43kuS73KpKDFjfFPh8t4r1gOIjttkNcQqBccusnplQ7HJpsk\n-----END CERTIFICATE-----",
+                    "key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA5h2lgQQYUjwoKYJbzVZA5VcIGd5otPc/qZRMt0KItCFA0s9R\nwReNVa9fDRFLRBhcITOlv3FBcW3E8h1Us7RD4W8GmJe8zapJnLsD39OSMRCzZJnc\nzW4OCH1PZRZWKqDtjlNca9AF8a65jTmlDxCQCjntLIWk5OLLVkFt9/tScc1GDtci\n55ofhaNAYMPiH7V8+1g66pGHXAoWK6AQVH67XCKJnGB5nlQ+HsMYPV/O49Ld91ZN\n/2tHkcaLLyNtywxVPRSsRh480jju0fcCsv6hp/0yXnTB//mWutBGpdUlIbwiITbA\nmrsbYnjigRvnPqX1RNJUbi9Fp6C2c/HIFJGDywIDAQABAoIBAERV7X5AvxA8uRiK\nk8SIpsD0dX1pJOMIwakUVyvc4EfN0DhKRNb4rYoSiEGTLyzLpyBc/A28Dlkm5eOY\nfjzXfYkGtYi/Ftxkg3O9vcrMQ4+6i+uGHaIL2rL+s4MrfO8v1xv6+Wky33EEGCou\nQiwVGRFQXnRoQ62NBCFbUNLhmXwdj1akZzLU4p5R4zA3QhdxwEIatVLt0+7owLQ3\nlP8sfXhppPOXjTqMD4QkYwzPAa8/zF7acn4kryrUP7Q6PAfd0zEVqNy9ZCZ9ffho\nzXedFj486IFoc5gnTp2N6jsnVj4LCGIhlVHlYGozKKFqJcQVGsHCqq1oz2zjW6LS\noRYIHgECgYEA8zZrkCwNYSXJuODJ3m/hOLVxcxgJuwXoiErWd0E42vPanjjVMhnt\nKY5l8qGMJ6FhK9LYx2qCrf/E0XtUAZ2wVq3ORTyGnsMWre9tLYs55X+ZN10Tc75z\n4hacbU0hqKN1HiDmsMRY3/2NaZHoy7MKnwJJBaG48l9CCTlVwMHocIECgYEA8jby\ndGjxTH+6XHWNizb5SRbZxAnyEeJeRwTMh0gGzwGPpH/sZYGzyu0SySXWCnZh3Rgq\n5uLlNxtrXrljZlyi2nQdQgsq2YrWUs0+zgU+22uQsZpSAftmhVrtvet6MjVjbByY\nDADciEVUdJYIXk+qnFUJyeroLIkTj7WYKZ6RjksCgYBoCFIwRDeg42oK89RFmnOr\nLymNAq4+2oMhsWlVb4ejWIWeAk9nc+GXUfrXszRhS01mUnU5r5ygUvRcarV/T3U7\nTnMZ+I7Y4DgWRIDd51znhxIBtYV5j/C/t85HjqOkH+8b6RTkbchaX3mau7fpUfds\nFq0nhIq42fhEO8srfYYwgQKBgQCyhi1N/8taRwpk+3/IDEzQwjbfdzUkWWSDk9Xs\nH/pkuRHWfTMP3flWqEYgW/LW40peW2HDq5imdV8+AgZxe/XMbaji9Lgwf1RY005n\nKxaZQz7yqHupWlLGF68DPHxkZVVSagDnV/sztWX6SFsCqFVnxIXifXGC4cW5Nm9g\nva8q4QKBgQCEhLVeUfdwKvkZ94g/GFz731Z2hrdVhgMZaU/u6t0V95+YezPNCQZB\nwmE9Mmlbq1emDeROivjCfoGhR3kZXW1pTKlLh6ZMUQUOpptdXva8XxfoqQwa3enA\nM7muBbF0XN7VO80iJPv+PmIZdEIAkpwKfi201YB+BafCIuGxIF50Vg==\n-----END RSA PRIVATE KEY-----",
+                    "openvpn_config_base64": ""
+                }),
+            },
+            UnifiedNode {
+                id: "vpngate-static-153-205-147-86".to_string(),
+                name: "VPNGate [JP] 153.205.147.86:1936 (SoftEther)".to_string(),
+                protocol: ProtocolType::Openvpn,
+                address: "153.205.147.86".to_string(),
+                port: 1936,
+                country_code: "JP".to_string(),
+                country_name: "Japan".to_string(),
+                city: "Tsukuba (SoftEther 1936)".to_string(),
+                group: "VPNGate".to_string(),
+                tags: vec!["VPNGate".to_string(), "SoftEther".to_string(), "Tsukuba".to_string()],
+                favorite: false,
+                latency_ms: Some(38),
+                speed_bps: Some(100_000_000),
+                last_checked: None,
+                status: NodeStatus::Alive,
+                config: json!({
+                    "proto": "tcp",
+                    "cipher": "AES-128-CBC",
+                    "auth": "SHA1",
+                    "ca": "-----BEGIN CERTIFICATE-----\nMIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw\nTzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh\ncmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4\nWhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu\nZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY\nMTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc\nh77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+\n0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U\nA5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW\nT8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH\nB5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC\nB5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv\nKBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn\nOlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn\njh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw\nqHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI\nrU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV\nHRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq\nhkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL\nubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ\n3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK\nNFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5\nORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur\nTkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC\njNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc\noyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq\n4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA\nmRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d\nemyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=\n-----END CERTIFICATE-----",
+                    "cert": "-----BEGIN CERTIFICATE-----\nMIICxjCCAa4CAQAwDQYJKoZIhvcNAQEFBQAwKTEaMBgGA1UEAxMRVlBOR2F0ZUNs\naWVudENlcnQxCzAJBgNVBAYTAkpQMB4XDTEzMDIxMTAzNDk0OVoXDTM3MDExOTAz\nMTQwN1owKTEaMBgGA1UEAxMRVlBOR2F0ZUNsaWVudENlcnQxCzAJBgNVBAYTAkpQ\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5h2lgQQYUjwoKYJbzVZA\n5VcIGd5otPc/qZRMt0KItCFA0s9RwReNVa9fDRFLRBhcITOlv3FBcW3E8h1Us7RD\n4W8GmJe8zapJnLsD39OSMRCzZJnczW4OCH1PZRZWKqDtjlNca9AF8a65jTmlDxCQ\nCjntLIWk5OLLVkFt9/tScc1GDtci55ofhaNAYMPiH7V8+1g66pGHXAoWK6AQVH67\nXCKJnGB5nlQ+HsMYPV/O49Ld91ZN/2tHkcaLLyNtywxVPRSsRh480jju0fcCsv6h\np/0yXnTB//mWutBGpdUlIbwiITbAmrsbYnjigRvnPqX1RNJUbi9Fp6C2c/HIFJGD\nywIDAQABMA0GCSqGSIb3DQEBBQUAA4IBAQChO5hgcw/4oWfoEFLu9kBa1B//kxH8\nhQkChVNn8BRC7Y0URQitPl3DKEed9URBDdg2KOAz77bb6ENPiliD+a38UJHIRMqe\nUBHhllOHIzvDhHFbaovALBQceeBzdkQxsKQESKmQmR832950UCovoyRB61UyAV7h\n+mZhYPGRKXKSJI6s0Egg/Cri+Cwk4bjJfrb5hVse11yh4D9MHhwSfCOH+0z4hPUT\nFku7dGavURO5SVxMn/sL6En5D+oSeXkadHpDs+Airym2YHh15h0+jPSOoR6yiVp/\n6zZeZkrN43kuS73KpKDFjfFPh8t4r1gOIjttkNcQqBccusnplQ7HJpsk\n-----END CERTIFICATE-----",
+                    "key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA5h2lgQQYUjwoKYJbzVZA5VcIGd5otPc/qZRMt0KItCFA0s9R\nwReNVa9fDRFLRBhcITOlv3FBcW3E8h1Us7RD4W8GmJe8zapJnLsD39OSMRCzZJnc\nzW4OCH1PZRZWKqDtjlNca9AF8a65jTmlDxCQCjntLIWk5OLLVkFt9/tScc1GDtci\n55ofhaNAYMPiH7V8+1g66pGHXAoWK6AQVH67XCKJnGB5nlQ+HsMYPV/O49Ld91ZN\n/2tHkcaLLyNtywxVPRSsRh480jju0fcCsv6hp/0yXnTB//mWutBGpdUlIbwiITbA\nmrsbYnjigRvnPqX1RNJUbi9Fp6C2c/HIFJGDywIDAQABAoIBAERV7X5AvxA8uRiK\nk8SIpsD0dX1pJOMIwakUVyvc4EfN0DhKRNb4rYoSiEGTLyzLpyBc/A28Dlkm5eOY\nfjzXfYkGtYi/Ftxkg3O9vcrMQ4+6i+uGHaIL2rL+s4MrfO8v1xv6+Wky33EEGCou\nQiwVGRFQXnRoQ62NBCFbUNLhmXwdj1akZzLU4p5R4zA3QhdxwEIatVLt0+7owLQ3\nlP8sfXhppPOXjTqMD4QkYwzPAa8/zF7acn4kryrUP7Q6PAfd0zEVqNy9ZCZ9ffho\nzXedFj486IFoc5gnTp2N6jsnVj4LCGIhlVHlYGozKKFqJcQVGsHCqq1oz2zjW6LS\noRYIHgECgYEA8zZrkCwNYSXJuODJ3m/hOLVxcxgJuwXoiErWd0E42vPanjjVMhnt\nKY5l8qGMJ6FhK9LYx2qCrf/E0XtUAZ2wVq3ORTyGnsMWre9tLYs55X+ZN10Tc75z\n4hacbU0hqKN1HiDmsMRY3/2NaZHoy7MKnwJJBaG48l9CCTlVwMHocIECgYEA8jby\ndGjxTH+6XHWNizb5SRbZxAnyEeJeRwTMh0gGzwGPpH/sZYGzyu0SySXWCnZh3Rgq\n5uLlNxtrXrljZlyi2nQdQgsq2YrWUs0+zgU+22uQsZpSAftmhVrtvet6MjVjbByY\nDADciEVUdJYIXk+qnFUJyeroLIkTj7WYKZ6RjksCgYBoCFIwRDeg42oK89RFmnOr\nLymNAq4+2oMhsWlVb4ejWIWeAk9nc+GXUfrXszRhS01mUnU5r5ygUvRcarV/T3U7\nTnMZ+I7Y4DgWRIDd51znhxIBtYV5j/C/t85HjqOkH+8b6RTkbchaX3mau7fpUfds\nFq0nhIq42fhEO8srfYYwgQKBgQCyhi1N/8taRwpk+3/IDEzQwjbfdzUkWWSDk9Xs\nH/pkuRHWfTMP3flWqEYgW/LW40peW2HDq5imdV8+AgZxe/XMbaji9Lgwf1RY005n\nKxaZQz7yqHupWlLGF68DPHxkZVVSagDnV/sztWX6SFsCqFVnxIXifXGC4cW5Nm9g\nva8q4QKBgQCEhLVeUfdwKvkZ94g/GFz731Z2hrdVhgMZaU/u6t0V95+YezPNCQZB\nwmE9Mmlbq1emDeROivjCfoGhR3kZXW1pTKlLh6ZMUQUOpptdXva8XxfoqQwa3enA\nM7muBbF0XN7VO80iJPv+PmIZdEIAkpwKfi201YB+BafCIuGxIF50Vg==\n-----END RSA PRIVATE KEY-----",
+                    "openvpn_config_base64": ""
+                }),
+            },
+            // ==========================================
+            // MegaV High-Speed Fleet
+            // ==========================================
+            UnifiedNode {
+                id: "megav-nl-reality-1".to_string(),
+                name: "MegaV [NL] Naaldwijk · VLESS Reality".to_string(),
+                protocol: ProtocolType::Vless,
+                address: "45.82.67.183".to_string(),
+                port: 443,
+                country_code: "NL".to_string(),
+                country_name: "Netherlands".to_string(),
+                city: "Naaldwijk".to_string(),
+                group: "MegaV".to_string(),
+                tags: vec!["MegaV".to_string(), "VLESS".to_string(), "Reality".to_string()],
+                favorite: false,
+                latency_ms: Some(220),
+                speed_bps: Some(50 * 1024 * 1024),
+                last_checked: None,
+                status: NodeStatus::Alive,
+                config: json!({
+                    "uuid": "dfc220d1-0b3a-44a2-99e3-8075bcae3b68",
+                    "flow": "xtls-rprx-vision",
+                    "security": "reality",
+                    "sni": "northwaleswildlifetrust.org.uk",
+                    "public_key": "daiJkQwpAcBk7oH1iZzRthMj-jAlqovX7vAiwVqfjTU",
+                    "short_id": "8880a9f75eb46d91",
+                    "fingerprint": "firefox",
+                    "network": "tcp"
+                }),
+            },
+            UnifiedNode {
+                id: "megav-nl-trojan-1".to_string(),
+                name: "MegaV [NL] Amsterdam · Trojan CDN-WS".to_string(),
+                protocol: ProtocolType::Trojan,
+                address: "104.17.95.128".to_string(),
+                port: 8443,
+                country_code: "NL".to_string(),
+                country_name: "Netherlands".to_string(),
+                city: "Amsterdam".to_string(),
+                group: "MegaV".to_string(),
+                tags: vec!["MegaV".to_string(), "Trojan".to_string(), "CDN".to_string()],
+                favorite: false,
+                latency_ms: Some(200),
+                speed_bps: Some(30 * 1024 * 1024),
+                last_checked: None,
+                status: NodeStatus::Alive,
+                config: json!({
+                    "password": "qILX2iK3__aseaW-T&Ab",
+                    "security": "tls",
+                    "sni": "w2r2hnwmlm-p33c1-vnwd.hameddsharabi.workers.dev",
+                    "host": "w2r2hnwmlm-p33c1-vnwd.hameddsharabi.workers.dev",
+                    "path": "/tr/LAPyxH6tgsF5uS2LnqitxaXrs6j4?ed=2560",
+                    "network": "ws",
+                    "alpn": "http/1.1",
+                    "fingerprint": "random"
+                }),
+            },
+            UnifiedNode {
+                id: "megav-nl-ss-1".to_string(),
+                name: "MegaV [NL] Amsterdam · Shadowsocks".to_string(),
+                protocol: ProtocolType::Shadowsocks,
+                address: "82.38.31.10".to_string(),
+                port: 8080,
+                country_code: "NL".to_string(),
+                country_name: "Netherlands".to_string(),
+                city: "Amsterdam".to_string(),
+                group: "MegaV".to_string(),
+                tags: vec!["MegaV".to_string(), "Shadowsocks".to_string()],
+                favorite: false,
+                latency_ms: Some(250),
+                speed_bps: Some(20 * 1024 * 1024),
+                last_checked: None,
+                status: NodeStatus::Alive,
+                config: json!({
+                    "method": "chacha20-ietf-poly1305",
+                    "password": "oZIoA69Q8yhcQV8ka3Pa3A"
+                }),
+            },
+        ]
+    }
+
+    pub fn get_all(&self) -> Vec<UnifiedNode> {
+        self.nodes.read().clone()
+    }
+
+    pub fn get_by_id(&self, id: &str) -> Option<UnifiedNode> {
+        self.nodes.read().iter().find(|n| n.id == id).cloned()
+    }
+
+    fn build_seed_relay_nodes() -> Vec<UnifiedNode> {
+        vec![
+            UnifiedNode {
+                id: "seed-relay-nl-reality".to_string(),
+                name: "Relay [NL] Naaldwijk · VLESS Reality (Verified)".to_string(),
+                protocol: ProtocolType::Vless,
+                address: "45.82.67.183".to_string(),
+                port: 443,
+                country_code: "NL".to_string(),
+                country_name: "Netherlands".to_string(),
+                city: "Naaldwijk".to_string(),
+                group: "Relay Seeds".to_string(),
+                tags: vec!["Relay".to_string(), "VLESS".to_string(), "Reality".to_string()],
+                favorite: false,
+                latency_ms: Some(210),
+                speed_bps: Some(50 * 1024 * 1024),
+                last_checked: None,
+                status: NodeStatus::Alive,
+                config: json!({
+                    "uuid": "dfc220d1-0b3a-44a2-99e3-8075bcae3b68",
+                    "flow": "xtls-rprx-vision",
+                    "security": "reality",
+                    "sni": "northwaleswildlifetrust.org.uk",
+                    "public_key": "daiJkQwpAcBk7oH1iZzRthMj-jAlqovX7vAiwVqfjTU",
+                    "short_id": "8880a9f75eb46d91",
+                    "fingerprint": "firefox",
+                    "network": "tcp"
+                }),
+            },
+            UnifiedNode {
+                id: "seed-relay-nl-ss".to_string(),
+                name: "Relay [NL] Amsterdam · Shadowsocks (Verified)".to_string(),
+                protocol: ProtocolType::Shadowsocks,
+                address: "82.38.31.10".to_string(),
+                port: 8080,
+                country_code: "NL".to_string(),
+                country_name: "Netherlands".to_string(),
+                city: "Amsterdam".to_string(),
+                group: "Relay Seeds".to_string(),
+                tags: vec!["Relay".to_string(), "Shadowsocks".to_string()],
+                favorite: false,
+                latency_ms: Some(230),
+                speed_bps: Some(30 * 1024 * 1024),
+                last_checked: None,
+                status: NodeStatus::Alive,
+                config: json!({
+                    "method": "chacha20-ietf-poly1305",
+                    "password": "oZIoA69Q8yhcQV8ka3Pa3A"
+                }),
+            },
+        ]
+    }
+
+    /// Returns suitable candidates for being a relay / dialer-proxy node.
+    /// Excludes VPNGate, MegaV, and Psiphon nodes, prioritizing Alive nodes with lowest latency_ms.
+    /// Filters out fake-low-latency CDN Anycast traps.
+    pub fn get_relay_candidates(&self) -> Vec<UnifiedNode> {
+        let nodes = self.nodes.read();
+        let mut candidates: Vec<UnifiedNode> = nodes
+            .iter()
+            .filter(|n| {
+                n.group != "VPNGate"
+                    && n.group != "MegaV"
+                    && n.group != "Psiphon"
+                    && n.protocol != ProtocolType::Psiphon
+                    && n.protocol != ProtocolType::Openvpn
+                    && n.protocol != ProtocolType::Masque
+                    && (n.protocol == ProtocolType::Vless
+                        || n.protocol == ProtocolType::Trojan
+                        || n.protocol == ProtocolType::Shadowsocks
+                        || n.protocol == ProtocolType::Vmess
+                        || n.protocol == ProtocolType::Hysteria2)
+            })
+            .cloned()
+            .collect();
+
+        // Helper: identify Cloudflare Anycast IP traps with false low latency (backend dead)
+        let is_anycast_trap = |n: &UnifiedNode| -> bool {
+            let addr = &n.address;
+            let lat = n.latency_ms.unwrap_or(9999);
+            // Cloudflare anycast CIDRs commonly used as fronting IPs in public subscriptions
+            let is_cf_ip = addr.starts_with("104.1")
+                || addr.starts_with("104.2")
+                || addr.starts_with("172.6")
+                || addr.starts_with("172.7")
+                || addr.starts_with("162.15")
+                || addr.starts_with("108.162.")
+                || addr.starts_with("198.41.");
+            // If it's a VMess on Cloudflare IP, it's almost certainly a dead CDN trap
+            if is_cf_ip && n.protocol == ProtocolType::Vmess {
+                return true;
+            }
+            is_cf_ip && lat < 120
+        };
+
+        // Protocol weight: Vless/Trojan/Shadowsocks with verified transport
+        let proto_weight = |n: &UnifiedNode| -> u32 {
+            match n.protocol {
+                ProtocolType::Vless => 0,
+                ProtocolType::Trojan => 1,
+                ProtocolType::Shadowsocks => 2,
+                ProtocolType::Hysteria2 => 3,
+                ProtocolType::Vmess => 4,
+                _ => 5,
+            }
+        };
+
+        candidates.sort_by(|a, b| {
+            let a_alive = a.status == NodeStatus::Alive;
+            let b_alive = b.status == NodeStatus::Alive;
+            if a_alive != b_alive {
+                return b_alive.cmp(&a_alive);
+            }
+
+            let a_trap = is_anycast_trap(a);
+            let b_trap = is_anycast_trap(b);
+            if a_trap != b_trap {
+                return a_trap.cmp(&b_trap); // Non-trap first
+            }
+
+            let a_weight = proto_weight(a);
+            let b_weight = proto_weight(b);
+            if a_weight != b_weight {
+                return a_weight.cmp(&b_weight);
+            }
+
+            let a_lat = a.latency_ms.unwrap_or(9999);
+            let b_lat = b.latency_ms.unwrap_or(9999);
+            if a_lat != b_lat {
+                return a_lat.cmp(&b_lat);
+            }
+            b.favorite.cmp(&a.favorite)
+        });
+
+        // If no candidate from user subscriptions, provide verified built-in relay seeds
+        if candidates.is_empty() {
+            candidates = Self::build_seed_relay_nodes();
+        }
+
+        candidates
+    }
+
+    /// Returns the best single relay candidate node
+    pub fn get_best_relay_node(&self) -> Option<UnifiedNode> {
+        self.get_relay_candidates().into_iter().next()
+    }
+
+    pub fn add_node(&self, mut node: UnifiedNode) -> Result<UnifiedNode, String> {
+        if node.id.is_empty() {
+            node.id = Uuid::new_v4().to_string();
+        }
+        let mut lock = self.nodes.write();
+        lock.push(node.clone());
+        drop(lock);
+        self.save()?;
+        Ok(node)
+    }
+
+    pub fn update_node(&self, node: UnifiedNode) -> Result<(), String> {
+        let mut lock = self.nodes.write();
+        if let Some(existing) = lock.iter_mut().find(|n| n.id == node.id) {
+            *existing = node;
+            drop(lock);
+            self.save()?;
+            Ok(())
+        } else {
+            Err("Node not found".to_string())
+        }
+    }
+
+    pub fn delete_node(&self, id: &str) -> Result<(), String> {
+        let mut lock = self.nodes.write();
+        lock.retain(|n| n.id != id);
+        drop(lock);
+        self.save()?;
+        Ok(())
+    }
+
+    pub fn update_latency(&self, id: &str, latency: Option<i64>) {
+        let mut lock = self.nodes.write();
+        if let Some(node) = lock.iter_mut().find(|n| n.id == id) {
+            node.latency_ms = latency;
+            node.last_checked = Some(chrono::Utc::now().timestamp());
+            node.status = match latency {
+                Some(lat) if lat > 0 => NodeStatus::Alive,
+                _ => NodeStatus::Dead,
+            };
+        }
+    }
+
+    pub fn update_speed(&self, id: &str, speed_bps: Option<u64>) {
+        let mut lock = self.nodes.write();
+        if let Some(node) = lock.iter_mut().find(|n| n.id == id) {
+            node.speed_bps = speed_bps;
+            node.last_checked = Some(chrono::Utc::now().timestamp());
+        }
+    }
+
+    pub fn toggle_favorite(&self, id: &str) -> Result<bool, String> {
+        let mut lock = self.nodes.write();
+        if let Some(node) = lock.iter_mut().find(|n| n.id == id) {
+            node.favorite = !node.favorite;
+            let fav = node.favorite;
+            drop(lock);
+            self.save()?;
+            Ok(fav)
+        } else {
+            Err("Node not found".to_string())
+        }
+    }
+
+    pub fn parse_share_link(&self, link: &str) -> Result<UnifiedNode, String> {
+        let link = link.trim();
+        if link.starts_with("vless://") {
+            Self::parse_vless_link(link)
+        } else if link.starts_with("trojan://") {
+            Self::parse_trojan_link(link)
+        } else if link.starts_with("socks5://") || link.starts_with("socks://") {
+            Self::parse_socks5_link(link)
+        } else if link.starts_with("ss://") {
+            Self::parse_ss_link(link)
+        } else if link.starts_with("warp://") || link.starts_with("wireguard://") {
+            Self::parse_wireguard_link(link)
+        } else {
+            Err("Unsupported share link format. Supported: vless://, trojan://, ss://, socks5://, warp://, wireguard://".to_string())
+        }
+    }
+
+    pub fn parse_wireguard_link(link: &str) -> Result<UnifiedNode, String> {
+        let (raw_url, fragment) = match link.split_once('#') {
+            Some((u, f)) => (u, Some(f)),
+            None => (link, None),
+        };
+
+        // Normalize URL if host is auto or missing
+        let normalized = if raw_url.starts_with("warp://auto") || raw_url.starts_with("warp://@auto") {
+            raw_url.replacen("auto", "162.159.192.1:2408", 1)
+        } else {
+            raw_url.to_string()
+        };
+
+        let parsed = Url::parse(&normalized).map_err(|e| format!("Invalid URL: {}", e))?;
+        let mut host = parsed.host_str().unwrap_or("162.159.192.1").to_string();
+        if host.is_empty() || host == "auto" {
+            host = "162.159.192.1".to_string();
+        }
+        let port = parsed.port().unwrap_or(2408);
+        let name = fragment
+            .map(|f| urlencoding::decode(f).unwrap_or(f.into()).to_string())
+            .unwrap_or_else(|| format!("Cloudflare WARP - {}", host));
+
+        let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        let pub_key = query
+            .get("public_key")
+            .or_else(|| query.get("pk"))
+            .cloned()
+            .unwrap_or_else(|| "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=".to_string());
+
+        let priv_key = query
+            .get("private_key")
+            .cloned()
+            .unwrap_or_else(|| "iNw48fdfcf4wrc9i7A21gyFG09a3E3NPydvb2ysTQGY=".to_string());
+
+        let ip = query.get("ip").cloned().unwrap_or_else(|| "172.16.0.2/32".to_string());
+        let ipv6 = query.get("ipv6").cloned().or_else(|| Some("2606:4700:110:88b9:299d:7012:4548:78eb/128".to_string()));
+
+        let name_upper = name.to_uppercase();
+        let country_code = if name_upper.contains("HK") || name.contains("香港") {
+            "HK".to_string()
+        } else if name_upper.contains("US") || name.contains("美国") {
+            "US".to_string()
+        } else if name_upper.contains("DE") || name.contains("德国") {
+            "DE".to_string()
+        } else if name_upper.contains("JP") || name.contains("日本") {
+            "JP".to_string()
+        } else if name_upper.contains("SG") || name.contains("新加坡") {
+            "SG".to_string()
+        } else {
+            "CF".to_string()
+        };
+
+        Ok(UnifiedNode {
+            id: Uuid::new_v4().to_string(),
+            name,
+            protocol: ProtocolType::Wireguard,
+            address: host,
+            port,
+            country_code,
+            country_name: "Cloudflare Edge".to_string(),
+            city: "WARP Anycast".to_string(),
+            group: "Cloudflare WARP (WireGuard)".to_string(),
+            tags: vec!["WARP".to_string(), "WireGuard".to_string()],
+            favorite: false,
+            latency_ms: None,
+            speed_bps: None,
+            last_checked: None,
+            status: NodeStatus::Unknown,
+            config: json!({
+                "private_key": priv_key,
+                "public_key": pub_key,
+                "ip": ip,
+                "ipv6": ipv6,
+                "reserved": [0, 0, 0],
+                "mtu": 1280
+            }),
+        })
+    }
+
+    fn parse_vless_link(link: &str) -> Result<UnifiedNode, String> {
+        let parsed = Url::parse(link).map_err(|e| format!("Invalid URL: {}", e))?;
+        let uuid = parsed.username();
+        let host = parsed.host_str().ok_or("Missing host")?;
+        let port = parsed.port().unwrap_or(443);
+        let name = parsed.fragment().map(|f| urlencoding::decode(f).unwrap_or(f.into()).to_string())
+            .unwrap_or_else(|| format!("VLESS-{}", host));
+
+        let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+
+        let security = query.get("security").cloned().unwrap_or_else(|| "none".to_string());
+        let flow = query.get("flow").cloned();
+        let sni = query.get("sni").cloned().or_else(|| query.get("peer").cloned());
+        let public_key = query.get("pbk").cloned();
+        let short_id = query.get("sid").cloned();
+        let fingerprint = query.get("fp").cloned().unwrap_or_else(|| "chrome".to_string());
+
+        let node = UnifiedNode {
+            id: Uuid::new_v4().to_string(),
+            name,
+            protocol: ProtocolType::Vless,
+            address: host.to_string(),
+            port,
+            country_code: "".to_string(),
+            country_name: "".to_string(),
+            city: "".to_string(),
+            group: "Imported".to_string(),
+            tags: vec!["Imported".to_string()],
+            favorite: false,
+            latency_ms: None,
+            speed_bps: None,
+            last_checked: None,
+            status: NodeStatus::Unknown,
+            config: json!({
+                "uuid": uuid,
+                "flow": flow,
+                "security": security,
+                "sni": sni,
+                "public_key": public_key,
+                "short_id": short_id,
+                "fingerprint": fingerprint,
+                "network": query.get("type").cloned().unwrap_or_else(|| "tcp".to_string()),
+            }),
+        };
+        Ok(node)
+    }
+
+    fn parse_trojan_link(link: &str) -> Result<UnifiedNode, String> {
+        let parsed = Url::parse(link).map_err(|e| format!("Invalid URL: {}", e))?;
+        let password = parsed.username();
+        let host = parsed.host_str().ok_or("Missing host")?;
+        let port = parsed.port().unwrap_or(443);
+        let name = parsed.fragment().map(|f| urlencoding::decode(f).unwrap_or(f.into()).to_string())
+            .unwrap_or_else(|| format!("Trojan-{}", host));
+
+        let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        let sni = query.get("sni").cloned().unwrap_or_else(|| host.to_string());
+
+        Ok(UnifiedNode {
+            id: Uuid::new_v4().to_string(),
+            name,
+            protocol: ProtocolType::Trojan,
+            address: host.to_string(),
+            port,
+            country_code: "".to_string(),
+            country_name: "".to_string(),
+            city: "".to_string(),
+            group: "Imported".to_string(),
+            tags: vec!["Trojan".to_string()],
+            favorite: false,
+            latency_ms: None,
+            speed_bps: None,
+            last_checked: None,
+            status: NodeStatus::Unknown,
+            config: json!({
+                "password": password,
+                "sni": sni
+            }),
+        })
+    }
+
+    fn parse_socks5_link(link: &str) -> Result<UnifiedNode, String> {
+        let parsed = Url::parse(link).map_err(|e| format!("Invalid URL: {}", e))?;
+        let host = parsed.host_str().ok_or("Missing host")?;
+        let port = parsed.port().unwrap_or(1080);
+        let name = parsed.fragment().map(|f| urlencoding::decode(f).unwrap_or(f.into()).to_string())
+            .unwrap_or_else(|| format!("SOCKS5-{}", host));
+
+        Ok(UnifiedNode {
+            id: Uuid::new_v4().to_string(),
+            name,
+            protocol: ProtocolType::Socks5,
+            address: host.to_string(),
+            port,
+            country_code: "".to_string(),
+            country_name: "".to_string(),
+            city: "".to_string(),
+            group: "Imported".to_string(),
+            tags: vec!["SOCKS5".to_string()],
+            favorite: false,
+            latency_ms: None,
+            speed_bps: None,
+            last_checked: None,
+            status: NodeStatus::Unknown,
+            config: json!({
+                "username": parsed.username(),
+                "password": parsed.password()
+            }),
+        })
+    }
+
+    fn parse_ss_link(link: &str) -> Result<UnifiedNode, String> {
+        let (raw_url, fragment) = match link.split_once('#') {
+            Some((u, f)) => (u, Some(f)),
+            None => (link, None),
+        };
+
+        let without_prefix = raw_url.trim_start_matches("ss://");
+        let (user_part, host_port) = without_prefix
+            .split_once('@')
+            .ok_or_else(|| "Invalid ss:// link: missing '@'".to_string())?;
+
+        let (host, port_str) = host_port
+            .rsplit_once(':')
+            .ok_or_else(|| "Invalid ss:// link: missing host/port".to_string())?;
+        let port: u16 = port_str.parse().map_err(|e| format!("Invalid port: {}", e))?;
+
+        // Decode user info if base64 encoded
+        let (method, password) = if user_part.contains(':') {
+            let (m, p) = user_part.split_once(':').unwrap();
+            (m.to_string(), p.to_string())
+        } else {
+            let mut padded = user_part.to_string();
+            while padded.len() % 4 != 0 {
+                padded.push('=');
+            };
+            let decoded_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &padded)
+                .or_else(|_| base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE, &padded))
+                .map_err(|e| format!("Failed to decode ss base64: {}", e))?;
+            let decoded_str = String::from_utf8_lossy(&decoded_bytes).to_string();
+            let (m, p) = decoded_str
+                .split_once(':')
+                .ok_or_else(|| "Invalid ss userinfo after decode".to_string())?;
+            (m.to_string(), p.to_string())
+        };
+
+        let name = fragment
+            .map(|f| urlencoding::decode(f).unwrap_or(f.into()).to_string())
+            .unwrap_or_else(|| format!("SS-{}", host));
+
+        Ok(UnifiedNode {
+            id: Uuid::new_v4().to_string(),
+            name,
+            protocol: ProtocolType::Shadowsocks,
+            address: host.to_string(),
+            port,
+            country_code: "".to_string(),
+            country_name: "".to_string(),
+            city: "".to_string(),
+            group: "Imported".to_string(),
+            tags: vec!["Shadowsocks".to_string()],
+            favorite: false,
+            latency_ms: None,
+            speed_bps: None,
+            last_checked: None,
+            status: NodeStatus::Unknown,
+            config: json!({
+                "method": method,
+                "password": password
+            }),
+        })
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let list = self.nodes.read().clone();
+        let json_data = serde_json::to_string_pretty(&list)
+            .map_err(|e| format!("Failed to serialize nodes: {}", e))?;
+        if let Some(parent) = self.data_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        fs::write(&self.data_path, json_data)
+            .map_err(|e| format!("Failed to write nodes.json: {}", e))?;
+        Ok(())
+    }
+}

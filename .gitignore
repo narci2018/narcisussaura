@@ -1,0 +1,140 @@
+# ==========================================
+# 1. 编译输出与构建产物 (Build Outputs & Artifacts)
+# ==========================================
+dist/
+dist-ssr/
+build/
+out/
+.cache/
+.turbo/
+
+# Rust / Cargo 构建目录
+target/
+src-tauri/target/
+src-tauri/gen/schemas/
+**/*.rs.bk
+Cargo.lock.bk
+
+# 安装包与打包产物 (Bundles & Installers)
+*.msi
+*.exe
+*.dll
+*.so
+*.dylib
+*.pdb
+*.lib
+*.exp
+*.ilk
+*.nsis.zip
+*.dmg
+*.app
+*.deb
+*.rpm
+*.AppImage
+
+# ==========================================
+# 2. 依赖管理 (Dependencies)
+# ==========================================
+node_modules/
+.pnp
+.pnp.js
+
+# ==========================================
+# 3. 核心二进制可执行文件 (Core Engine Binaries)
+# ==========================================
+# 外部内核与驱动（体积庞大，不宜直接提交到 git 仓库）
+src-tauri/binaries/*.exe
+src-tauri/binaries/*.dll
+aether_bin/
+
+# 保留规则目录和基础配置文本文件
+!src-tauri/binaries/rules/
+!src-tauri/binaries/server_entries.txt
+!src-tauri/binaries/aether-masque.toml
+
+# ==========================================
+# 4. 本地运行时数据、测试文件与临时脚本 (Local Data & Test Files)
+# ==========================================
+# 测试与试跑临时文件
+test_*.json
+test_*.yaml
+test_*.yml
+test_*.log
+test_*.txt
+test_rules/
+test_psiphon_data/
+scratch_*
+working_reality.txt
+confirmed_nodes.json
+fresh_megav.json
+vpngate_fresh.csv
+vpngate_sample_cert.json
+
+# Psiphon 运行时本地缓存数据库与标志文件
+ca.psiphon.PsiphonTunnel.tunnel-core/
+*.boltdb
+migration_complete
+
+# 本地调试脚本及临时备份文件
+gen_masque.py
+app_js_sample.js
+src_lib_singbox.js
+src-tauri_src_warp.rs
+aether-masque.toml
+aether-secondary.toml
+aether.toml
+
+# ==========================================
+# 5. 日志文件 (Logs)
+# ==========================================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==========================================
+# 6. 环境变量与本地配置 (Env & Secrets)
+# ==========================================
+.env
+.env.*
+!.env.example
+*.local
+
+# ==========================================
+# 7. 编辑器与操作系统特定文件 (IDE & OS Files)
+# ==========================================
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# JetBrains IDE
+.idea/
+*.iml
+*.iws
+
+# Visual Studio 辅助文件
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.bak
+*.tmp
+

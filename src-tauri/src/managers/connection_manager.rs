@@ -1248,7 +1248,9 @@ rules:
                 .build()
                 .unwrap_or_default();
 
-            let url = format!("http://127.0.0.1:{}/traffic", clash_port);
+            let conn_url = format!("http://127.0.0.1:{}/connections", clash_port);
+            let mut prev_down: Option<u64> = None;
+            let mut prev_up: Option<u64> = None;
             let mut total_up: u64 = 0;
             let mut total_down: u64 = 0;
 
@@ -1266,15 +1268,27 @@ rules:
                 let mut current_up_speed: u64 = 0;
                 let mut current_down_speed: u64 = 0;
 
-                // Query Clash API
-                if let Ok(resp) = client.get(&url).send().await {
+                // Query Clash API /connections endpoint (contains real cumulative downloadTotal & uploadTotal)
+                if let Ok(resp) = client.get(&conn_url).send().await {
                     if let Ok(json) = resp.json::<serde_json::Value>().await {
-                        let up = json.get("up").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let down = json.get("down").and_then(|v| v.as_u64()).unwrap_or(0);
-                        current_up_speed = up;
-                        current_down_speed = down;
-                        total_up += up;
-                        total_down += down;
+                        let curr_down = json.get("downloadTotal")
+                            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                            .unwrap_or(total_down);
+                        let curr_up = json.get("uploadTotal")
+                            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                            .unwrap_or(total_up);
+
+                        if let Some(prev) = prev_down {
+                            current_down_speed = curr_down.saturating_sub(prev);
+                        }
+                        if let Some(prev) = prev_up {
+                            current_up_speed = curr_up.saturating_sub(prev);
+                        }
+
+                        prev_down = Some(curr_down);
+                        prev_up = Some(curr_up);
+                        total_down = curr_down;
+                        total_up = curr_up;
                     }
                 }
 

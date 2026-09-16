@@ -170,9 +170,18 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
   const [open, setOpen] = useState(false);
   const [pickerCountry, setPickerCountry] = useState<CountryGroup | null>(null);
 
-  // Compute global best node for "smart" option (exclude special groups)
-  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
-  const regularNodes = useMemo(() => nodes.filter(n => !SPECIAL_GROUPS.includes(n.group)), [nodes]);
+  // 1) Filter out all special nodes completely
+  const regularNodes = useMemo(() => {
+    return nodes.filter(node => {
+      const nameUpper = node.name.toUpperCase();
+      const groupUpper = (node.group || '').toUpperCase();
+      const isSpecial = 
+        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
+        ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
+        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
+      return !isSpecial;
+    });
+  }, [nodes]);
   const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 
   // Build country groups (exclude special protocol nodes)
@@ -186,16 +195,7 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
         nodes: []
       };
     }
-    
-    for (const node of nodes) {
-      const nameUpper = node.name.toUpperCase();
-      const groupUpper = (node.group || '').toUpperCase();
-      const isSpecial = 
-        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
-        ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
-        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
-        
-      if (isSpecial) continue;
+    for (const node of regularNodes) {
       
       // Force recalculate country code on the frontend to override potentially tainted backend data from older versions
       let code = '';
@@ -256,7 +256,7 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
         if (a.hasAlive !== b.hasAlive) return a.hasAlive ? -1 : 1;
         return a.countryZh.localeCompare(b.countryZh, 'zh');
       });
-  }, [nodes]);
+  }, [regularNodes]);
 
   // Derive display label for the current value
   const currentLabel = useMemo(() => {
@@ -297,11 +297,11 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
     return countryGroups.find((cg) => cg.nodes.some((n) => n.id === value)) ?? null;
   }, [value, countryGroups]);
 
-  // Nodes to show in manual picker: current country's nodes, or all nodes for smart
+  // Nodes to show in manual picker: current country's nodes, or all regular nodes for smart
   const pickerNodes = useMemo(() => {
-    if (value === 'smart') return nodes;
-    return currentCountryGroup?.nodes ?? nodes;
-  }, [value, currentCountryGroup, nodes]);
+    if (value === 'smart') return regularNodes;
+    return currentCountryGroup?.nodes ?? regularNodes;
+  }, [value, currentCountryGroup, regularNodes]);
 
   const pickerLabel = value === 'smart' ? '全部节点' : (currentCountryGroup?.countryZh ?? '全部节点');
 

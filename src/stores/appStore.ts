@@ -56,6 +56,7 @@ interface AppStore {
   updateSubViaProxy: boolean;
   setUpdateSubViaProxy: (val: boolean) => void;
   updateSubscription: (id: string) => Promise<void>;
+  autoRefreshDefault: () => Promise<void>;
   testLatency: (id: string) => Promise<void>;
   testSpeed: (id: string) => Promise<void>;
   testAllNodes: () => Promise<void>;
@@ -161,10 +162,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
         selectedNodeId: selectedId,
       });
 
-      // Automatically fetch nodes for Default sub on very first run
-      if (subscriptions.length === 1 && subscriptions[0].name === 'Default' && subscriptions[0].node_count === 0) {
-        get().updateAllSubscriptions().catch(console.error);
-      }
+      // Always auto refresh Default subscription on app startup (background)
+      get().autoRefreshDefault().catch(console.error);
 
       // Listen for background state events
       api.onStatusChanged((newStatus) => {
@@ -334,6 +333,22 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await get().refreshNodes();
     } catch (e: any) {
       console.error('Delete subscription failed:', e);
+    }
+  },
+
+  autoRefreshDefault: async () => {
+    const subs = get().subscriptions;
+    const defaultSub = subs.find(s => s.name === 'Default');
+    if (!defaultSub) return;
+    try {
+      await get().updateSubscription(defaultSub.id);
+      await get().refreshNodes();
+      // test all nodes latency in background
+      await get().testAllNodes();
+      // test all nodes speed in background
+      await get().testAllSpeeds();
+    } catch (e) {
+      console.error('Failed to auto refresh default sub', e);
     }
   },
 

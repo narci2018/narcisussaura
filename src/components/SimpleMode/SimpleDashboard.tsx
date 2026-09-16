@@ -84,14 +84,18 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     if (isConnected) {
       disconnect();
     } else {
-      if (!resolvedNodeId && nodes.length === 0) return;
+      if (regularNodes.length === 0) {
+        setErrorMessage("节点库为空，正在后台自动更新 Default 订阅源并测速，请耐心等待1~2分钟...");
+        useAppStore.getState().autoRefreshDefault().catch(console.error);
+        return;
+      }
+      if (!resolvedNodeId) return;
       connect(resolvedNodeId ?? undefined);
     }
   };
 
-  const noNodes = nodes.length === 0 && !isConnected;
   const smartNoNodes =
-    selectedValue === 'smart' && !globalBest && nodes.length > 0;
+    selectedValue === 'smart' && !globalBest && regularNodes.length > 0;
 
   // Determine node name shown under button
   const displayNodeName = isConnected
@@ -176,7 +180,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
             {/* Center button */}
             <button
               onClick={handleToggle}
-              disabled={isConnecting || (noNodes && !isConnected)}
+              disabled={isConnecting}
               className={`w-40 h-40 rounded-full flex flex-col items-center justify-center gap-2 transition-all active:scale-95 shadow-xl disabled:opacity-50 disabled:cursor-not-allowed ${
                 isConnected
                   ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-emerald-500/25'

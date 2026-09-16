@@ -58,6 +58,11 @@ export const Dashboard: React.FC = () => {
     if (isConnected) {
       disconnect();
     } else {
+      if (nodes.length === 0) {
+        setErrorMessage("节点库为空，正在后台自动更新 Default 订阅源并测速，请耐心等待1~2分钟...");
+        useAppStore.getState().autoRefreshDefault().catch(console.error);
+        return;
+      }
       connect();
     }
   };

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, Globe, Star, AlertCircle, Zap, Signal } from 'lucide-react';
+import { ChevronDown, Globe, Star, AlertCircle, Zap, Signal, ListFilter } from 'lucide-react';
 import { UnifiedNode } from '../../types';
 import { NodePickerDialog } from './NodePickerDialog';
 
@@ -151,7 +151,6 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
 }) => {
   const [open, setOpen] = useState(false);
   const [pickerCountry, setPickerCountry] = useState<CountryGroup | null>(null);
-  const [lastTap, setLastTap] = useState<{ country: string; time: number } | null>(null);
 
   // Compute global best node for "smart" option
   const globalBest = useMemo(() => getBestNode(nodes), [nodes]);
@@ -198,26 +197,8 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
     return { primary: '请选择节点', secondary: '' };
   }, [value, globalBest, countryGroups]);
 
-  // Handle double-click / double-tap on country item to open node picker
-  const handleCountryDoubleClick = (cg: CountryGroup) => {
-    setOpen(false);
-    setPickerCountry(cg);
-  };
-
   const handleCountryClick = (cg: CountryGroup) => {
     if (!cg.hasAlive) return;
-
-    // Detect double-tap (for touch/mouse)
-    const now = Date.now();
-    if (lastTap && lastTap.country === cg.country && now - lastTap.time < 400) {
-      // Double tap/click
-      handleCountryDoubleClick(cg);
-      setLastTap(null);
-      return;
-    }
-    setLastTap({ country: cg.country, time: now });
-
-    // Single click: select best node of this country
     if (cg.bestNode) {
       onChange(cg.bestNode.id);
       setOpen(false);
@@ -234,40 +215,76 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
     return nodes.find((n) => n.id === value)?.latency_ms;
   }, [value, globalBest, nodes]);
 
+  // Find the currently selected country group (for manual picker button)
+  const currentCountryGroup = useMemo(() => {
+    if (value === 'smart') return null;
+    return countryGroups.find((cg) => cg.nodes.some((n) => n.id === value)) ?? null;
+  }, [value, countryGroups]);
+
+  // Nodes to show in manual picker: current country's nodes, or all nodes for smart
+  const pickerNodes = useMemo(() => {
+    if (value === 'smart') return nodes;
+    return currentCountryGroup?.nodes ?? nodes;
+  }, [value, currentCountryGroup, nodes]);
+
+  const pickerLabel = value === 'smart' ? '全部节点' : (currentCountryGroup?.countryZh ?? '全部节点');
+
   return (
     <div className="relative w-full">
-      {/* Trigger button */}
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between bg-[#12151f] border border-[#212637] hover:border-[#3a4258] rounded-2xl px-5 py-4 transition-all"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-xl bg-[#1a1e2d] border border-[#282f45] flex items-center justify-center text-blue-400 shrink-0">
-            <Globe className="w-5 h-5" />
+      {/* Trigger row: dropdown selector + manual picker button */}
+      <div className="flex gap-2">
+        {/* Dropdown trigger */}
+        <button
+          onClick={() => setOpen(!open)}
+          className="flex-1 flex items-center justify-between bg-[#12151f] border border-[#212637] hover:border-[#3a4258] rounded-2xl px-4 py-3.5 transition-all min-w-0"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-[#1a1e2d] border border-[#282f45] flex items-center justify-center text-blue-400 shrink-0">
+              <Globe className="w-4.5 h-4.5" />
+            </div>
+            <div className="text-left min-w-0">
+              <div className="text-sm font-semibold text-gray-100 truncate">{currentLabel.primary}</div>
+              <div className="text-xs text-gray-500 mt-0.5 truncate">{currentLabel.secondary}</div>
+            </div>
           </div>
-          <div className="text-left min-w-0">
-            <div className="text-sm font-semibold text-gray-100 truncate">{currentLabel.primary}</div>
-            <div className="text-xs text-gray-500 mt-0.5 truncate">{currentLabel.secondary}</div>
+          <div className="flex items-center gap-2 ml-2 shrink-0">
+            {selectedSpeed && selectedSpeed > 0 ? (
+              <span className="flex items-center gap-1 text-xs text-emerald-400 font-mono">
+                <Zap className="w-3 h-3" />
+                {formatSpeed(selectedSpeed)}
+              </span>
+            ) : selectedLatency && selectedLatency > 0 ? (
+              <span className="flex items-center gap-1 text-xs text-blue-400 font-mono">
+                <Signal className="w-3 h-3" />
+                {formatLatency(selectedLatency)}
+              </span>
+            ) : null}
+            <ChevronDown
+              className={`w-4 h-4 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`}
+            />
           </div>
-        </div>
-        <div className="flex items-center gap-2 ml-3 shrink-0">
-          {/* Speed / latency badge */}
-          {selectedSpeed && selectedSpeed > 0 ? (
-            <span className="flex items-center gap-1 text-xs text-emerald-400 font-mono">
-              <Zap className="w-3 h-3" />
-              {formatSpeed(selectedSpeed)}
-            </span>
-          ) : selectedLatency && selectedLatency > 0 ? (
-            <span className="flex items-center gap-1 text-xs text-blue-400 font-mono">
-              <Signal className="w-3 h-3" />
-              {formatLatency(selectedLatency)}
-            </span>
-          ) : null}
-          <ChevronDown
-            className={`w-4 h-4 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`}
-          />
-        </div>
-      </button>
+        </button>
+
+        {/* Manual node picker button */}
+        <button
+          onClick={() => {
+            setOpen(false);
+            setPickerCountry({ 
+              country: currentCountryGroup?.country ?? '__all__',
+              countryZh: pickerLabel,
+              nodes: pickerNodes,
+              bestNode: getBestNode(pickerNodes),
+              hasAlive: pickerNodes.some(n => n.status !== 'dead'),
+            });
+          }}
+          disabled={pickerNodes.length === 0}
+          className="flex flex-col items-center justify-center gap-1 bg-[#12151f] border border-[#212637] hover:border-indigo-500/50 hover:bg-indigo-500/5 rounded-2xl px-3 py-2 transition-all shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+          title="手动选择具体节点"
+        >
+          <ListFilter className="w-4 h-4 text-indigo-400" />
+          <span className="text-[10px] text-gray-500 leading-none whitespace-nowrap">手动选线路</span>
+        </button>
+      </div>
 
       {/* Dropdown */}
       {open && (
@@ -310,7 +327,6 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
                 <button
                   key={cg.country}
                   onClick={() => handleCountryClick(cg)}
-                  onDoubleClick={() => cg.hasAlive && handleCountryDoubleClick(cg)}
                   disabled={!cg.hasAlive}
                   className={`w-full flex items-center gap-3 px-5 py-3.5 transition-colors text-left ${
                     isSelected
@@ -325,7 +341,7 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
                       {cg.countryZh}
                     </div>
                     <div className="text-xs text-gray-600 mt-0.5">
-                      {cg.nodes.length} 个节点 · 双击选择具体节点
+                      {cg.nodes.length} 个节点 · 点击自动择优
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">

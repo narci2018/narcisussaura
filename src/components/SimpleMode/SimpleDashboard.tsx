@@ -43,14 +43,21 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
   } = useAppStore();
 
   // 'smart' means auto-pick best node; otherwise it's a specific node id
-  const [selectedValue, setSelectedValue] = useState<string>('smart');
+  const [selectedValue, setSelectedValue] = useState<string>(() => {
+    if (connectedNode && !['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'].includes(connectedNode.group)) {
+      return connectedNode.id;
+    }
+    return 'smart';
+  });
   const [showExpertGate, setShowExpertGate] = useState(false);
 
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting' || status === 'disconnecting';
 
-  // Compute which node to actually connect
-  const globalBest = useMemo(() => getBestNode(nodes), [nodes]);
+  // Compute which node to actually connect (exclude special groups)
+  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
+  const regularNodes = useMemo(() => nodes.filter(n => !SPECIAL_GROUPS.includes(n.group)), [nodes]);
+  const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 
   const resolvedNodeId = useMemo(() => {
     if (selectedValue === 'smart') return globalBest?.id ?? null;

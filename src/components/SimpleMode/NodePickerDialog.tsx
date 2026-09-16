@@ -29,19 +29,32 @@ export const NodePickerDialog: React.FC<NodePickerDialogProps> = ({
   onSelect,
   onClose,
 }) => {
-  // Sort: speed desc, then latency asc, then alive first
   const sorted = [...nodes].sort((a, b) => {
-    // Alive first
     const aAlive = a.status !== 'dead' ? 0 : 1;
     const bAlive = b.status !== 'dead' ? 0 : 1;
     if (aAlive !== bAlive) return aAlive - bAlive;
-    // Speed desc
-    const aSpeed = a.speed_bps || 0;
-    const bSpeed = b.speed_bps || 0;
+    
+    let aSpeed = a.speed_bps || 0;
+    let aLat = a.latency_ms || 99999;
+    if (aSpeed === 0 || aLat === 99999) {
+      const aMatch = a.name.match(/(\d+)ms-(\d+)Mbps/);
+      if (aMatch) {
+        if (aLat === 99999) aLat = parseInt(aMatch[1], 10);
+        if (aSpeed === 0) aSpeed = parseInt(aMatch[2], 10) * 1024 * 1024 / 8;
+      }
+    }
+    
+    let bSpeed = b.speed_bps || 0;
+    let bLat = b.latency_ms || 99999;
+    if (bSpeed === 0 || bLat === 99999) {
+      const bMatch = b.name.match(/(\d+)ms-(\d+)Mbps/);
+      if (bMatch) {
+        if (bLat === 99999) bLat = parseInt(bMatch[1], 10);
+        if (bSpeed === 0) bSpeed = parseInt(bMatch[2], 10) * 1024 * 1024 / 8;
+      }
+    }
+
     if (bSpeed !== aSpeed) return bSpeed - aSpeed;
-    // Latency asc
-    const aLat = a.latency_ms || 99999;
-    const bLat = b.latency_ms || 99999;
     return aLat - bLat;
   });
 

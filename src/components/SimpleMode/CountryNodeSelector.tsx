@@ -114,19 +114,36 @@ function formatLatency(ms?: number | null): string {
 }
 
 /** Pick the best node from a list: speed_bps desc → latency_ms asc → first alive */
+function parseMetrics(node: UnifiedNode) {
+  let speed = node.speed_bps || 0;
+  let latency = node.latency_ms || 99999;
+  
+  if (speed === 0 || latency === 99999) {
+    const match = node.name.match(/(\d+)ms-(\d+)Mbps/);
+    if (match) {
+      if (latency === 99999) latency = parseInt(match[1], 10);
+      if (speed === 0) speed = parseInt(match[2], 10) * 1024 * 1024 / 8;
+    }
+  }
+  return { speed, latency };
+}
+
 export function getBestNode(nodes: UnifiedNode[]): UnifiedNode | null {
   const alive = nodes.filter((n) => n.status !== 'dead');
   if (!alive.length) return nodes[0] || null; // all dead, return first for display
 
-  const withSpeed = alive.filter((n) => n.speed_bps && n.speed_bps > 0);
-  if (withSpeed.length) {
-    return withSpeed.reduce((a, b) => (b.speed_bps! > a.speed_bps! ? b : a));
-  }
-  const withLatency = alive.filter((n) => n.latency_ms && n.latency_ms > 0);
-  if (withLatency.length) {
-    return withLatency.reduce((a, b) => (b.latency_ms! < a.latency_ms! ? b : a));
-  }
-  return alive[0];
+  // Sort alive nodes by parsed speed (descending) and then latency (ascending)
+  const sorted = [...alive].sort((a, b) => {
+    const aMetrics = parseMetrics(a);
+    const bMetrics = parseMetrics(b);
+    
+    if (bMetrics.speed !== aMetrics.speed) {
+      return bMetrics.speed - aMetrics.speed;
+    }
+    return aMetrics.latency - bMetrics.latency;
+  });
+
+  return sorted[0];
 }
 
 export interface CountryGroup {

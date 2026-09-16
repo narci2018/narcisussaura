@@ -11,6 +11,9 @@ import {
   Calendar,
   Globe,
   Check,
+  Pencil,
+  Save,
+  X,
 } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { Subscription } from '../types';
@@ -39,6 +42,7 @@ export const SubscriptionsView: React.FC = () => {
     updateSubViaProxy,
     setUpdateSubViaProxy,
     addSubscription,
+    editSubscription,
     deleteSubscription,
     updateSubscription,
     restoreDefaultSubscriptions,
@@ -50,7 +54,41 @@ export const SubscriptionsView: React.FC = () => {
   const [subUrl, setSubUrl] = useState('');
   const [addingError, setAddingError] = useState<string | null>(null);
 
+  // Edit state: which subscription is being edited
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+
   const isConnected = status === 'connected';
+
+  const startEditing = (sub: Subscription) => {
+    setEditingId(sub.id);
+    setEditName(sub.name);
+    setEditUrl(sub.url);
+    setEditError(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditError(null);
+  };
+
+  const saveEditing = async () => {
+    if (!editName.trim() || !editUrl.trim()) return;
+    if (!editUrl.startsWith('http://') && !editUrl.startsWith('https://')) {
+      setEditError('URL 必须以 http:// 或 https:// 开头');
+      return;
+    }
+    setEditSaving(true);
+    setEditError(null);
+    const ok = await editSubscription(editingId!, editName.trim(), editUrl.trim());
+    setEditSaving(false);
+    if (ok) {
+      setEditingId(null);
+    }
+  };
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -284,6 +322,15 @@ export const SubscriptionsView: React.FC = () => {
                   {/* Actions */}
                   <div className="flex items-center gap-2">
                     <button
+                      onClick={() => startEditing(sub)}
+                      disabled={isUpdating || editingId === sub.id}
+                      className="p-2 rounded-xl hover:bg-blue-500/10 text-gray-500 hover:text-blue-400 transition-colors disabled:opacity-40"
+                      title="编辑订阅名称和URL"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+
+                    <button
                       onClick={() => updateSubscription(sub.id)}
                       disabled={isUpdating}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#171b26] hover:bg-[#202536] text-gray-300 hover:text-white text-xs font-medium border border-[#242b3d] transition-all disabled:opacity-50"
@@ -304,6 +351,64 @@ export const SubscriptionsView: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {/* Inline Edit Form */}
+                {editingId === sub.id && (
+                  <div className="bg-[#0b0e17] border border-blue-500/30 rounded-2xl p-4 space-y-3 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <div className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+                      <Pencil className="w-3 h-3" />
+                      编辑订阅
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[11px] text-gray-400 block mb-1">订阅名称</label>
+                        <input
+                          type="text"
+                          value={editName}
+                          onChange={(e) => { setEditName(e.target.value); setEditError(null); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
+                          placeholder="订阅名称"
+                          className="w-full bg-[#0a0c12] border border-[#23283a] focus:border-blue-500/60 rounded-xl px-3 py-2 text-xs text-gray-200 outline-none transition-colors"
+                          autoFocus
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[11px] text-gray-400 block mb-1">订阅 URL</label>
+                        <input
+                          type="url"
+                          value={editUrl}
+                          onChange={(e) => { setEditUrl(e.target.value); setEditError(null); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
+                          placeholder="https://example.com/subscribe?token=..."
+                          className="w-full bg-[#0a0c12] border border-[#23283a] focus:border-blue-500/60 rounded-xl px-3 py-2 text-xs text-gray-200 outline-none font-mono transition-colors"
+                        />
+                      </div>
+                    </div>
+                    {editError && (
+                      <div className="text-xs text-red-400 flex items-center gap-1.5">
+                        <AlertCircle className="w-3.5 h-3.5" />
+                        <span>{editError}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button
+                        onClick={cancelEditing}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-[#1a1e2b] transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        取消
+                      </button>
+                      <button
+                        onClick={saveEditing}
+                        disabled={editSaving || !editName.trim() || !editUrl.trim()}
+                        className="flex items-center gap-1 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {editSaving ? '保存中...' : '保存'}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Traffic Quota Bar (if provided by subscription server) */}
                 {sub.traffic && totalBytes > 0 && (

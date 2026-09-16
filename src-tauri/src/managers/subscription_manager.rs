@@ -139,6 +139,38 @@ impl SubscriptionManager {
         Ok(sub)
     }
 
+    pub fn edit_subscription(&self, id: &str, name: String, url: String) -> Result<Subscription, String> {
+        if !url.starts_with("http://") && !url.starts_with("https://") {
+            return Err("Subscription URL must start with http:// or https://".to_string());
+        }
+        let old_name;
+        {
+            let lock = self.subscriptions.read();
+            let sub = lock.iter().find(|s| s.id == id).ok_or_else(|| "Subscription not found".to_string())?;
+            old_name = sub.name.clone();
+        }
+        // Rename nodes that belong to the old group name
+        if old_name != name {
+            let all_nodes = self.node_manager.get_all();
+            for mut node in all_nodes {
+                if node.group == old_name {
+                    node.group = name.clone();
+                    let _ = self.node_manager.update_node(node);
+                }
+            }
+        }
+        let updated;
+        {
+            let mut lock = self.subscriptions.write();
+            let sub = lock.iter_mut().find(|s| s.id == id).ok_or_else(|| "Subscription not found".to_string())?;
+            sub.name = name;
+            sub.url = url;
+            updated = sub.clone();
+        }
+        self.save()?;
+        Ok(updated)
+    }
+
     pub fn delete_subscription(&self, id: &str) -> Result<(), String> {
         let mut lock = self.subscriptions.write();
         let sub_name = lock.iter().find(|s| s.id == id).map(|s| s.name.clone());

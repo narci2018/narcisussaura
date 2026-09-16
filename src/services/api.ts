@@ -33,6 +33,7 @@ export const api = {
   getSubscriptions: () => invoke<Subscription[]>('get_subscriptions'),
   restoreDefaultSubscriptions: () => invoke<Subscription[]>('restore_default_subscriptions'),
   addSubscription: (name: string, url: string) => invoke<Subscription>('add_subscription', { name, url }),
+  editSubscription: (id: string, name: string, url: string) => invoke<Subscription>('edit_subscription', { id, name, url }),
   deleteSubscription: (id: string) => invoke<void>('delete_subscription', { id }),
   updateSubscription: (id: string, useProxy?: boolean) => invoke<Subscription>('update_subscription', { id, useProxy }),
   updateAllSubscriptions: (useProxy?: boolean) => invoke<Subscription[]>('update_all_subscriptions', { useProxy }),

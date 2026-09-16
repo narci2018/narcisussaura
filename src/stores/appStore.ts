@@ -51,6 +51,7 @@ interface AppStore {
   restoreDefaultSubscriptions: () => Promise<void>;
   updateAllSubscriptions: () => Promise<void>;
   addSubscription: (name: string, url: string) => Promise<boolean>;
+  editSubscription: (id: string, name: string, url: string) => Promise<boolean>;
   deleteSubscription: (id: string) => Promise<void>;
   updateSubViaProxy: boolean;
   setUpdateSubViaProxy: (val: boolean) => void;
@@ -298,6 +299,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return true;
     } catch (e: any) {
       set({ errorMessage: `Failed to add subscription: ${e}` });
+      return false;
+    }
+  },
+
+  editSubscription: async (id, name, url) => {
+    try {
+      const updated = await api.editSubscription(id, name, url);
+      set((state) => ({
+        subscriptions: state.subscriptions.map((s) => (s.id === id ? { ...s, name: updated.name, url: updated.url } : s)),
+      }));
+      // Refresh nodes to reflect possible group rename
+      await get().refreshNodes();
+      return true;
+    } catch (e: any) {
+      set({ errorMessage: `Failed to edit subscription: ${e}` });
       return false;
     }
   },

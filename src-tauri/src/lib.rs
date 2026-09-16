@@ -253,6 +253,16 @@ async fn add_subscription(
 }
 
 #[tauri::command]
+async fn edit_subscription(
+    id: String,
+    name: String,
+    url: String,
+    state: State<'_, AppState>,
+) -> Result<Subscription, String> {
+    state.subscription_manager.edit_subscription(&id, name, url)
+}
+
+#[tauri::command]
 async fn delete_subscription(id: String, state: State<'_, AppState>) -> Result<(), String> {
     state.subscription_manager.delete_subscription(&id)
 }
@@ -440,6 +450,7 @@ pub fn run() {
             get_subscriptions,
             restore_default_subscriptions,
             add_subscription,
+            edit_subscription,
             delete_subscription,
             update_subscription,
             update_all_subscriptions,

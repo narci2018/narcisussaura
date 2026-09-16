@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ChevronDown, Globe, Star, AlertCircle, Zap, Signal, ListFilter } from 'lucide-react';
 import { UnifiedNode } from '../../types';
 import { NodePickerDialog } from './NodePickerDialog';
+import { ALL_COUNTRIES } from './countries';
 
 // Country name → Chinese translation map
 const COUNTRY_ZH: Record<string, string> = {
@@ -176,33 +177,9 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
 
   // Build country groups (exclude special protocol nodes)
   const countryGroups = useMemo<CountryGroup[]>(() => {
-    // Extensive list of canonical country codes to always show in the dropdown
-    const FIXED_COUNTRIES = [
-      { code: 'US', zh: '美国', en: 'United States' },
-      { code: 'HK', zh: '香港', en: 'Hong Kong' },
-      { code: 'JP', zh: '日本', en: 'Japan' },
-      { code: 'SG', zh: '新加坡', en: 'Singapore' },
-      { code: 'GB', zh: '英国', en: 'United Kingdom' },
-      { code: 'TW', zh: '台湾', en: 'Taiwan' },
-      { code: 'KR', zh: '韩国', en: 'South Korea' },
-      { code: 'DE', zh: '德国', en: 'Germany' },
-      { code: 'FR', zh: '法国', en: 'France' },
-      { code: 'AU', zh: '澳大利亚', en: 'Australia' },
-      { code: 'CA', zh: '加拿大', en: 'Canada' },
-      { code: 'NL', zh: '荷兰', en: 'Netherlands' },
-      { code: 'IN', zh: '印度', en: 'India' },
-      { code: 'BR', zh: '巴西', en: 'Brazil' },
-      { code: 'RU', zh: '俄罗斯', en: 'Russia' },
-      { code: 'TR', zh: '土耳其', en: 'Turkey' },
-      { code: 'IT', zh: '意大利', en: 'Italy' },
-      { code: 'ES', zh: '西班牙', en: 'Spain' },
-      { code: 'CH', zh: '瑞士', en: 'Switzerland' },
-      { code: 'SE', zh: '瑞典', en: 'Sweden' },
-    ];
-    
     // Create buckets for each fixed country
     const map: Record<string, { code: string, label: string, nodes: UnifiedNode[] }> = {};
-    for (const fc of FIXED_COUNTRIES) {
+    for (const fc of ALL_COUNTRIES) {
       map[fc.code] = {
         code: fc.code,
         label: `${fc.zh} (${fc.code})`,
@@ -211,40 +188,43 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
     }
     
     for (const node of nodes) {
+      const nameUpper = node.name.toUpperCase();
+      const groupUpper = (node.group || '').toUpperCase();
       const isSpecial = 
-        SPECIAL_GROUPS.includes(node.group) || 
-        ['psiphon', 'vpngate'].includes(node.protocol) ||
-        node.name.includes('VPNGate') || node.name.includes('Psiphon') || node.name.includes('MegaV') || node.name.includes('WARP');
+        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
+        ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
+        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
         
       if (isSpecial) continue;
       
       // Force recalculate country code on the frontend to override potentially tainted backend data from older versions
-      let code = 'OTHER';
+      let code = '';
       const upper = node.name.toUpperCase();
       const words = upper.split(/[^A-Z]+/);
       const hasCode = (c: string) => words.includes(c);
       
-      if (node.name.includes("香港") || upper.includes("HONG KONG") || hasCode('HK')) code = 'HK';
-      else if (node.name.includes("台湾") || node.name.includes("台灣") || upper.includes("TAIWAN") || hasCode('TW')) code = 'TW';
-      else if (node.name.includes("日本") || upper.includes("JAPAN") || upper.includes("TOKYO") || hasCode('JP')) code = 'JP';
-      else if (node.name.includes("美国") || node.name.includes("美國") || upper.includes("UNITED STATES") || hasCode('US') || hasCode('USA')) code = 'US';
-      else if (node.name.includes("新加坡") || node.name.includes("狮城") || upper.includes("SINGAPORE") || hasCode('SG')) code = 'SG';
-      else if (node.name.includes("韩国") || upper.includes("KOREA") || upper.includes("SOUTH KOREA") || hasCode('KR')) code = 'KR';
-      else if (node.name.includes("英国") || upper.includes("BRITAIN") || upper.includes("UNITED KINGDOM") || hasCode('GB') || hasCode('UK')) code = 'GB';
-      else if (node.name.includes("德国") || upper.includes("GERMANY") || hasCode('DE')) code = 'DE';
-      else if (node.name.includes("法国") || upper.includes("FRANCE") || hasCode('FR')) code = 'FR';
-      else if (node.name.includes("澳洲") || node.name.includes("澳大利亚") || upper.includes("AUSTRALIA") || hasCode('AU')) code = 'AU';
-      else if (node.name.includes("加拿大") || upper.includes("CANADA") || hasCode('CA')) code = 'CA';
-      else if (node.name.includes("荷兰") || upper.includes("NETHERLANDS") || hasCode('NL')) code = 'NL';
-      else if (node.name.includes("印度") || upper.includes("INDIA") || hasCode('IN')) code = 'IN';
-      else if (node.name.includes("巴西") || upper.includes("BRAZIL") || hasCode('BR')) code = 'BR';
-      else if (node.name.includes("俄罗斯") || upper.includes("RUSSIA") || hasCode('RU')) code = 'RU';
-      else if (node.name.includes("土耳其") || upper.includes("TURKEY") || hasCode('TR')) code = 'TR';
-      else if (node.name.includes("意大利") || upper.includes("ITALY") || hasCode('IT')) code = 'IT';
-      else if (node.name.includes("西班牙") || upper.includes("SPAIN") || hasCode('ES')) code = 'ES';
-      else if (node.name.includes("瑞士") || upper.includes("SWITZERLAND") || hasCode('CH')) code = 'CH';
-      else if (node.name.includes("瑞典") || upper.includes("SWEDEN") || hasCode('SE')) code = 'SE';
-      else if (node.country_code && node.country_code !== '') code = node.country_code;
+      for (const fc of ALL_COUNTRIES) {
+        if (
+          node.name.includes(fc.zh) || 
+          upper.includes(fc.en.toUpperCase()) || 
+          hasCode(fc.code)
+        ) {
+          code = fc.code;
+          break;
+        }
+      }
+      
+      // Additional fallback aliases for edge cases
+      if (!code) {
+        if (node.name.includes('狮城')) code = 'SG';
+        else if (node.name.includes('台湾')) code = 'TW';
+        else if (node.name.includes('台灣')) code = 'TW';
+        else if (upper.includes('TOKYO')) code = 'JP';
+        else if (hasCode('USA')) code = 'US';
+        else if (hasCode('UK') || upper.includes('BRITAIN')) code = 'GB';
+        else if (node.country_code && node.country_code !== '') code = node.country_code;
+        else code = 'OTHER';
+      }
       
       // If it's a known country code, place it in the bucket
       if (map[code]) {

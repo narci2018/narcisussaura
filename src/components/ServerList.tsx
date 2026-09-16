@@ -74,7 +74,7 @@ export const ServerList: React.FC = () => {
   }, [nodes]);
 
   // Groups to exclude from Servers view (these have dedicated tabs)
-  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV'];
+  // const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV'];
 
   // Extract unique groups from nodes and subscriptions, with WARP groups prioritized
   const availableGroups = useMemo(() => {
@@ -89,8 +89,12 @@ export const ServerList: React.FC = () => {
       if (sub.name) groupSet.add(sub.name);
     }
     for (const node of nodes) {
-      if (node.group && node.group.trim() && !SPECIAL_GROUPS.includes(node.group)) {
-        groupSet.add(node.group);
+      if (node.group && node.group.trim()) {
+        const groupUpper = node.group.toUpperCase();
+        const isSpecialGroup = ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g));
+        if (!isSpecialGroup) {
+          groupSet.add(node.group);
+        }
       }
     }
     return ['all', ...Array.from(groupSet)];
@@ -114,10 +118,12 @@ export const ServerList: React.FC = () => {
   const filteredAndSortedNodes = useMemo(() => {
     let result = nodes.filter((node) => {
       // Exclude Psiphon / VPNGate / MegaV nodes from the general server list
+      const nameUpper = node.name.toUpperCase();
+      const groupUpper = (node.group || '').toUpperCase();
       const isSpecial = 
-        SPECIAL_GROUPS.includes(node.group) || 
-        ['psiphon', 'vpngate'].includes(node.protocol) ||
-        node.name.includes('VPNGate') || node.name.includes('Psiphon') || node.name.includes('MegaV');
+        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
+        ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
+        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
         
       if (isSpecial) return false;
       if (filterFavorite && !node.favorite) return false;

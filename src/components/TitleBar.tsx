@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Minus, Square, Copy, X, Shield, Smartphone } from 'lucide-react';
+import { Minus, Square, Copy, X, Shield, Smartphone, Sun, Moon } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
 import { api } from '../services/api';
 import { useAppStore } from '../stores/appStore';
@@ -10,7 +10,7 @@ interface TitleBarProps {
 }
 
 export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
-  const { status, connectedNode } = useAppStore();
+  const { status, connectedNode, settings, saveSettings } = useAppStore();
   const [isMaximized, setIsMaximized] = useState(false);
   const [appVersion, setAppVersion] = useState('');
 
@@ -34,6 +34,11 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
 
   const handleClose = () => {
     api.closeWindow().catch(console.error);
+  };
+
+  const handleThemeToggle = () => {
+    const newTheme = settings.theme === 'light' ? 'dark' : 'light';
+    saveSettings({ ...settings, theme: newTheme });
   };
 
   return (
@@ -82,6 +87,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
             <span>小白模式</span>
           </button>
         )}
+        <button
+          onClick={handleThemeToggle}
+          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-amber-400 transition-colors mr-1"
+          title="切换主题 / Toggle Theme"
+        >
+          {settings.theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
+        </button>
         <button
           onClick={handleMinimize}
           className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"

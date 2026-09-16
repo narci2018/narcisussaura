@@ -55,13 +55,15 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
   const isConnecting = status === 'connecting' || status === 'disconnecting';
 
   // Compute which node to actually connect (exclude special groups)
-  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
+  // const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
   const regularNodes = useMemo(() => nodes.filter(n => {
-    return !(
-      SPECIAL_GROUPS.includes(n.group) || 
-      ['psiphon', 'vpngate'].includes(n.protocol) ||
-      n.name.includes('VPNGate') || n.name.includes('Psiphon') || n.name.includes('MegaV') || n.name.includes('WARP')
-    );
+    const nameUpper = n.name.toUpperCase();
+    const groupUpper = (n.group || '').toUpperCase();
+    const isSpecial = 
+      ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
+      ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(n.protocol) ||
+      nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
+    return !isSpecial;
   }), [nodes]);
   const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 

@@ -152,13 +152,16 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
   const [open, setOpen] = useState(false);
   const [pickerCountry, setPickerCountry] = useState<CountryGroup | null>(null);
 
-  // Compute global best node for "smart" option
-  const globalBest = useMemo(() => getBestNode(nodes), [nodes]);
+  // Compute global best node for "smart" option (exclude special groups)
+  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV'];
+  const regularNodes = useMemo(() => nodes.filter(n => !SPECIAL_GROUPS.includes(n.group)), [nodes]);
+  const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 
-  // Build country groups
+  // Build country groups (exclude special protocol nodes)
   const countryGroups = useMemo<CountryGroup[]>(() => {
     const map: Record<string, UnifiedNode[]> = {};
     for (const node of nodes) {
+      if (SPECIAL_GROUPS.includes(node.group)) continue;
       const c = node.country_name || '未知';
       if (!map[c]) map[c] = [];
       map[c].push(node);

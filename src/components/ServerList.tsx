@@ -73,6 +73,9 @@ export const ServerList: React.FC = () => {
     return counts;
   }, [nodes]);
 
+  // Groups to exclude from Servers view (these have dedicated tabs)
+  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV'];
+
   // Extract unique groups from nodes and subscriptions, with WARP groups prioritized
   const availableGroups = useMemo(() => {
     const groupSet = new Set<string>();
@@ -86,7 +89,9 @@ export const ServerList: React.FC = () => {
       if (sub.name) groupSet.add(sub.name);
     }
     for (const node of nodes) {
-      if (node.group && node.group.trim()) groupSet.add(node.group);
+      if (node.group && node.group.trim() && !SPECIAL_GROUPS.includes(node.group)) {
+        groupSet.add(node.group);
+      }
     }
     return ['all', ...Array.from(groupSet)];
   }, [subscriptions, nodes]);
@@ -105,8 +110,11 @@ export const ServerList: React.FC = () => {
   };
 
   // Filtering & Sorting
+
   const filteredAndSortedNodes = useMemo(() => {
     let result = nodes.filter((node) => {
+      // Exclude Psiphon / VPNGate / MegaV nodes from the general server list
+      if (SPECIAL_GROUPS.includes(node.group)) return false;
       if (filterFavorite && !node.favorite) return false;
       if (selectedProtocol !== 'all' && node.protocol !== selectedProtocol) return false;
       if (selectedGroup !== 'all' && node.group !== selectedGroup) return false;

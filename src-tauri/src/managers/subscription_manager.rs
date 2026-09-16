@@ -21,16 +21,7 @@ pub struct SubscriptionManager {
 impl SubscriptionManager {
     pub fn default_subscriptions() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("Cloudflare WARP (MASQUE)", "https://raw.githubusercontent.com/byJoey/warp-masque-actions/main/configs/opera-masque.yaml"),
-            ("Morpheusadam-Best (V2Ray)", "https://raw.githubusercontent.com/morpheusadam/v2ray-config/main/subs/bundles/best.txt"),
-            ("Au1rxx-Clash (Clash)", "https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/clash.yaml"),
-            ("SSRSub-Free (Clash)", "https://raw.githubusercontent.com/ssrsub/ssr/master/clash.yaml"),
-            ("Sunmiao-Airport (Clash)", "https://raw.githubusercontent.com/sunmiao4458/free-proxy-airport/main/output/clash.yaml"),
-            ("Snakem-Pool (Clash)", "https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta-2.yaml"),
-            ("Ermaozi-Daily (Clash)", "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/clash.yml"),
-            ("Fly-Global (Clash)", "https://raw.githubusercontent.com/ts-sf/fly/main/clash"),
-            ("ZhuhaiUK-Nodes (Clash)", "https://raw.githubusercontent.com/zhuhaiuk/free-nodes/main/clash_config.yaml"),
-            ("XYFQZY-V2Ray (Base64)", "https://raw.githubusercontent.com/xyfqzy/free-nodes/main/docs/subscriptions/base64.txt"),
+            ("Default", "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/v2ray.txt"),
         ]
     }
 

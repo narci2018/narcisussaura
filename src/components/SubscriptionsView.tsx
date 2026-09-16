@@ -45,7 +45,6 @@ export const SubscriptionsView: React.FC = () => {
     editSubscription,
     deleteSubscription,
     updateSubscription,
-    restoreDefaultSubscriptions,
     updateAllSubscriptions,
   } = useAppStore();
 
@@ -123,15 +122,6 @@ export const SubscriptionsView: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => restoreDefaultSubscriptions()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#171b26] hover:bg-[#202536] text-gray-200 hover:text-white text-xs font-medium border border-[#242b3d] shadow-sm transition-all"
-            title="Import 15+ verified free GitHub subscription endpoints"
-          >
-            <Database className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Load Free Sources</span>
-          </button>
-
           <button
             onClick={() => updateAllSubscriptions()}
             className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#171b26] hover:bg-[#202536] text-gray-200 hover:text-white text-xs font-medium border border-[#242b3d] shadow-sm transition-all"

@@ -96,6 +96,7 @@ export interface AppSettings {
   block_udp_443?: boolean;
   active_rule_set_id?: string;
   rule_sets?: RoutingRuleSet[];
+  theme?: 'dark' | 'light';
 }
 
 export interface SubscriptionTraffic {

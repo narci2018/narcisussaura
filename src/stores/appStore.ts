@@ -103,6 +103,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     routing_mode: 'rule',
     custom_direct_rules: [],
     custom_proxy_rules: [],
+    theme: 'dark',
   },
   activeTab: 'dashboard',
   isTestingAll: false,

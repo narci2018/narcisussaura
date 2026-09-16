@@ -18,7 +18,11 @@ import './App.css';
 const APP_MODE_KEY = 'app_mode';
 
 export const App: React.FC = () => {
-  const { activeTab, init, errorMessage, setErrorMessage } = useAppStore();
+  const { activeTab, init, errorMessage, setErrorMessage, settings } = useAppStore();
+  
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme || 'dark';
+  }, [settings.theme]);
   const [copiedError, setCopiedError] = useState(false);
 
   // Mode: 'simple' (default) or 'expert'

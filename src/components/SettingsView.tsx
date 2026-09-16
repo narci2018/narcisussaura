@@ -162,6 +162,45 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
+        {/* Section: Appearance */}
+        <div className="bg-[#12151f] border border-[#212637] rounded-2xl p-5 space-y-4">
+          <div className="flex items-center gap-2 text-xs font-semibold text-gray-200">
+            <span className="text-purple-400">🎨</span>
+            <span>Appearance (主题选择)</span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              {
+                id: 'dark',
+                title: 'Dark Tech (暗黑科技)',
+                desc: 'Default sleek dark interface optimized for low light.',
+              },
+              {
+                id: 'light',
+                title: 'Classic White (经典白色)',
+                desc: 'Clean, bright interface for comfortable daytime reading.',
+              }
+            ].map((mode) => {
+              const isSelected = formData.theme === mode.id || (!formData.theme && mode.id === 'dark');
+              return (
+                <div
+                  key={mode.id}
+                  onClick={() => setFormData({ ...formData, theme: mode.id as 'dark' | 'light' })}
+                  className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                    isSelected
+                      ? 'bg-purple-500/10 border-purple-500/40 text-purple-400'
+                      : 'bg-[#0f1118] border-[#222736] text-gray-400 hover:border-[#2e3447]'
+                  }`}
+                >
+                  <div className="text-xs font-semibold text-gray-200 mb-1">{mode.title}</div>
+                  <div className="text-[11px] text-gray-400 leading-relaxed">{mode.desc}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Section: Network Ports */}
         <div className="bg-[#12151f] border border-[#212637] rounded-2xl p-5 space-y-4">
           <div className="flex items-center gap-2 text-xs font-semibold text-gray-200">

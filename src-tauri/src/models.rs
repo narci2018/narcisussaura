@@ -121,6 +121,12 @@ pub struct AppSettings {
     pub active_rule_set_id: String,
     #[serde(default = "default_rule_sets")]
     pub rule_sets: Vec<RoutingRuleSet>,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+}
+
+fn default_theme() -> String {
+    "dark".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -209,6 +215,7 @@ impl Default for AppSettings {
             block_udp_443: false,
             active_rule_set_id: "default".to_string(),
             rule_sets: default_rule_sets(),
+            theme: "dark".to_string(),
         }
     }
 }

@@ -65,3 +65,8 @@
 .custom-scrollbar-x::-webkit-scrollbar-thumb:hover {
   background: #475477;
 }
+
+html[data-theme='light'] { filter: invert(1) hue-rotate(180deg) contrast(0.95); background: #ffffff; }
+html[data-theme='light'] img { filter: invert(1) hue-rotate(180deg); }
+
+

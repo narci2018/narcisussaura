@@ -22,6 +22,11 @@ pub struct AppState {
 }
 
 #[tauri::command]
+async fn get_machine_id() -> Result<String, String> {
+    machine_uid::get().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_connection_status(state: State<'_, AppState>) -> Result<ConnectionStatus, String> {
     Ok(state.connection_manager.get_status())
 }
@@ -433,6 +438,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_machine_id,
             get_connection_status,
             get_connected_node,
             connect,

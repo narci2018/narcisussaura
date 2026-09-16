@@ -26,6 +26,11 @@ interface AppStore {
   testingChainIds: string[];
   errorMessage: string | null;
 
+  // CF Auth
+  machineId: string | null;
+  authDisplayText: string | null;
+  isAuthorized: boolean;
+
   // Actions
   init: () => Promise<void>;
   setActiveTab: (tab: ActiveTab) => void;
@@ -57,6 +62,7 @@ interface AppStore {
   setUpdateSubViaProxy: (val: boolean) => void;
   updateSubscription: (id: string) => Promise<void>;
   autoRefreshDefault: () => Promise<void>;
+  checkAuth: () => Promise<boolean>;
   testLatency: (id: string) => Promise<void>;
   testSpeed: (id: string) => Promise<void>;
   testAllNodes: () => Promise<void>;
@@ -75,6 +81,7 @@ interface AppStore {
   testChainLatency: (chainId: string) => Promise<void>;
   testAllChains: () => Promise<void>;
 }
+const CF_AUTH_URL = "https://vpn-auth-server.narci-ltc.workers.dev/api/auth";
 
 export const useAppStore = create<AppStore>((set, get) => ({
   status: 'disconnected',
@@ -119,6 +126,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   testingSpeedIds: [],
   testingChainIds: [],
   errorMessage: null,
+  
+  machineId: null,
+  authDisplayText: null,
+  isAuthorized: false,
   updateSubViaProxy: true,
   setUpdateSubViaProxy: (val) => set({ updateSubViaProxy: val }),
   relayEnabled: true,
@@ -203,6 +214,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setErrorMessage: (errorMessage) => set({ errorMessage }),
 
   connect: async (overrideId, relayIdOverride) => {
+    // Auth Check
+    const isAuth = await get().checkAuth();
+    if (!isAuth) {
+      set({ errorMessage: "请联系服务商授权" });
+      return;
+    }
+
     const state = get();
     const targetId = overrideId || state.selectedNodeId;
     if (!targetId) {
@@ -352,7 +370,52 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  checkAuth: async () => {
+    try {
+      // 1. Get machine ID if not already cached
+      let mId = get().machineId;
+      if (!mId) {
+        mId = await api.getMachineId();
+        set({ machineId: mId });
+      }
+      
+      // 2. Call CF Pages API
+      const res = await fetch(CF_AUTH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ machine_id: mId })
+      });
+      
+      const data = await res.json();
+      
+      if (data && data.success) {
+        set({
+          isAuthorized: data.authorized,
+          authDisplayText: data.display_text || null
+        });
+        return data.authorized;
+      } else {
+        set({
+          isAuthorized: false,
+          authDisplayText: data?.display_text || '认证失败'
+        });
+        return false;
+      }
+    } catch (e) {
+      console.error('Auth Check Failed', e);
+      // Fail-safe or block? The requirement says block if unauthorized.
+      return false;
+    }
+  },
+
   updateSubscription: async (id) => {
+    // Auth Check
+    const isAuth = await get().checkAuth();
+    if (!isAuth) {
+      set({ errorMessage: "请联系服务商授权" });
+      return;
+    }
+    
     set((state) => ({
       subscriptions: state.subscriptions.map((s) =>
         s.id === id ? { ...s, status: 'updating', error_message: null } : s

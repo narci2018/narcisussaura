@@ -1,0 +1,7 @@
+﻿name = "vpn-auth-server"
+main = "src/index.js"
+compatibility_date = "2023-10-30"
+
+[[kv_namespaces]]
+binding = "AUTH_DB"
+id = "a29d8ed58e1e4de8a65389a7df7e9532"

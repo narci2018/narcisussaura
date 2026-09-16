@@ -42,6 +42,8 @@ export const api = {
   fetchVPNGateNodes: () => invoke<UnifiedNode[]>('fetch_vpngate_nodes'),
   fetchPsiphonNodes: () => invoke<UnifiedNode[]>('fetch_psiphon_nodes'),
   
+  getMachineId: () => invoke<string>('get_machine_id'),
+
   getSettings: () => invoke<AppSettings>('get_settings'),
   saveSettings: (settings: AppSettings) => invoke<void>('save_settings', { newSettings: settings }),
   

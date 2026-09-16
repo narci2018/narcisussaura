@@ -1,6 +1,6 @@
 [package]
 name = "tauri-app"
-version = "0.2.14"
+version = "0.2.15"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -37,6 +37,7 @@ base64 = "0.22"
 serde_yaml = "0.9"
 regex = "1"
 futures-util = "0.3"
+machine-uid = "0.6.0"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -40,6 +40,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     disconnect,
     errorMessage,
     setErrorMessage,
+    authDisplayText,
   } = useAppStore();
 
   // 'smart' means auto-pick best node; otherwise it's a specific node id
@@ -116,9 +117,13 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
       <div className="flex items-center justify-between px-6 pt-4 pb-2">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
-            <span className="text-indigo-400 text-xs font-bold">NA</span>
+            <span className="text-indigo-400 text-xs font-bold">
+              {authDisplayText ? authDisplayText.substring(0, 2).toUpperCase() : 'NA'}
+            </span>
           </div>
-          <span className="text-sm font-semibold text-gray-300">NarcissusAura</span>
+          <span className="text-sm font-semibold text-gray-300">
+            {authDisplayText || 'NarcissusAura'}
+          </span>
         </div>
         <button
           onClick={() => setShowExpertGate(true)}

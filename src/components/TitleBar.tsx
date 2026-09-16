@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Minus, Square, Copy, X, Shield } from 'lucide-react';
+import { Minus, Square, Copy, X, Shield, Smartphone } from 'lucide-react';
 import { api } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 
-export const TitleBar: React.FC = () => {
+interface TitleBarProps {
+  /** If provided, shows a "小白模式" back button in expert mode */
+  onSwitchToSimple?: () => void;
+}
+
+export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
   const { status, connectedNode } = useAppStore();
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -62,8 +67,18 @@ export const TitleBar: React.FC = () => {
         )}
       </div>
 
-      {/* Right: Window Controls */}
+      {/* Right: Mode switch + Window Controls */}
       <div className="flex items-center gap-1 no-drag">
+        {onSwitchToSimple && (
+          <button
+            onClick={onSwitchToSimple}
+            className="flex items-center gap-1 mr-1 text-[11px] px-2 py-1 rounded-md hover:bg-indigo-500/20 text-gray-500 hover:text-indigo-300 transition-colors"
+            title="切换回小白模式"
+          >
+            <Smartphone className="w-3 h-3" />
+            <span>小白模式</span>
+          </button>
+        )}
         <button
           onClick={handleMinimize}
           className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"

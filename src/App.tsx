@@ -11,16 +11,43 @@ import { SubscriptionsView } from './components/SubscriptionsView';
 import { ImportModal } from './components/ImportModal';
 import { SettingsView } from './components/SettingsView';
 import { ChainedProxyView } from './components/ChainedProxyView';
+import { SimpleDashboard } from './components/SimpleMode';
 import { useAppStore } from './stores/appStore';
 import './App.css';
+
+const APP_MODE_KEY = 'app_mode';
 
 export const App: React.FC = () => {
   const { activeTab, init, errorMessage, setErrorMessage } = useAppStore();
   const [copiedError, setCopiedError] = useState(false);
 
+  // Mode: 'simple' (default) or 'expert'
+  const [mode, setMode] = useState<'simple' | 'expert'>(() => {
+    try {
+      const saved = localStorage.getItem(APP_MODE_KEY);
+      return saved === 'expert' ? 'expert' : 'simple';
+    } catch {
+      return 'simple';
+    }
+  });
+
   useEffect(() => {
     init();
   }, [init]);
+
+  const switchToExpert = () => {
+    setMode('expert');
+    try {
+      localStorage.setItem(APP_MODE_KEY, 'expert');
+    } catch {}
+  };
+
+  const switchToSimple = () => {
+    setMode('simple');
+    try {
+      localStorage.setItem(APP_MODE_KEY, 'simple');
+    } catch {}
+  };
 
   const handleCopyError = () => {
     if (!errorMessage) return;
@@ -29,10 +56,24 @@ export const App: React.FC = () => {
     setTimeout(() => setCopiedError(false), 2000);
   };
 
+  // ─── Simple Mode ─────────────────────────────────────────────────────────────
+  if (mode === 'simple') {
+    return (
+      <div className="flex flex-col h-screen w-screen bg-[#090a0f] text-gray-100 overflow-hidden select-none">
+        {/* Keep TitleBar for window dragging */}
+        <TitleBar />
+        <div className="flex-1 overflow-hidden">
+          <SimpleDashboard onSwitchToExpert={switchToExpert} />
+        </div>
+      </div>
+    );
+  }
+
+  // ─── Expert Mode ─────────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-screen w-screen bg-[#090a0f] text-gray-100 overflow-hidden select-none relative">
       {/* Frameless Draggable TitleBar */}
-      <TitleBar />
+      <TitleBar onSwitchToSimple={switchToSimple} />
 
       {/* Main Navigation */}
       <Navigation />

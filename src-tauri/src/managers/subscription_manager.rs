@@ -609,12 +609,36 @@ impl SubscriptionManager {
             "US".to_string()
         } else if name.contains("新加坡") || name.contains("狮城") || name_upper.contains("SG") || name_upper.contains("SINGAPORE") {
             "SG".to_string()
-        } else if name.contains("韩国") || name_upper.contains("KR") || name_upper.contains("KOREA") {
+        } else if name.contains("韩国") || name_upper.contains("KR") || name_upper.contains("KOREA") || name_upper.contains("SOUTH KOREA") {
             "KR".to_string()
-        } else if name.contains("英国") || name_upper.contains("UK") || name_upper.contains("GB") || name_upper.contains("BRITAIN") {
+        } else if name.contains("英国") || name_upper.contains("UK") || name_upper.contains("GB") || name_upper.contains("BRITAIN") || name_upper.contains("UNITED KINGDOM") {
             "GB".to_string()
         } else if name.contains("德国") || name_upper.contains("DE") || name_upper.contains("GERMANY") {
             "DE".to_string()
+        } else if name.contains("法国") || name_upper.contains("FR") || name_upper.contains("FRANCE") {
+            "FR".to_string()
+        } else if name.contains("澳洲") || name.contains("澳大利亚") || name_upper.contains("AU") || name_upper.contains("AUSTRALIA") {
+            "AU".to_string()
+        } else if name.contains("加拿大") || name_upper.contains("CA") || name_upper.contains("CANADA") {
+            "CA".to_string()
+        } else if name.contains("荷兰") || name_upper.contains("NL") || name_upper.contains("NETHERLANDS") {
+            "NL".to_string()
+        } else if name.contains("印度") || name_upper.contains("IN") || name_upper.contains("INDIA") {
+            "IN".to_string()
+        } else if name.contains("巴西") || name_upper.contains("BR") || name_upper.contains("BRAZIL") {
+            "BR".to_string()
+        } else if name.contains("俄罗斯") || name_upper.contains("RU") || name_upper.contains("RUSSIA") {
+            "RU".to_string()
+        } else if name.contains("土耳其") || name_upper.contains("TR") || name_upper.contains("TURKEY") {
+            "TR".to_string()
+        } else if name.contains("意大利") || name_upper.contains("IT") || name_upper.contains("ITALY") {
+            "IT".to_string()
+        } else if name.contains("西班牙") || name_upper.contains("ES") || name_upper.contains("SPAIN") {
+            "ES".to_string()
+        } else if name.contains("瑞士") || name_upper.contains("CH") || name_upper.contains("SWITZERLAND") {
+            "CH".to_string()
+        } else if name.contains("瑞典") || name_upper.contains("SE") || name_upper.contains("SWEDEN") {
+            "SE".to_string()
         } else {
             "".to_string()
         }

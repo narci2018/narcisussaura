@@ -77,11 +77,42 @@ impl SubscriptionManager {
             node_manager,
         };
 
+        // Clean up old default subscriptions from earlier versions
+        let old_default_urls = vec![
+            "https://raw.githubusercontent.com/byJoey/warp-masque-actions/main/configs/opera-masque.yaml",
+            "https://raw.githubusercontent.com/morpheusadam/v2ray-config/main/subs/bundles/best.txt",
+            "https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/clash.yaml",
+            "https://raw.githubusercontent.com/ssrsub/ssr/master/clash.yaml",
+            "https://raw.githubusercontent.com/sunmiao4458/free-proxy-airport/main/output/clash.yaml",
+            "https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta-2.yaml",
+            "https://raw.githubusercontent.com/ermaozi/get_subscribe/main/subscribe/clash.yml",
+            "https://raw.githubusercontent.com/ts-sf/fly/main/clash",
+            "https://raw.githubusercontent.com/zhuhaiuk/free-nodes/main/clash_config.yaml",
+            "https://raw.githubusercontent.com/xyfqzy/free-nodes/main/docs/subscriptions/base64.txt",
+        ];
+        
+        let to_delete: Vec<String> = {
+            let lock = mgr.subscriptions.read();
+            lock.iter().filter(|s| old_default_urls.contains(&s.url.as_str())).map(|s| s.id.clone()).collect()
+        };
+        for id in to_delete {
+            let _ = mgr.delete_subscription(&id);
+        }
+
         let _ = mgr.save();
         mgr
     }
 
     pub fn restore_default_subscriptions(&self) -> Result<Vec<Subscription>, String> {
+        // First delete all existing subscriptions to clear old free sources
+        let all_ids: Vec<String> = {
+            let lock = self.subscriptions.read();
+            lock.iter().map(|s| s.id.clone()).collect()
+        };
+        for id in all_ids {
+            let _ = self.delete_subscription(&id);
+        }
+
         let mut lock = self.subscriptions.write();
         let defaults = Self::default_subscriptions();
         

@@ -159,13 +159,22 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
 
   // Build country groups (exclude special protocol nodes)
   const countryGroups = useMemo<CountryGroup[]>(() => {
+    // Fixed list of mainstream countries that should always appear
+    const FIXED_COUNTRIES = ['United States', 'Hong Kong', 'Japan', 'Singapore', 'United Kingdom', 'Taiwan', 'South Korea', 'Germany', 'France', 'Australia', 'Canada'];
+    
     const map: Record<string, UnifiedNode[]> = {};
+    // Pre-populate fixed countries
+    for (const fc of FIXED_COUNTRIES) {
+      map[fc] = [];
+    }
+    
     for (const node of nodes) {
       if (SPECIAL_GROUPS.includes(node.group)) continue;
       const c = node.country_name || '未知';
       if (!map[c]) map[c] = [];
       map[c].push(node);
     }
+
     return Object.entries(map)
       .map(([country, ns]) => {
         const bestNode = getBestNode(ns);
@@ -310,7 +319,7 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
                 🌐 智能最优线路
               </div>
               <div className="text-xs text-gray-500 mt-0.5 truncate">
-                {globalBest ? `自动选择速度最快节点` : '无可用节点'}
+                {globalBest ? `自动选择速度最快节点` : '无可用节点，错峰上网'}
               </div>
             </div>
             {value === 'smart' && (

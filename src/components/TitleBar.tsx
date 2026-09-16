@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Minus, Square, Copy, X, Shield, Smartphone } from 'lucide-react';
+import { getVersion } from '@tauri-apps/api/app';
 import { api } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 
@@ -11,9 +12,11 @@ interface TitleBarProps {
 export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
   const { status, connectedNode } = useAppStore();
   const [isMaximized, setIsMaximized] = useState(false);
+  const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
     api.isWindowMaximized().then(setIsMaximized).catch(() => {});
+    getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion('v0.2.4'));
   }, []);
 
   const handleMinimize = () => {
@@ -45,7 +48,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
           <Shield className="w-3.5 h-3.5" />
         </div>
         <span className="font-semibold tracking-wide text-gray-200">Narci'ssus Aura</span>
-        <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">v0.2.0</span>
+        <span className="text-[10px] px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-300 font-mono border border-indigo-500/30">{appVersion || 'v...'}</span>
 
         <div className="h-3.5 w-px bg-[#262a3b] mx-1" />
 

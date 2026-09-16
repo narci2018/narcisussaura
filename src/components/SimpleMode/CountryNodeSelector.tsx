@@ -153,7 +153,7 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
   const [pickerCountry, setPickerCountry] = useState<CountryGroup | null>(null);
 
   // Compute global best node for "smart" option (exclude special groups)
-  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV'];
+  const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
   const regularNodes = useMemo(() => nodes.filter(n => !SPECIAL_GROUPS.includes(n.group)), [nodes]);
   const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 

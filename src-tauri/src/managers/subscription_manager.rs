@@ -572,26 +572,7 @@ impl SubscriptionManager {
             };
 
             // Detect Country Code from Node Name
-            let name_upper = name.to_uppercase();
-            let country_code = if name.contains("香港") || name_upper.contains("HK") || name_upper.contains("HONG KONG") {
-                "HK".to_string()
-            } else if name.contains("台湾") || name.contains("台灣") || name_upper.contains("TW") || name_upper.contains("TAIWAN") {
-                "TW".to_string()
-            } else if name.contains("日本") || name_upper.contains("JP") || name_upper.contains("JAPAN") || name_upper.contains("TOKYO") {
-                "JP".to_string()
-            } else if name.contains("美国") || name.contains("美國") || name_upper.contains("US") || name_upper.contains("UNITED STATES") || name_upper.contains("USA") {
-                "US".to_string()
-            } else if name.contains("新加坡") || name.contains("狮城") || name_upper.contains("SG") || name_upper.contains("SINGAPORE") {
-                "SG".to_string()
-            } else if name.contains("韩国") || name_upper.contains("KR") || name_upper.contains("KOREA") {
-                "KR".to_string()
-            } else if name.contains("英国") || name_upper.contains("UK") || name_upper.contains("GB") || name_upper.contains("BRITAIN") {
-                "GB".to_string()
-            } else if name.contains("德国") || name_upper.contains("DE") || name_upper.contains("GERMANY") {
-                "DE".to_string()
-            } else {
-                "".to_string()
-            };
+            let country_code = Self::detect_country_code_from_name(name);
 
             nodes.push(UnifiedNode {
                 id: Uuid::new_v4().to_string(),
@@ -616,6 +597,29 @@ impl SubscriptionManager {
         Ok(nodes)
     }
 
+    fn detect_country_code_from_name(name: &str) -> String {
+        let name_upper = name.to_uppercase();
+        if name.contains("香港") || name_upper.contains("HK") || name_upper.contains("HONG KONG") {
+            "HK".to_string()
+        } else if name.contains("台湾") || name.contains("台灣") || name_upper.contains("TW") || name_upper.contains("TAIWAN") {
+            "TW".to_string()
+        } else if name.contains("日本") || name_upper.contains("JP") || name_upper.contains("JAPAN") || name_upper.contains("TOKYO") {
+            "JP".to_string()
+        } else if name.contains("美国") || name.contains("美國") || name_upper.contains("US") || name_upper.contains("UNITED STATES") || name_upper.contains("USA") {
+            "US".to_string()
+        } else if name.contains("新加坡") || name.contains("狮城") || name_upper.contains("SG") || name_upper.contains("SINGAPORE") {
+            "SG".to_string()
+        } else if name.contains("韩国") || name_upper.contains("KR") || name_upper.contains("KOREA") {
+            "KR".to_string()
+        } else if name.contains("英国") || name_upper.contains("UK") || name_upper.contains("GB") || name_upper.contains("BRITAIN") {
+            "GB".to_string()
+        } else if name.contains("德国") || name_upper.contains("DE") || name_upper.contains("GERMANY") {
+            "DE".to_string()
+        } else {
+            "".to_string()
+        }
+    }
+
     fn parse_links_text(&self, text: &str, group_name: &str) -> Vec<UnifiedNode> {
         let mut nodes = Vec::new();
         for line in text.lines() {
@@ -624,6 +628,7 @@ impl SubscriptionManager {
                 continue;
             }
             if let Ok(mut node) = self.node_manager.parse_share_link(line) {
+                node.country_code = Self::detect_country_code_from_name(&node.name);
                 node.group = group_name.to_string();
                 nodes.push(node);
             }

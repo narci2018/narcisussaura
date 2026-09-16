@@ -160,6 +160,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         selectedNodeId: selectedId,
       });
 
+      // Automatically fetch nodes for Default sub on very first run
+      if (subscriptions.length === 1 && subscriptions[0].name === 'Default' && subscriptions[0].node_count === 0) {
+        get().updateAllSubscriptions().catch(console.error);
+      }
+
       // Listen for background state events
       api.onStatusChanged((newStatus) => {
         set({ status: newStatus });

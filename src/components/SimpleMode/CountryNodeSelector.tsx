@@ -159,29 +159,67 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
 
   // Build country groups (exclude special protocol nodes)
   const countryGroups = useMemo<CountryGroup[]>(() => {
-    // Fixed list of mainstream countries that should always appear
-    const FIXED_COUNTRIES = ['United States', 'Hong Kong', 'Japan', 'Singapore', 'United Kingdom', 'Taiwan', 'South Korea', 'Germany', 'France', 'Australia', 'Canada'];
+    // Extensive list of canonical country codes to always show in the dropdown
+    const FIXED_COUNTRIES = [
+      { code: 'US', zh: '美国', en: 'United States' },
+      { code: 'HK', zh: '香港', en: 'Hong Kong' },
+      { code: 'JP', zh: '日本', en: 'Japan' },
+      { code: 'SG', zh: '新加坡', en: 'Singapore' },
+      { code: 'GB', zh: '英国', en: 'United Kingdom' },
+      { code: 'TW', zh: '台湾', en: 'Taiwan' },
+      { code: 'KR', zh: '韩国', en: 'South Korea' },
+      { code: 'DE', zh: '德国', en: 'Germany' },
+      { code: 'FR', zh: '法国', en: 'France' },
+      { code: 'AU', zh: '澳大利亚', en: 'Australia' },
+      { code: 'CA', zh: '加拿大', en: 'Canada' },
+      { code: 'NL', zh: '荷兰', en: 'Netherlands' },
+      { code: 'IN', zh: '印度', en: 'India' },
+      { code: 'BR', zh: '巴西', en: 'Brazil' },
+      { code: 'RU', zh: '俄罗斯', en: 'Russia' },
+      { code: 'TR', zh: '土耳其', en: 'Turkey' },
+      { code: 'IT', zh: '意大利', en: 'Italy' },
+      { code: 'ES', zh: '西班牙', en: 'Spain' },
+      { code: 'CH', zh: '瑞士', en: 'Switzerland' },
+      { code: 'SE', zh: '瑞典', en: 'Sweden' },
+    ];
     
-    const map: Record<string, UnifiedNode[]> = {};
-    // Pre-populate fixed countries
+    // Create buckets for each fixed country
+    const map: Record<string, { code: string, label: string, nodes: UnifiedNode[] }> = {};
     for (const fc of FIXED_COUNTRIES) {
-      map[fc] = [];
+      map[fc.code] = {
+        code: fc.code,
+        label: `${fc.zh} (${fc.code})`,
+        nodes: []
+      };
     }
     
     for (const node of nodes) {
       if (SPECIAL_GROUPS.includes(node.group)) continue;
-      const c = node.country_name || '未知';
-      if (!map[c]) map[c] = [];
-      map[c].push(node);
+      
+      // Node's country_code from backend parser (e.g. "US", "HK")
+      // If it failed to parse, it defaults to "" (empty string).
+      const code = node.country_code || 'OTHER';
+      
+      // If it's a known country code, place it in the bucket
+      if (map[code]) {
+        map[code].nodes.push(node);
+      } else {
+        // Unrecognized country or empty country code goes to a dynamically created bucket
+        if (!map[code]) {
+           const label = code === 'OTHER' ? '其他地区 (Other)' : `${getCountryZh(node.country_name || code)} (${code})`;
+           map[code] = { code, label, nodes: [] };
+        }
+        map[code].nodes.push(node);
+      }
     }
 
-    return Object.entries(map)
-      .map(([country, ns]) => {
+    return Object.values(map)
+      .map(({ code, label, nodes: ns }) => {
         const bestNode = getBestNode(ns);
         const hasAlive = ns.some((n) => n.status !== 'dead');
         return {
-          country,
-          countryZh: getCountryZh(country),
+          country: code,      // We use code as the unique key instead of English name
+          countryZh: label,   // E.g., "美国 (US)"
           nodes: ns,
           bestNode,
           hasAlive,

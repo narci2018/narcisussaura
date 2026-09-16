@@ -93,7 +93,16 @@ impl SubscriptionManager {
         
         let to_delete: Vec<String> = {
             let lock = mgr.subscriptions.read();
-            lock.iter().filter(|s| old_default_urls.contains(&s.url.as_str())).map(|s| s.id.clone()).collect()
+            lock.iter()
+                .filter(|s| {
+                    old_default_urls.contains(&s.url.as_str()) ||
+                    s.name == "l8" ||
+                    s.name == "Au1rxx-Verified (Clash)" ||
+                    s.name.contains("Au1rxx") ||
+                    s.name.contains("Cloudflare WARP")
+                })
+                .map(|s| s.id.clone())
+                .collect()
         };
         for id in to_delete {
             let _ = mgr.delete_subscription(&id);

@@ -311,34 +311,40 @@ export const SubscriptionsView: React.FC = () => {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => startEditing(sub)}
-                      disabled={isUpdating || editingId === sub.id}
-                      className="p-2 rounded-xl hover:bg-blue-500/10 text-gray-500 hover:text-blue-400 transition-colors disabled:opacity-40"
-                      title="编辑订阅名称和URL"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
+                    {sub.name !== 'Default' && (
+                      <button
+                        onClick={() => startEditing(sub)}
+                        disabled={isUpdating || editingId === sub.id}
+                        className="p-2 rounded-xl hover:bg-blue-500/10 text-gray-500 hover:text-blue-400 transition-colors disabled:opacity-40"
+                        title="编辑订阅名称和URL"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                    )}
 
                     <button
                       onClick={() => updateSubscription(sub.id)}
                       disabled={isUpdating}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#171b26] hover:bg-[#202536] text-gray-300 hover:text-white text-xs font-medium border border-[#242b3d] transition-all disabled:opacity-50"
-                      title="Update nodes now"
+                      className={`p-2 rounded-xl transition-colors ${
+                        isUpdating
+                          ? 'bg-blue-500/10 text-blue-400 cursor-not-allowed'
+                          : 'hover:bg-[#202535] text-gray-400 hover:text-gray-200'
+                      }`}
+                      title="Update nodes"
                     >
-                      <RefreshCw
-                        className={`w-3.5 h-3.5 ${isUpdating ? 'animate-spin text-blue-400' : ''}`}
-                      />
-                      <span>Update</span>
+                      <RefreshCw className={`w-4 h-4 ${isUpdating ? 'animate-spin' : ''}`} />
                     </button>
 
-                    <button
-                      onClick={() => deleteSubscription(sub.id)}
-                      className="p-2 rounded-xl hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors"
-                      title="Delete subscription"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {sub.name !== 'Default' && (
+                      <button
+                        onClick={() => deleteSubscription(sub.id)}
+                        disabled={isUpdating}
+                        className="p-2 rounded-xl hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors disabled:opacity-40"
+                        title="Delete subscription"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 

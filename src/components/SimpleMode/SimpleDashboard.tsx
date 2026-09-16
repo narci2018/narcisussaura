@@ -56,7 +56,13 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
 
   // Compute which node to actually connect (exclude special groups)
   const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
-  const regularNodes = useMemo(() => nodes.filter(n => !SPECIAL_GROUPS.includes(n.group)), [nodes]);
+  const regularNodes = useMemo(() => nodes.filter(n => {
+    return !(
+      SPECIAL_GROUPS.includes(n.group) || 
+      ['psiphon', 'vpngate'].includes(n.protocol) ||
+      n.name.includes('VPNGate') || n.name.includes('Psiphon') || n.name.includes('MegaV') || n.name.includes('WARP')
+    );
+  }), [nodes]);
   const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 
   const resolvedNodeId = useMemo(() => {

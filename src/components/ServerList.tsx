@@ -114,7 +114,12 @@ export const ServerList: React.FC = () => {
   const filteredAndSortedNodes = useMemo(() => {
     let result = nodes.filter((node) => {
       // Exclude Psiphon / VPNGate / MegaV nodes from the general server list
-      if (SPECIAL_GROUPS.includes(node.group)) return false;
+      const isSpecial = 
+        SPECIAL_GROUPS.includes(node.group) || 
+        ['psiphon', 'vpngate'].includes(node.protocol) ||
+        node.name.includes('VPNGate') || node.name.includes('Psiphon') || node.name.includes('MegaV');
+        
+      if (isSpecial) return false;
       if (filterFavorite && !node.favorite) return false;
       if (selectedProtocol !== 'all' && node.protocol !== selectedProtocol) return false;
       if (selectedGroup !== 'all' && node.group !== selectedGroup) return false;

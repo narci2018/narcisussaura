@@ -599,45 +599,56 @@ impl SubscriptionManager {
 
     fn detect_country_code_from_name(name: &str) -> String {
         let name_upper = name.to_uppercase();
-        if name.contains("香港") || name_upper.contains("HK") || name_upper.contains("HONG KONG") {
+        
+        // Use word boundaries for 2-letter codes to avoid "SE" matching "SENEGAL" or "DE" matching "SWEDEN"
+        let has_code = |code: &str| -> bool {
+            name_upper.split(|c: char| !c.is_ascii_alphabetic()).any(|w| w == code)
+        };
+        
+        // Helper to check Chinese, full English, and code
+        let matches = |zh: &str, en: &str, code: &str| -> bool {
+            name.contains(zh) || name_upper.contains(en) || has_code(code)
+        };
+
+        if matches("香港", "HONG KONG", "HK") {
             "HK".to_string()
-        } else if name.contains("台湾") || name.contains("台灣") || name_upper.contains("TW") || name_upper.contains("TAIWAN") {
+        } else if matches("台湾", "TAIWAN", "TW") || name.contains("台灣") {
             "TW".to_string()
-        } else if name.contains("日本") || name_upper.contains("JP") || name_upper.contains("JAPAN") || name_upper.contains("TOKYO") {
+        } else if matches("日本", "JAPAN", "JP") || name_upper.contains("TOKYO") {
             "JP".to_string()
-        } else if name.contains("美国") || name.contains("美國") || name_upper.contains("US") || name_upper.contains("UNITED STATES") || name_upper.contains("USA") {
+        } else if matches("美国", "UNITED STATES", "US") || name.contains("美國") || has_code("USA") {
             "US".to_string()
-        } else if name.contains("新加坡") || name.contains("狮城") || name_upper.contains("SG") || name_upper.contains("SINGAPORE") {
+        } else if matches("新加坡", "SINGAPORE", "SG") || name.contains("狮城") {
             "SG".to_string()
-        } else if name.contains("韩国") || name_upper.contains("KR") || name_upper.contains("KOREA") || name_upper.contains("SOUTH KOREA") {
+        } else if matches("韩国", "KOREA", "KR") || name_upper.contains("SOUTH KOREA") {
             "KR".to_string()
-        } else if name.contains("英国") || name_upper.contains("UK") || name_upper.contains("GB") || name_upper.contains("BRITAIN") || name_upper.contains("UNITED KINGDOM") {
+        } else if matches("英国", "UNITED KINGDOM", "GB") || name_upper.contains("BRITAIN") || has_code("UK") {
             "GB".to_string()
-        } else if name.contains("德国") || name_upper.contains("DE") || name_upper.contains("GERMANY") {
+        } else if matches("德国", "GERMANY", "DE") {
             "DE".to_string()
-        } else if name.contains("法国") || name_upper.contains("FR") || name_upper.contains("FRANCE") {
+        } else if matches("法国", "FRANCE", "FR") {
             "FR".to_string()
-        } else if name.contains("澳洲") || name.contains("澳大利亚") || name_upper.contains("AU") || name_upper.contains("AUSTRALIA") {
+        } else if matches("澳洲", "AUSTRALIA", "AU") || name.contains("澳大利亚") {
             "AU".to_string()
-        } else if name.contains("加拿大") || name_upper.contains("CA") || name_upper.contains("CANADA") {
+        } else if matches("加拿大", "CANADA", "CA") {
             "CA".to_string()
-        } else if name.contains("荷兰") || name_upper.contains("NL") || name_upper.contains("NETHERLANDS") {
+        } else if matches("荷兰", "NETHERLANDS", "NL") {
             "NL".to_string()
-        } else if name.contains("印度") || name_upper.contains("IN") || name_upper.contains("INDIA") {
+        } else if matches("印度", "INDIA", "IN") {
             "IN".to_string()
-        } else if name.contains("巴西") || name_upper.contains("BR") || name_upper.contains("BRAZIL") {
+        } else if matches("巴西", "BRAZIL", "BR") {
             "BR".to_string()
-        } else if name.contains("俄罗斯") || name_upper.contains("RU") || name_upper.contains("RUSSIA") {
+        } else if matches("俄罗斯", "RUSSIA", "RU") {
             "RU".to_string()
-        } else if name.contains("土耳其") || name_upper.contains("TR") || name_upper.contains("TURKEY") {
+        } else if matches("土耳其", "TURKEY", "TR") {
             "TR".to_string()
-        } else if name.contains("意大利") || name_upper.contains("IT") || name_upper.contains("ITALY") {
+        } else if matches("意大利", "ITALY", "IT") {
             "IT".to_string()
-        } else if name.contains("西班牙") || name_upper.contains("ES") || name_upper.contains("SPAIN") {
+        } else if matches("西班牙", "SPAIN", "ES") {
             "ES".to_string()
-        } else if name.contains("瑞士") || name_upper.contains("CH") || name_upper.contains("SWITZERLAND") {
+        } else if matches("瑞士", "SWITZERLAND", "CH") {
             "CH".to_string()
-        } else if name.contains("瑞典") || name_upper.contains("SE") || name_upper.contains("SWEDEN") {
+        } else if matches("瑞典", "SWEDEN", "SE") {
             "SE".to_string()
         } else {
             "".to_string()

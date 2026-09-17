@@ -112,6 +112,11 @@ const ADMIN_HTML = `
                     <input v-model="authForm.display_text" type="text" class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500">
                 </div>
                 
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">专属订阅源 (留空则用Default)</label>
+                    <input v-model="authForm.custom_sub_url" type="text" class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="https://...">
+                </div>
+                
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-gray-700 mb-1">有效时间 (天)</label>
                     <input v-model.number="authForm.days" type="number" class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="留空或0表示永久有效">
@@ -138,7 +143,7 @@ const ADMIN_HTML = `
                 
                 const showModal = ref(false);
                 const currentDevice = ref(null);
-                const authForm = ref({ display_text: '', days: '' });
+                const authForm = ref({ display_text: '', days: '', custom_sub_url: '' });
 
                 onMounted(() => {
                     const savedPwd = localStorage.getItem('vpn_admin_pwd');
@@ -190,6 +195,7 @@ const ADMIN_HTML = `
                 const openAuthModal = (device) => {
                     currentDevice.value = device;
                     authForm.value.display_text = device.display_text || 'NarcissusAura VIP';
+                    authForm.value.custom_sub_url = device.custom_sub_url || '';
                     
                     if (device.authorized) {
                         if (device.expires_at) {
@@ -212,6 +218,7 @@ const ADMIN_HTML = `
                             machine_id: currentDevice.value.machine_id,
                             authorized: true,
                             display_text: authForm.value.display_text,
+                            custom_sub_url: authForm.value.custom_sub_url,
                             days: authForm.value.days === '' ? 0 : Number(authForm.value.days)
                         })
                     });
@@ -227,6 +234,7 @@ const ADMIN_HTML = `
                             machine_id: currentDevice.value.machine_id,
                             authorized: false,
                             display_text: '未授权设备',
+                            custom_sub_url: '',
                             days: 0
                         })
                     });
@@ -328,6 +336,7 @@ export default {
           machine_id: machineId,
           authorized: true,
           display_text: userData.display_text || "NarcissusAura VIP",
+          custom_sub_url: userData.custom_sub_url || "",
           expires_at: userData.expires_at || null, // CF 中的最终到期时间
           issued_at: Date.now() // 发证时间，App 用它判断 7 天缓存期
         };

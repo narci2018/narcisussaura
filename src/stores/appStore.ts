@@ -55,6 +55,7 @@ interface AppStore {
   refreshSubscriptions: () => Promise<void>;
   restoreDefaultSubscriptions: () => Promise<void>;
   updateAllSubscriptions: () => Promise<void>;
+  applyCustomSubscription: (customUrl: string) => Promise<void>;
   addSubscription: (name: string, url: string) => Promise<boolean>;
   editSubscription: (id: string, name: string, url: string) => Promise<boolean>;
   deleteSubscription: (id: string) => Promise<void>;
@@ -323,6 +324,45 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  applyCustomSubscription: async (customUrl) => {
+    const state = get();
+    // Wait for subscriptions to be loaded first if empty
+    if (state.subscriptions.length === 0) {
+       await state.refreshSubscriptions();
+    }
+    const subscriptions = get().subscriptions;
+    
+    if (customUrl) {
+       // Delete 'Default' if it exists
+       const defSub = subscriptions.find(s => s.name === 'Default');
+       if (defSub) {
+           await get().deleteSubscription(defSub.id);
+       }
+       
+       // Add or update custom sub
+       const vipSub = subscriptions.find(s => s.name === '[VIP] 专属订阅');
+       if (vipSub) {
+          if (vipSub.url !== customUrl) {
+             await get().editSubscription(vipSub.id, vipSub.name, customUrl);
+             get().updateSubscription(vipSub.id);
+          }
+       } else {
+          await get().addSubscription('[VIP] 专属订阅', customUrl);
+       }
+    } else {
+       // Custom URL is empty, ensure 'Default' exists and VIP is deleted
+       const vipSub = subscriptions.find(s => s.name === '[VIP] 专属订阅');
+       if (vipSub) {
+           await get().deleteSubscription(vipSub.id);
+       }
+       
+       const defSub = subscriptions.find(s => s.name === 'Default');
+       if (!defSub) {
+          await get().restoreDefaultSubscriptions();
+       }
+    }
+  },
+
   restoreDefaultSubscriptions: async () => {
     try {
       const subs = await api.restoreDefaultSubscriptions();
@@ -442,6 +482,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
                   isAuthorized: true,
                   authDisplayText: payload.display_text
                 });
+                get().applyCustomSubscription(payload.custom_sub_url || '');
                 return true;
               }
             }
@@ -463,10 +504,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
       
       if (data && data.success && data.authorized && data.token) {
         localStorage.setItem('vpn_auth_token', data.token);
+        const payload = await verifyJWT(data.token);
         set({
           isAuthorized: true,
           authDisplayText: data.display_text || null
         });
+        if (payload) get().applyCustomSubscription(payload.custom_sub_url || '');
         return true;
       } else {
         localStorage.removeItem('vpn_auth_token');

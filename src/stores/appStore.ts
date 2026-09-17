@@ -83,7 +83,7 @@ interface AppStore {
   testChainLatency: (chainId: string) => Promise<void>;
   testAllChains: () => Promise<void>;
 }
-const CF_AUTH_URL = "https://vpn-auth-server.narci-ltc.workers.dev/api/auth";
+const CF_AUTH_URL = "https://auth.lkhotrich.kdns.fr/api/auth";
 const JWT_SECRET = "NARCISSUS_AURA_SUPER_SECRET_KEY_2026";
 
 async function verifyJWT(token: string) {

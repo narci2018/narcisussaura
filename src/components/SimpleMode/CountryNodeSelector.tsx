@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, Globe, Star, AlertCircle, Zap, Signal, ListFilter } from 'lucide-react';
+import { ChevronDown, Globe, Star, AlertCircle, Zap, Signal, ListFilter, Search } from 'lucide-react';
 import { UnifiedNode } from '../../types';
 import { NodePickerDialog } from './NodePickerDialog';
 import { ALL_COUNTRIES } from './countries';
@@ -197,7 +197,10 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
   value,
   onChange,
 }) => {
+
   const [open, setOpen] = useState(false);
+  const [filterText, setFilterText] = useState('');
+
   const [pickerCountry, setPickerCountry] = useState<CountryGroup | null>(null);
 
   // 1) Filter out all special nodes completely
@@ -310,6 +313,17 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
     return nodes.find((n) => n.id === value)?.latency_ms;
   }, [value, globalBest, nodes, countryGroups]);
 
+
+  // Filter country groups
+  const filteredCountryGroups = useMemo(() => {
+    if (!filterText) return countryGroups;
+    const lower = filterText.toLowerCase();
+    return countryGroups.filter(cg => 
+      cg.countryZh.toLowerCase().includes(lower) || 
+      cg.country.toLowerCase().includes(lower)
+    );
+  }, [countryGroups, filterText]);
+
   // Find the currently selected country group (for manual picker button)
   const currentCountryGroup = useMemo(() => {
     if (value === 'smart') return null;
@@ -416,9 +430,25 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
             )}
           </button>
 
+
+          {/* Search Input */}
+          <div className="px-3 py-2 border-b border-[#1e2535]">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-500" />
+              <input
+                type="text"
+                value={filterText}
+                onChange={e => setFilterText(e.target.value)}
+                placeholder="搜索国家或地区..."
+                className="w-full bg-[#12151f] border border-[#2a3050] text-sm text-gray-200 placeholder-gray-600 rounded-lg pl-8 pr-3 py-1.5 focus:outline-none focus:border-indigo-500/50"
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          </div>
+
           {/* Country list */}
           <div className="overflow-y-auto">
-            {countryGroups.map((cg) => {
+            {filteredCountryGroups.map((cg) => {
               const isSelected = value === `country:${cg.country}` || (!value.startsWith('country:') && cg.nodes.some((n) => n.id === value));
               const speed = cg.bestNode?.speed_bps;
               const latency = cg.bestNode?.latency_ms;

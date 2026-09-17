@@ -9,7 +9,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
-import { CountryNodeSelector, getBestNode } from './CountryNodeSelector';
+import { CountryNodeSelector, getBestNode, getCountryCodeForNode } from './CountryNodeSelector';
 import { ExpertModeGate } from './ExpertModeGate';
 
 function formatSpeed(bytesPerSec: number): string {
@@ -71,8 +71,13 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
 
   const resolvedNodeId = useMemo(() => {
     if (selectedValue === 'smart') return globalBest?.id ?? null;
+    if (selectedValue.startsWith('country:')) {
+      const code = selectedValue.substring(8);
+      const nodesInCountry = regularNodes.filter(n => getCountryCodeForNode(n) === code);
+      return getBestNode(nodesInCountry)?.id ?? null;
+    }
     return selectedValue;
-  }, [selectedValue, globalBest]);
+  }, [selectedValue, globalBest, regularNodes]);
 
   // Auto-dismiss error after 8 seconds
   useEffect(() => {
@@ -114,12 +119,16 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     ? (connectedChainId === 'smart-group' ? `${connectedNode?.name} (智能漂移)` : connectedNode?.name)
     : selectedValue === 'smart'
     ? globalBest?.name
+    : selectedValue.startsWith('country:')
+    ? (resolvedNodeId ? nodes.find(n => n.id === resolvedNodeId)?.name : '未知节点')
     : nodes.find((n) => n.id === selectedValue)?.name;
 
   const displayCountry = isConnected
     ? connectedNode?.country_name
     : selectedValue === 'smart'
     ? globalBest?.country_name
+    : selectedValue.startsWith('country:')
+    ? (resolvedNodeId ? nodes.find(n => n.id === resolvedNodeId)?.country_name : '未知')
     : nodes.find((n) => n.id === selectedValue)?.country_name;
 
   return (

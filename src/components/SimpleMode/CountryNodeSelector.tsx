@@ -147,6 +147,36 @@ export function getBestNode(nodes: UnifiedNode[]): UnifiedNode | null {
   return sorted[0];
 }
 
+
+export function getCountryCodeForNode(node: UnifiedNode): string {
+  const upper = node.name.toUpperCase();
+  const words = upper.split(/[^A-Z]+/);
+  const hasCode = (c: string) => words.includes(c);
+  
+  let code = '';
+  for (const fc of ALL_COUNTRIES) {
+    if (
+      node.name.includes(fc.zh) || 
+      upper.includes(fc.en.toUpperCase()) || 
+      hasCode(fc.code)
+    ) {
+      code = fc.code;
+      break;
+    }
+  }
+  
+  if (!code) {
+    if (node.name.includes('狮城')) code = 'SG';
+    else if (node.name.includes('台湾') || node.name.includes('台灣')) code = 'TW';
+    else if (upper.includes('TOKYO')) code = 'JP';
+    else if (hasCode('USA')) code = 'US';
+    else if (hasCode('UK') || upper.includes('BRITAIN')) code = 'GB';
+    else if (node.country_code && node.country_code !== '') code = node.country_code;
+    else code = 'OTHER';
+  }
+  return code;
+}
+
 export interface CountryGroup {
   country: string; // original country_name from node
   countryZh: string;
@@ -197,34 +227,8 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
     }
     for (const node of regularNodes) {
       
-      // Force recalculate country code on the frontend to override potentially tainted backend data from older versions
-      let code = '';
-      const upper = node.name.toUpperCase();
-      const words = upper.split(/[^A-Z]+/);
-      const hasCode = (c: string) => words.includes(c);
-      
-      for (const fc of ALL_COUNTRIES) {
-        if (
-          node.name.includes(fc.zh) || 
-          upper.includes(fc.en.toUpperCase()) || 
-          hasCode(fc.code)
-        ) {
-          code = fc.code;
-          break;
-        }
-      }
-      
-      // Additional fallback aliases for edge cases
-      if (!code) {
-        if (node.name.includes('狮城')) code = 'SG';
-        else if (node.name.includes('台湾')) code = 'TW';
-        else if (node.name.includes('台灣')) code = 'TW';
-        else if (upper.includes('TOKYO')) code = 'JP';
-        else if (hasCode('USA')) code = 'US';
-        else if (hasCode('UK') || upper.includes('BRITAIN')) code = 'GB';
-        else if (node.country_code && node.country_code !== '') code = node.country_code;
-        else code = 'OTHER';
-      }
+// Force recalculate country code on the frontend to override potentially tainted backend data from older versions
+      let code = getCountryCodeForNode(node);
       
       // If it's a known country code, place it in the bucket
       if (map[code]) {
@@ -263,6 +267,13 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
     if (value === 'smart') {
       return { primary: '🌐 智能最优线路', secondary: globalBest ? `自动选择: ${globalBest.name}` : '无可用节点' };
     }
+    if (value.startsWith('country:')) {
+      const code = value.substring(8);
+      const cg = countryGroups.find(c => c.country === code);
+      if (cg && cg.bestNode) {
+        return { primary: cg.countryZh, secondary: `智能漂移 (自动分配)` };
+      }
+    }
     // Find which country+node
     for (const cg of countryGroups) {
       const found = cg.nodes.find((n) => n.id === value);
@@ -275,25 +286,37 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
 
   const handleCountryClick = (cg: CountryGroup) => {
     if (!cg.hasAlive) return;
-    if (cg.bestNode) {
-      onChange(cg.bestNode.id);
-      setOpen(false);
-    }
+    onChange(`country:${cg.country}`);
+    setOpen(false);
   };
 
   const selectedSpeed = useMemo(() => {
     if (value === 'smart') return globalBest?.speed_bps;
+    if (value.startsWith('country:')) {
+      const code = value.substring(8);
+      const cg = countryGroups.find(c => c.country === code);
+      return cg?.bestNode?.speed_bps;
+    }
     return nodes.find((n) => n.id === value)?.speed_bps;
-  }, [value, globalBest, nodes]);
+  }, [value, globalBest, nodes, countryGroups]);
 
   const selectedLatency = useMemo(() => {
     if (value === 'smart') return globalBest?.latency_ms;
+    if (value.startsWith('country:')) {
+      const code = value.substring(8);
+      const cg = countryGroups.find(c => c.country === code);
+      return cg?.bestNode?.latency_ms;
+    }
     return nodes.find((n) => n.id === value)?.latency_ms;
-  }, [value, globalBest, nodes]);
+  }, [value, globalBest, nodes, countryGroups]);
 
   // Find the currently selected country group (for manual picker button)
   const currentCountryGroup = useMemo(() => {
     if (value === 'smart') return null;
+    if (value.startsWith('country:')) {
+      const code = value.substring(8);
+      return countryGroups.find((cg) => cg.country === code) ?? null;
+    }
     return countryGroups.find((cg) => cg.nodes.some((n) => n.id === value)) ?? null;
   }, [value, countryGroups]);
 
@@ -396,7 +419,7 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
           {/* Country list */}
           <div className="overflow-y-auto">
             {countryGroups.map((cg) => {
-              const isSelected = cg.nodes.some((n) => n.id === value);
+              const isSelected = value === `country:${cg.country}` || (!value.startsWith('country:') && cg.nodes.some((n) => n.id === value));
               const speed = cg.bestNode?.speed_bps;
               const latency = cg.bestNode?.latency_ms;
               return (

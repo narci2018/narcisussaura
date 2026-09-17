@@ -3,14 +3,18 @@ const JWT_SECRET = "NARCISSUS_AURA_SUPER_SECRET_KEY_2026"; // 签名密钥
 
 // Base64URL 编码辅助函数
 function btoaUrl(str) {
-  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
 // 颁发数字签名证书 (JWT)
 async function signJWT(payload) {
   const enc = new TextEncoder();
-  const header = btoaUrl(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const body = btoaUrl(JSON.stringify(payload));
+  
+  // 对于可能包含非拉丁字符的内容，先进行 UTF-8 编码为 binary string
+  const encodeUtf8 = (s) => unescape(encodeURIComponent(s));
+  
+  const header = btoaUrl(encodeUtf8(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const body = btoaUrl(encodeUtf8(JSON.stringify(payload)));
   const data = `${header}.${body}`;
   
   const key = await crypto.subtle.importKey(
@@ -20,6 +24,7 @@ async function signJWT(payload) {
   );
   
   const signature = await crypto.subtle.sign("HMAC", key, enc.encode(data));
+  // signature 已经是 raw bytes，直接转换
   const sigBase64 = btoaUrl(String.fromCharCode(...new Uint8Array(signature)));
   
   return `${data}.${sigBase64}`;

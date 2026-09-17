@@ -62,7 +62,7 @@ interface AppStore {
   setUpdateSubViaProxy: (val: boolean) => void;
   updateSubscription: (id: string) => Promise<void>;
   autoRefreshDefault: () => Promise<void>;
-  checkAuth: () => Promise<boolean>;
+  checkAuth: (forceRemote?: boolean) => Promise<boolean>;
   testLatency: (id: string) => Promise<void>;
   testSpeed: (id: string) => Promise<void>;
   testAllNodes: () => Promise<void>;
@@ -82,6 +82,45 @@ interface AppStore {
   testAllChains: () => Promise<void>;
 }
 const CF_AUTH_URL = "https://vpn-auth-server.narci-ltc.workers.dev/api/auth";
+const JWT_SECRET = "NARCISSUS_AURA_SUPER_SECRET_KEY_2026";
+
+async function verifyJWT(token: string) {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [header, body, sigBase64Url] = parts;
+    const data = `${header}.${body}`;
+    
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(JWT_SECRET),
+      { name: "HMAC", hash: "SHA-256" },
+      false, ["verify"]
+    );
+    
+    // Base64URL to regular Base64
+    let sigBase64 = sigBase64Url.replace(/-/g, '+').replace(/_/g, '/');
+    while (sigBase64.length % 4) {
+      sigBase64 += '=';
+    }
+    
+    const sigBytes = Uint8Array.from(atob(sigBase64), c => c.charCodeAt(0));
+    const isValid = await crypto.subtle.verify("HMAC", key, sigBytes, enc.encode(data));
+    
+    if (!isValid) return null;
+    
+    // Decode body
+    let bodyBase64 = body.replace(/-/g, '+').replace(/_/g, '/');
+    while (bodyBase64.length % 4) {
+      bodyBase64 += '=';
+    }
+    const decodedBody = JSON.parse(decodeURIComponent(escape(atob(bodyBase64))));
+    return decodedBody;
+  } catch (e) {
+    console.error('JWT verify error', e);
+    return null;
+  }
+}
 
 export const useAppStore = create<AppStore>((set, get) => ({
   status: 'disconnected',
@@ -175,6 +214,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // Always auto refresh Default subscription on app startup (background)
       get().autoRefreshDefault().catch(console.error);
+
+      // Perform a background auth refresh to fetch a new 7-day token silently
+      get().checkAuth(true).catch(console.error);
 
       // Listen for background state events
       api.onStatusChanged((newStatus) => {
@@ -370,16 +412,46 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
-  checkAuth: async () => {
+  checkAuth: async (forceRemote = false) => {
     try {
-      // 1. Get machine ID if not already cached
+      // 1. Get machine ID
       let mId = get().machineId;
       if (!mId) {
         mId = await api.getMachineId();
         set({ machineId: mId });
       }
       
-      // 2. Call CF Pages API
+      // 2. Check Local Cache (if not forced to skip)
+      if (!forceRemote) {
+        const cachedToken = localStorage.getItem('vpn_auth_token');
+        if (cachedToken) {
+          const payload = await verifyJWT(cachedToken);
+          if (payload && payload.machine_id === mId && payload.authorized) {
+            const now = Date.now();
+            // Check if CF explicitly expired it
+            if (payload.expires_at && now > payload.expires_at) {
+              localStorage.removeItem('vpn_auth_token');
+              // proceed to remote check
+            } else {
+              // Check 7-day local cache limit
+              const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
+              if (now - payload.issued_at < SEVEN_DAYS_MS) {
+                // Locally authorized
+                set({
+                  isAuthorized: true,
+                  authDisplayText: payload.display_text
+                });
+                return true;
+              }
+            }
+          } else {
+             // invalid or unauthorized payload
+             localStorage.removeItem('vpn_auth_token');
+          }
+        }
+      }
+
+      // 3. Fallback: Request CF
       const res = await fetch(CF_AUTH_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -388,13 +460,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       
       const data = await res.json();
       
-      if (data && data.success) {
+      if (data && data.success && data.authorized && data.token) {
+        localStorage.setItem('vpn_auth_token', data.token);
         set({
-          isAuthorized: data.authorized,
+          isAuthorized: true,
           authDisplayText: data.display_text || null
         });
-        return data.authorized;
+        return true;
       } else {
+        localStorage.removeItem('vpn_auth_token');
         set({
           isAuthorized: false,
           authDisplayText: data?.display_text || '认证失败'
@@ -403,8 +477,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
     } catch (e) {
       console.error('Auth Check Failed', e);
-      // Fail-safe or block? The requirement says block if unauthorized.
-      return false;
+      // Fallback: If CF is down but we have a token, trust it temporarily?
+      // Better to return current state if network is completely down.
+      return get().isAuthorized;
     }
   },
 

@@ -1359,7 +1359,9 @@ rules:
             return Err("Smart group core startup failed".into());
         }
 
+
         *self.process.lock() = Some(child);
+        *self.connect_time.lock() = Some(Instant::now());
 
         if settings.routing_mode == "global" || settings.routing_mode == "rule" {
             let _ = WindowsProxy::enable_proxy(settings.mixed_port);
@@ -1367,7 +1369,9 @@ rules:
 
         *self.status.lock() = ConnectionStatus::Connected;
         let _ = app.emit("core:status-changed", ConnectionStatus::Connected);
+        self.start_traffic_monitor(app.clone(), settings.clash_api_port);
 
         Ok(())
+
     }
 }

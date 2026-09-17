@@ -308,6 +308,56 @@ impl SingBoxAdapter {
         self.generate_config_common(outbounds, Vec::new(), "chain-0", settings, work_dir)
     }
 
+    pub fn generate_config_for_urltest(
+        &self,
+        nodes: &[UnifiedNode],
+        settings: &AppSettings,
+        work_dir: &Path,
+    ) -> Result<String> {
+        if nodes.is_empty() {
+            bail!("Cannot generate urltest config for empty node list");
+        }
+        if nodes.len() == 1 {
+            return self.generate_config_with_relay(&nodes[0], None, settings, work_dir);
+        }
+
+        let mut outbounds = Vec::new();
+        let mut tags = Vec::new();
+
+        for (i, node) in nodes.iter().enumerate() {
+            let mut ob = self.build_outbound(node)?;
+            let tag = format!("node-{}", i);
+            ob["tag"] = json!(tag);
+            tags.push(tag);
+            outbounds.push(ob);
+        }
+
+        // Add the urltest outbound
+        outbounds.insert(0, json!({
+            "type": "urltest",
+            "tag": "smart-urltest",
+            "outbounds": tags,
+            "url": "http://cp.cloudflare.com/generate_204",
+            "interval": "3m",
+            "tolerance": 50
+        }));
+
+        outbounds.push(json!({
+            "type": "direct",
+            "tag": "direct"
+        }));
+        outbounds.push(json!({
+            "type": "block",
+            "tag": "block"
+        }));
+        outbounds.push(json!({
+            "type": "dns",
+            "tag": "dns-out"
+        }));
+
+        self.generate_config_common(outbounds, Vec::new(), "smart-urltest", settings, work_dir)
+    }
+
     pub fn generate_config_common(
         &self,
         outbounds: Vec<Value>,

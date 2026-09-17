@@ -41,6 +41,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     errorMessage,
     setErrorMessage,
     authDisplayText,
+    connectedChainId,
   } = useAppStore();
 
   // 'smart' means auto-pick best node; otherwise it's a specific node id
@@ -90,8 +91,18 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
         useAppStore.getState().autoRefreshDefault().catch(console.error);
         return;
       }
-      if (!resolvedNodeId) return;
-      connect(resolvedNodeId ?? undefined);
+      if (selectedValue === 'smart') {
+        const topNodes = [...regularNodes]
+          .sort((a, b) => (a.latency_ms || 9999) - (b.latency_ms || 9999))
+          .slice(0, 10)
+          .map(n => n.id);
+        if (topNodes.length > 0) {
+          useAppStore.getState().connectSmartGroup(topNodes);
+        }
+      } else {
+        if (!resolvedNodeId) return;
+        connect(resolvedNodeId ?? undefined);
+      }
     }
   };
 
@@ -100,7 +111,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
 
   // Determine node name shown under button
   const displayNodeName = isConnected
-    ? connectedNode?.name
+    ? (connectedChainId === 'smart-group' ? `${connectedNode?.name} (智能漂移)` : connectedNode?.name)
     : selectedValue === 'smart'
     ? globalBest?.name
     : nodes.find((n) => n.id === selectedValue)?.name;

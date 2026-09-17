@@ -28,6 +28,7 @@ export const api = {
   deleteChain: (id: string) => invoke<void>('delete_chain', { id }),
   getConnectedChain: () => invoke<string | null>('get_connected_chain'),
   connectChain: (chainId: string) => invoke<void>('connect_chain', { chainId }),
+  connectSmartGroup: (nodeIds: string[]) => invoke<void>('connect_smart_group', { nodeIds }),
   testChainLatency: (chainId: string) => invoke<number>('test_chain_latency', { chainId }),
   
   getSubscriptions: () => invoke<Subscription[]>('get_subscriptions'),

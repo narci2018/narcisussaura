@@ -437,7 +437,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(tauri::generate_handler![connect_smart_group, 
             get_machine_id,
             get_connection_status,
             get_connected_node,
@@ -566,4 +566,25 @@ async fn test_chain_latency(chain_id: String, state: State<'_, AppState>) -> Res
 
     let _ = state.chain_manager.update_latency(&chain_id, Some(total_latency));
     Ok(total_latency)
+}
+
+#[tauri::command]
+async fn connect_smart_group(
+    node_ids: Vec<String>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut nodes = Vec::new();
+    for id in node_ids {
+        if let Some(node) = state.node_manager.get_by_id(&id) {
+            nodes.push(node);
+        }
+    }
+    
+    if nodes.is_empty() {
+        return Err("No valid nodes found for smart group".to_string());
+    }
+    
+    let settings = state.settings.read().clone();
+    state.connection_manager.connect_smart_group(nodes, settings, app).await
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../services/api';
+import { invoke } from '@tauri-apps/api/core';
 import { ActiveTab, AppSettings, ConnectionStatus, ProxyChain, Subscription, TrafficStats, UnifiedNode } from '../types';
 
 interface AppStore {
@@ -25,6 +26,7 @@ interface AppStore {
   testingSpeedIds: string[];
   testingChainIds: string[];
   errorMessage: string | null;
+  inspectProgress: { current: number; total: number; status: string } | null;
 
   // CF Auth
   machineId: string | null;
@@ -82,6 +84,7 @@ interface AppStore {
   connectSmartGroup: (nodeIds: string[]) => Promise<void>;
   testChainLatency: (chainId: string) => Promise<void>;
   testAllChains: () => Promise<void>;
+  startDeepInspection: (nodes: UnifiedNode[]) => Promise<void>;
 }
 const CF_AUTH_URL = "https://auth.lkhotrich.kdns.fr/api/auth";
 const JWT_SECRET = "NARCISSUS_AURA_SUPER_SECRET_KEY_2026";
@@ -167,6 +170,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   testingSpeedIds: [],
   testingChainIds: [],
   errorMessage: null,
+  inspectProgress: null,
   
   machineId: null,
   authDisplayText: null,
@@ -682,6 +686,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         selectedNodeId: node.id,
         activeTab: 'servers',
         errorMessage: null,
+  inspectProgress: null,
       }));
       return true;
     } catch (e: any) {
@@ -816,6 +821,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
         chains: state.chains.map((c) => (c.id === chainId ? { ...c, latency_ms: -1 } : c)),
         testingChainIds: state.testingChainIds.filter((id) => id !== chainId),
       }));
+    }
+  },
+
+
+  startDeepInspection: async (nodes) => {
+    set({ inspectProgress: { current: 0, total: nodes.length, status: "Preparing inspector..." } });
+    const { listen } = await import('@tauri-apps/api/event');
+    const unlisten = await listen<{ current: number, total: number, status: string }>('inspector:progress', (event) => {
+      set({ inspectProgress: event.payload });
+    });
+    try {
+      const enrichedNodes = await invoke<UnifiedNode[]>('start_deep_inspection', { nodes });
+      set({ nodes: enrichedNodes });
+      for (const node of enrichedNodes) {
+        await invoke('update_node', { node });
+      }
+      get().refreshNodes();
+    } catch (e: any) {
+      set({ errorMessage: `Deep inspection failed: ${e}` });
+    } finally {
+      unlisten();
+      setTimeout(() => set({ inspectProgress: null }), 3000);
     }
   },
 

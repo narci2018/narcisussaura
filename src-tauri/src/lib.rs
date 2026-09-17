@@ -3,7 +3,7 @@ pub mod managers;
 pub mod models;
 pub mod platform;
 
-use crate::managers::{ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager};
+use crate::managers::{ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};
 use crate::models::{AppSettings, ConnectionStatus, ProxyChain, Subscription, UnifiedNode};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -18,7 +18,15 @@ pub struct AppState {
     pub subscription_manager: SubscriptionManager,
     pub connection_manager: ConnectionManager,
     pub chain_manager: ChainManager,
+    pub inspector_manager: InspectorManager,
     pub settings: Arc<RwLock<AppSettings>>,
+}
+
+
+#[tauri::command]
+async fn start_deep_inspection(nodes: Vec<UnifiedNode>, state: State<'_, AppState>, app: AppHandle) -> Result<Vec<UnifiedNode>, String> {
+    let settings = state.settings.read().clone();
+    state.inspector_manager.start_deep_inspection(nodes, settings, app).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -382,6 +390,7 @@ pub fn run() {
             let subscription_manager = SubscriptionManager::new(&app_data_dir, node_manager.clone());
             let connection_manager = ConnectionManager::new(&app_data_dir);
             let chain_manager = ChainManager::new(&app_data_dir);
+            let inspector_manager = InspectorManager::new(app_data_dir.clone());
             let settings = Arc::new(RwLock::new(AppSettings::default()));
 
             app.manage(AppState {
@@ -389,6 +398,7 @@ pub fn run() {
                 subscription_manager,
                 connection_manager,
                 chain_manager,
+                inspector_manager,
                 settings,
             });
 
@@ -442,6 +452,7 @@ pub fn run() {
             get_connection_status,
             get_connected_node,
             connect,
+            start_deep_inspection,
             disconnect,
             get_nodes,
             add_node,

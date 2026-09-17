@@ -3,31 +3,33 @@
 with open('src-tauri/src/lib.rs', 'r', encoding='utf-8') as f:
     content = f.read()
 
-new_cmd = '''
+# Add InspectorManager import
+content = content.replace(
+    'use crate::managers::{ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager};',
+    'use crate::managers::{ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};'
+)
+
+# Add inspector_manager to AppState
+content = content.replace(
+    '    pub chain_manager: ChainManager,\n    pub settings: Arc<RwLock<AppSettings>>,\n}',
+    '    pub chain_manager: ChainManager,\n    pub inspector_manager: InspectorManager,\n    pub settings: Arc<RwLock<AppSettings>>,\n}'
+)
+
+# Add start_deep_inspection command
+command_code = '''
 #[tauri::command]
-async fn connect_smart_group(
-    node_ids: Vec<String>,
-    app: AppHandle,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let mut nodes = Vec::new();
-    for id in node_ids {
-        if let Some(node) = state.node_manager.get_by_id(&id) {
-            nodes.push(node);
-        }
-    }
-    
-    if nodes.is_empty() {
-        return Err("No valid nodes found for smart group".to_string());
-    }
-    
+async fn start_deep_inspection(nodes: Vec<UnifiedNode>, state: State<'_, AppState>, app: AppHandle) -> Result<Vec<UnifiedNode>, String> {
     let settings = state.settings.read().clone();
-    state.connection_manager.connect_smart_group(nodes, settings, app).await
+    state.inspector_manager.start_deep_inspection(nodes, settings, app).await.map_err(|e| e.to_string())
 }
 '''
+content = content.replace('#[tauri::command]\nasync fn get_machine_id', command_code + '\n#[tauri::command]\nasync fn get_machine_id')
 
-content += new_cmd
-content = content.replace('generate_handler![', 'generate_handler![connect_smart_group, ')
+# Register start_deep_inspection in generate_context
+content = content.replace(
+    '            connect,\n',
+    '            connect,\n            start_deep_inspection,\n'
+)
 
 with open('src-tauri/src/lib.rs', 'w', encoding='utf-8') as f:
     f.write(content)

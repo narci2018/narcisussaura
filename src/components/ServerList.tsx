@@ -346,8 +346,8 @@ export const ServerList: React.FC = () => {
 
 
           <button
-            onClick={() => startDeepInspection(nodes)}
-            disabled={!!inspectProgress || nodes.length === 0}
+            onClick={() => startDeepInspection(filteredAndSortedNodes)}
+            disabled={!!inspectProgress || filteredAndSortedNodes.length === 0}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 hover:text-purple-300 text-xs font-medium border border-purple-500/30 transition-all disabled:opacity-50 shadow-sm"
           >
             <Rocket className="w-3.5 h-3.5" />

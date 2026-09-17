@@ -190,8 +190,13 @@ impl InspectorManager {
 
         let start_port = 30000;
 
+
         for (i, node) in nodes.iter().enumerate() {
-            let mut ob = adapter.build_outbound(node)?;
+            let mut ob = match adapter.build_outbound(node) {
+                Ok(o) => o,
+                Err(_) => continue,
+            };
+
             let tag = format!("out-{}", i);
             ob["tag"] = json!(tag);
             outbounds.push(ob);

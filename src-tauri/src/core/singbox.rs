@@ -634,13 +634,13 @@ impl SingBoxAdapter {
         if !proxy_domains.is_empty() {
             rules.push(json!({
                 "domain_suffix": proxy_domains,
-                "outbound": "proxy"
+                "outbound": dns_remote_detour
             }));
         }
         if !proxy_ips.is_empty() {
             rules.push(json!({
                 "ip_cidr": proxy_ips,
-                "outbound": "proxy"
+                "outbound": dns_remote_detour
             }));
         }
 
@@ -656,7 +656,7 @@ impl SingBoxAdapter {
         if !proxy_tags.is_empty() {
             rules.push(json!({
                 "rule_set": proxy_tags,
-                "outbound": "proxy"
+                "outbound": dns_remote_detour
             }));
         }
 
@@ -664,7 +664,7 @@ impl SingBoxAdapter {
         let default_outbound = if settings.routing_mode == "direct" {
             "direct"
         } else {
-            "proxy"
+            dns_remote_detour
         };
         rules.push(json!({
             "outbound": default_outbound

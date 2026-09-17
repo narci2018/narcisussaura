@@ -3,7 +3,7 @@ const JWT_SECRET = "NARCISSUS_AURA_SUPER_SECRET_KEY_2026"; // 签名密钥
 
 // Base64URL 编码辅助函数
 function btoaUrl(str) {
-  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
 // 颁发数字签名证书 (JWT)
@@ -388,7 +388,7 @@ export default {
         
         if (url.pathname === "/api/admin/update" && request.method === "POST") {
           const body = await request.json();
-          const { machine_id, authorized, display_text, days } = body;
+          const { machine_id, authorized, display_text, days, custom_sub_url } = body;
           
           let putOptions = {};
           let expires_at = null;
@@ -401,7 +401,8 @@ export default {
 
           const newData = { 
             authorized, 
-            display_text, 
+            display_text,
+            custom_sub_url,
             status: authorized ? "approved" : "pending", 
             last_seen: Date.now(),
             expires_at

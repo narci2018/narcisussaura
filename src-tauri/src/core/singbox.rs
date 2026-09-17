@@ -350,10 +350,7 @@ impl SingBoxAdapter {
             "type": "block",
             "tag": "block"
         }));
-        outbounds.push(json!({
-            "type": "dns",
-            "tag": "dns-out"
-        }));
+
 
         self.generate_config_common(outbounds, Vec::new(), "smart-urltest", settings, work_dir)
     }

@@ -1,32 +1,20 @@
 ﻿import re
+with open('src/components/ServerList.tsx', 'r', encoding='utf-8') as f:
+    text = f.read()
+
+text = text.replace('{item.oldLatency ? ms', '{item.oldLatency ? ${item.oldLatency}ms')
+text = text.replace('{item.oldSpeed ? M', '{item.oldSpeed ? ${(item.oldSpeed / (1024 * 1024)).toFixed(1)}M')
+text = text.replace('{item.newSpeed ? M', '{item.newSpeed ? ${(item.newSpeed / (1024 * 1024)).toFixed(1)}M')
+# Oh, the colon part is missing a backtick in my first attempt... wait!
+# If it is {item.oldLatency ? ms : '无'}
+# and I replace '{item.oldLatency ? ms' with '{item.oldLatency ? ${item.oldLatency}ms'
+# then the rest remains: : '无'} -> so it becomes '{item.oldLatency ? ${item.oldLatency}ms : '无'}' which is CORRECT!
+
+with open('src/components/ServerList.tsx', 'w', encoding='utf-8') as f:
+    f.write(text)
+
 with open('src/stores/appStore.ts', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-new_cmd = '''
-  connectSmartGroup: async (nodeIds) => {
-    // Auth Check
-    const isAuth = await get().checkAuth();
-    if (!isAuth) {
-      set({ errorMessage: "请联系服务商授权" });
-      return;
-    }
-
-    set({ status: 'connecting', connectedChainId: 'smart-group', errorMessage: null });
-    try {
-      await api.connectSmartGroup(nodeIds);
-      const [status, connectedNode] = await Promise.all([
-        api.getConnectionStatus(),
-        api.getConnectedNode(),
-      ]);
-      set({ status, connectedNode });
-    } catch (e: any) {
-      console.error('Smart Group connect failed:', e);
-      set({ status: 'disconnected', errorMessage: Connect failed: , connectedChainId: null });
-    }
-  },
-'''
-
-content = re.sub(r'(  connectChain: async.*?\},)\n', r'\1\n' + new_cmd, content, flags=re.DOTALL)
-
+    text2 = f.read()
+text2 = text2.replace('set({ errorMessage: Deep inspection failed:  });', 'set({ errorMessage: Deep inspection failed:  });')
 with open('src/stores/appStore.ts', 'w', encoding='utf-8') as f:
-    f.write(content)
+    f.write(text2)

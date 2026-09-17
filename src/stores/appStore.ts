@@ -3,6 +3,23 @@ import { api } from '../services/api';
 import { invoke } from '@tauri-apps/api/core';
 import { ActiveTab, AppSettings, ConnectionStatus, ProxyChain, Subscription, TrafficStats, UnifiedNode } from '../types';
 
+
+export interface InspectReportItem {
+  id: string;
+  oldName: string;
+  newName: string;
+  oldCountry: string;
+  newCountry: string;
+  oldLatency: number | null;
+  newLatency: number | null;
+  oldSpeed: number | null;
+  newSpeed: number | null;
+}
+
+export interface InspectReport {
+  items: InspectReportItem[];
+}
+
 interface AppStore {
   status: ConnectionStatus;
   connectedNode: UnifiedNode | null;
@@ -27,6 +44,8 @@ interface AppStore {
   testingChainIds: string[];
   errorMessage: string | null;
   inspectProgress: { current: number; total: number; status: string } | null;
+  inspectReport: InspectReport | null;
+  closeInspectReport: () => void;
 
   // CF Auth
   machineId: string | null;
@@ -171,6 +190,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   testingChainIds: [],
   errorMessage: null,
   inspectProgress: null,
+  inspectReport: null,
   
   machineId: null,
   authDisplayText: null,
@@ -260,6 +280,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSortMode: (sortMode) => set({ sortMode, sortBySpeed: sortMode === 'speed' }),
   setSelectedNodeId: (selectedNodeId) => set({ selectedNodeId }),
   setErrorMessage: (errorMessage) => set({ errorMessage }),
+  closeInspectReport: () => set({ inspectReport: null }),
 
   connect: async (overrideId, relayIdOverride) => {
     // Auth Check
@@ -825,24 +846,53 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
 
-  startDeepInspection: async (nodes) => {
-    set({ inspectProgress: { current: 0, total: nodes.length, status: "Preparing inspector..." } });
+  startDeepInspection: async (nodesToTest) => {
+    set({ inspectProgress: { current: 0, total: nodesToTest.length, status: "Preparing inspector..." }, inspectReport: null });
     const { listen } = await import('@tauri-apps/api/event');
     const unlisten = await listen<{ current: number, total: number, status: string }>('inspector:progress', (event) => {
       set({ inspectProgress: event.payload });
     });
     try {
-      const enrichedNodes = await invoke<UnifiedNode[]>('start_deep_inspection', { nodes });
-      set({ nodes: enrichedNodes });
+      const enrichedNodes = await invoke<UnifiedNode[]>('start_deep_inspection', { nodes: nodesToTest });
+      
+      const items: InspectReportItem[] = [];
+      const nodeMap = new Map(nodesToTest.map(n => [n.id, n]));
+      
+      for (const en of enrichedNodes) {
+        const orig = nodeMap.get(en.id);
+        if (orig) {
+          const latDiff = Math.abs((orig.latency_ms || 0) - (en.latency_ms || 0));
+          const spdDiff = Math.abs((orig.speed_bps || 0) - (en.speed_bps || 0));
+          const isCountryChanged = orig.country_code !== en.country_code;
+          // Filter significant changes
+          if (isCountryChanged || latDiff > 50 || spdDiff > 1024 * 1024) {
+            items.push({
+              id: en.id,
+              oldName: orig.name,
+              newName: en.name,
+              oldCountry: orig.country_code || 'Unknown',
+              newCountry: en.country_code,
+              oldLatency: orig.latency_ms ?? null,
+              newLatency: en.latency_ms ?? null,
+              oldSpeed: orig.speed_bps ?? null,
+              newSpeed: en.speed_bps ?? null
+            });
+          }
+        }
+      }
+      
+      set({ nodes: get().nodes.map(n => enrichedNodes.find(en => en.id === n.id) || n) });
       for (const node of enrichedNodes) {
         await invoke('update_node', { node });
       }
+      
+      set({ inspectReport: { items } });
       get().refreshNodes();
     } catch (e: any) {
       set({ errorMessage: `Deep inspection failed: ${e}` });
     } finally {
       unlisten();
-      setTimeout(() => set({ inspectProgress: null }), 3000);
+      set({ inspectProgress: null });
     }
   },
 

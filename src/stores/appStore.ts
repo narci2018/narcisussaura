@@ -197,7 +197,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   isAuthorized: false,
   updateSubViaProxy: true,
   setUpdateSubViaProxy: (val) => set({ updateSubViaProxy: val }),
-  relayEnabled: true,
+  relayEnabled: false,
   selectedRelayNodeId: 'auto',
   relayCandidates: [],
   setRelayEnabled: (enabled) => set({ relayEnabled: enabled }),

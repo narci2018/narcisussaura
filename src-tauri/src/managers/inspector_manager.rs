@@ -89,10 +89,14 @@ impl InspectorManager {
             for task in tasks {
                 if let Ok((node_id, res)) = task.await {
                     if let Some(node) = chunk.iter_mut().find(|n| n.id == node_id) {
-                        if let Ok((latency, cc)) = res {
+                        if let Ok((latency, cc, country)) = res {
                             node.latency_ms = Some(latency as i64);
-                            node.country_code = cc.clone();
-                            // Optional: rewrite name
+                            if cc != "UN" && !cc.is_empty() && cc.len() == 2 {
+                                node.country_code = cc;
+                                if !country.is_empty() {
+                                    node.country_name = country;
+                                }
+                            }
                         } else {
                             node.latency_ms = Some(9999);
                         }
@@ -160,16 +164,29 @@ impl InspectorManager {
             let _ = child.wait();
         }
 
-        // Rename nodes based on their country and speed
+        // Rename nodes based on their country and speed without destroying the original provider name
         for node in results.iter_mut() {
             if let Some(lat) = node.latency_ms {
                 if lat < 9999 {
                     let speed_mbps = node.speed_bps.unwrap_or(0) / 125_000;
                     let emoji = Self::country_code_to_emoji(&node.country_code);
+                    let clean_name = node.name.trim();
+
+                    // Only prepend country tag if it isn't already present in the name
+                    if !node.country_code.is_empty() && node.country_code != "UN" {
+                        let upper_code = node.country_code.to_uppercase();
+                        if !clean_name.contains(&emoji) && !clean_name.to_uppercase().contains(&upper_code) {
+                            if speed_mbps > 0 {
+                                node.name = format!("{} [{}] {} ({}ms·{}M)", emoji, upper_code, clean_name, lat, speed_mbps);
+                            } else {
+                                node.name = format!("{} [{}] {} ({}ms)", emoji, upper_code, clean_name, lat);
+                            }
+                            continue;
+                        }
+                    }
+
                     if speed_mbps > 0 {
-                        node.name = format!("{} {} - {}ms - {}Mbps", emoji, node.country_code.to_uppercase(), lat, speed_mbps);
-                    } else {
-                        node.name = format!("{} {} - {}ms", emoji, node.country_code.to_uppercase(), lat);
+                        node.name = format!("{} ({}ms·{}M)", clean_name, lat, speed_mbps);
                     }
                 } else {
                     node.name = format!("{} (Timeout)", node.name);
@@ -229,28 +246,57 @@ impl InspectorManager {
         Ok((serde_json::to_string_pretty(&config)?, port_map))
     }
 
-    async fn test_node_latency_and_country(port: u16) -> Result<(u64, String)> {
+    async fn test_node_latency_and_country(port: u16) -> Result<(u64, String, String)> {
         let proxy_url = format!("socks5://127.0.0.1:{}", port);
         let proxy = reqwest::Proxy::all(&proxy_url)?;
         let client = reqwest::Client::builder()
             .proxy(proxy)
-            .timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(6))
             .build()?;
 
+        // 1. Measure real latency via standard generate_204 endpoint
         let start = Instant::now();
-        let res = client.get("https://1.1.1.1/cdn-cgi/trace").send().await?;
-        let text = res.text().await?;
+        let _ = client.get("http://cp.cloudflare.com/generate_204").send().await;
         let latency = start.elapsed().as_millis() as u64;
 
-        let mut loc = "UN".to_string();
-        for line in text.lines() {
-            if line.starts_with("loc=") {
-                loc = line[4..].to_string();
-                break;
+        // 2. Query accurate GeoIP via ip-api.com
+        let mut cc = String::new();
+        let mut country = String::new();
+
+        if let Ok(res) = client.get("http://ip-api.com/json").send().await {
+            if let Ok(json) = res.json::<serde_json::Value>().await {
+                if json.get("status").and_then(|s| s.as_str()) == Some("success") {
+                    if let Some(code) = json.get("countryCode").and_then(|c| c.as_str()) {
+                        cc = code.to_uppercase();
+                    }
+                    if let Some(name) = json.get("country").and_then(|c| c.as_str()) {
+                        country = name.to_string();
+                    }
+                }
             }
         }
 
-        Ok((latency, loc))
+        // Fallback to ipwho.is if needed
+        if cc.is_empty() {
+            if let Ok(res) = client.get("http://ipwho.is/").send().await {
+                if let Ok(json) = res.json::<serde_json::Value>().await {
+                    if json.get("success").and_then(|s| s.as_bool()).unwrap_or(false) {
+                        if let Some(code) = json.get("country_code").and_then(|c| c.as_str()) {
+                            cc = code.to_uppercase();
+                        }
+                        if let Some(name) = json.get("country").and_then(|c| c.as_str()) {
+                            country = name.to_string();
+                        }
+                    }
+                }
+            }
+        }
+
+        if cc.is_empty() {
+            cc = "UN".to_string();
+        }
+
+        Ok((latency, cc, country))
     }
 
     async fn test_node_speed(port: u16) -> Result<u64> {

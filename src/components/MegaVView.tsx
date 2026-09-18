@@ -5,6 +5,8 @@ import { useAppStore } from '../stores/appStore';
 import { UnifiedNode } from '../types';
 import { RelayBar } from './RelayBar';
 
+import { matchNodeKeywords } from './SimpleMode/countries';
+
 export const MegaVView: React.FC = () => {
   const { status, connectedNode, connect, disconnect, testLatency, testingLatencyIds, refreshNodes, nodes, errorMessage, setErrorMessage } = useAppStore();
   const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'MegaV'), [nodes]);
@@ -45,13 +47,9 @@ export const MegaVView: React.FC = () => {
     }
   };
 
-  const filtered = displayNodes.filter(
-    (n) =>
-      n.name.toLowerCase().includes(search.toLowerCase()) ||
-      n.city.toLowerCase().includes(search.toLowerCase()) ||
-      n.country_code.toLowerCase().includes(search.toLowerCase()) ||
-      n.protocol.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = React.useMemo(() => {
+    return displayNodes.filter((n) => matchNodeKeywords(n, search));
+  }, [displayNodes, search]);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#08090d] text-gray-100 overflow-hidden">

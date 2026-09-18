@@ -305,7 +305,7 @@ impl SingBoxAdapter {
             "tag": "block"
         }));
 
-        self.generate_config_common(outbounds, Vec::new(), "chain-0", settings, work_dir)
+        self.generate_config_common(outbounds, Vec::new(), "chain-0", "chain-0", settings, work_dir)
     }
 
     pub fn generate_config_for_urltest(
@@ -352,13 +352,14 @@ impl SingBoxAdapter {
         }));
 
 
-        self.generate_config_common(outbounds, Vec::new(), "smart-urltest", settings, work_dir)
+        self.generate_config_common(outbounds, Vec::new(), "smart-urltest", "smart-urltest", settings, work_dir)
     }
 
     pub fn generate_config_common(
         &self,
         outbounds: Vec<Value>,
         endpoints: Vec<Value>,
+        proxy_outbound: &str,
         dns_remote_detour: &str,
         settings: &AppSettings,
         _work_dir: &Path,
@@ -634,13 +635,13 @@ impl SingBoxAdapter {
         if !proxy_domains.is_empty() {
             rules.push(json!({
                 "domain_suffix": proxy_domains,
-                "outbound": dns_remote_detour
+                "outbound": proxy_outbound
             }));
         }
         if !proxy_ips.is_empty() {
             rules.push(json!({
                 "ip_cidr": proxy_ips,
-                "outbound": dns_remote_detour
+                "outbound": proxy_outbound
             }));
         }
 
@@ -656,7 +657,7 @@ impl SingBoxAdapter {
         if !proxy_tags.is_empty() {
             rules.push(json!({
                 "rule_set": proxy_tags,
-                "outbound": dns_remote_detour
+                "outbound": proxy_outbound
             }));
         }
 
@@ -664,7 +665,7 @@ impl SingBoxAdapter {
         let default_outbound = if settings.routing_mode == "direct" {
             "direct"
         } else {
-            dns_remote_detour
+            proxy_outbound
         };
         rules.push(json!({
             "outbound": default_outbound
@@ -831,6 +832,6 @@ impl CoreAdapter for SingBoxAdapter {
             && node.protocol != ProtocolType::Masque;
         let dns_remote_detour = if has_active_relay { "relay" } else { "proxy" };
 
-        self.generate_config_common(outbounds, endpoints, dns_remote_detour, settings, _work_dir)
+        self.generate_config_common(outbounds, endpoints, "proxy", dns_remote_detour, settings, _work_dir)
     }
 }

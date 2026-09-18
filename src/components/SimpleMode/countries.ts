@@ -1,4 +1,4 @@
-﻿export const ALL_COUNTRIES = [
+export const ALL_COUNTRIES = [
   { code: 'US', zh: '美国', en: 'United States' }, { code: 'HK', zh: '香港', en: 'Hong Kong' }, { code: 'JP', zh: '日本', en: 'Japan' }, { code: 'SG', zh: '新加坡', en: 'Singapore' }, { code: 'GB', zh: '英国', en: 'United Kingdom' }, { code: 'TW', zh: '台湾', en: 'Taiwan' }, { code: 'KR', zh: '韩国', en: 'South Korea' }, { code: 'DE', zh: '德国', en: 'Germany' }, { code: 'FR', zh: '法国', en: 'France' }, { code: 'AU', zh: '澳大利亚', en: 'Australia' },
   { code: 'CA', zh: '加拿大', en: 'Canada' }, { code: 'NL', zh: '荷兰', en: 'Netherlands' }, { code: 'IN', zh: '印度', en: 'India' }, { code: 'BR', zh: '巴西', en: 'Brazil' }, { code: 'RU', zh: '俄罗斯', en: 'Russia' }, { code: 'TR', zh: '土耳其', en: 'Turkey' }, { code: 'IT', zh: '意大利', en: 'Italy' }, { code: 'ES', zh: '西班牙', en: 'Spain' }, { code: 'CH', zh: '瑞士', en: 'Switzerland' }, { code: 'SE', zh: '瑞典', en: 'Sweden' },
   { code: 'PL', zh: '波兰', en: 'Poland' }, { code: 'CZ', zh: '捷克', en: 'Czech Republic' }, { code: 'FI', zh: '芬兰', en: 'Finland' }, { code: 'NO', zh: '挪威', en: 'Norway' }, { code: 'DK', zh: '丹麦', en: 'Denmark' }, { code: 'AR', zh: '阿根廷', en: 'Argentina' }, { code: 'MX', zh: '墨西哥', en: 'Mexico' }, { code: 'TH', zh: '泰国', en: 'Thailand' }, { code: 'ID', zh: '印度尼西亚', en: 'Indonesia' }, { code: 'VN', zh: '越南', en: 'Vietnam' },
@@ -12,5 +12,59 @@
   { code: 'VE', zh: '委内瑞拉', en: 'Venezuela' }, { code: 'UY', zh: '乌拉圭', en: 'Uruguay' }, { code: 'PY', zh: '巴拉圭', en: 'Paraguay' }, { code: 'BO', zh: '玻利维亚', en: 'Bolivia' }, { code: 'CU', zh: '古巴', en: 'Cuba' }, { code: 'JM', zh: '牙买加', en: 'Jamaica' }, { code: 'CR', zh: '哥斯达黎加', en: 'Costa Rica' }, { code: 'PA', zh: '巴拿马', en: 'Panama' }, { code: 'DO', zh: '多米尼加', en: 'Dominican Republic' }, { code: 'GT', zh: '危地马拉', en: 'Guatemala' },
   { code: 'HN', zh: '洪都拉斯', en: 'Honduras' }, { code: 'SV', zh: '萨尔瓦多', en: 'El Salvador' }, { code: 'NI', zh: '尼加拉瓜', en: 'Nicaragua' }, { code: 'PR', zh: '波多黎各', en: 'Puerto Rico' }, { code: 'BS', zh: '巴哈马', en: 'Bahamas' }, { code: 'TT', zh: '特立尼达和多巴哥', en: 'Trinidad and Tobago' }, { code: 'GH', zh: '加纳', en: 'Ghana' }, { code: 'CI', zh: '科特迪瓦', en: 'Ivory Coast' }, { code: 'SN', zh: '塞内加尔', en: 'Senegal' }, { code: 'CM', zh: '喀麦隆', en: 'Cameroon' },
   { code: 'AO', zh: '安哥拉', en: 'Angola' }, { code: 'MZ', zh: '莫桑比克', en: 'Mozambique' }, { code: 'ZM', zh: '赞比亚', en: 'Zambia' }, { code: 'ZW', zh: '津巴布韦', en: 'Zimbabwe' }, { code: 'UG', zh: '乌干达', en: 'Uganda' }, { code: 'TZ', zh: '坦桑尼亚', en: 'Tanzania' }, { code: 'ET', zh: '埃塞俄比亚', en: 'Ethiopia' }, { code: 'SD', zh: '苏丹', en: 'Sudan' }, { code: 'SS', zh: '南苏丹', en: 'South Sudan' }, { code: 'SO', zh: '索马里', en: 'Somalia' },
-  { code: 'MG', zh: '马达加斯加', en: 'Madagascar' }, { code: 'MU', zh: '毛里求斯', en: 'Mauritius' }, { code: 'SC', zh: '塞舌尔', en: 'Seychelles' }, { code: 'MV', zh: '马尔代夫', en: 'Maldives' }, { code: 'FJ', zh: '斐济', en: 'Fiji' }, { code: 'PG', zh: '巴布亚新几内亚', en: 'Papua New Guinea' }
 ];
+
+import { UnifiedNode } from '../../types';
+
+export function matchNodeKeywords(node: UnifiedNode, query: string): boolean {
+  if (!query) return true;
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+
+  const name = (node.name || '').toLowerCase();
+  const address = (node.address || '').toLowerCase();
+  const port = node.port ? node.port.toString() : '';
+  const protocol = (node.protocol || '').toLowerCase();
+  const city = (node.city || '').toLowerCase();
+  const countryCode = (node.country_code || '').toLowerCase();
+  const countryName = (node.country_name || '').toLowerCase();
+  const tags = (node.tags || []).join(' ').toLowerCase();
+
+  // 1. Direct field matches
+  if (
+    name.includes(q) ||
+    address.includes(q) ||
+    port.includes(q) ||
+    protocol.includes(q) ||
+    city.includes(q) ||
+    countryCode.includes(q) ||
+    countryName.includes(q) ||
+    tags.includes(q)
+  ) {
+    return true;
+  }
+
+  // 2. Cross-language Country matches (e.g. searching "日本" matches JP / Japan, searching "美国" matches US / United States)
+  for (const c of ALL_COUNTRIES) {
+    const zhMatch = c.zh.toLowerCase().includes(q);
+    const enMatch = c.en.toLowerCase().includes(q);
+    const codeMatch = c.code.toLowerCase() === q;
+
+    if (zhMatch || enMatch || codeMatch) {
+      const targetCode = c.code.toLowerCase();
+      const targetEn = c.en.toLowerCase();
+      if (
+        countryCode === targetCode ||
+        countryName.includes(targetEn) ||
+        name.includes(targetCode) ||
+        name.includes(targetEn) ||
+        name.includes(c.zh)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+

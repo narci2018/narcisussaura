@@ -149,29 +149,69 @@ export function getBestNode(nodes: UnifiedNode[]): UnifiedNode | null {
 
 
 export function getCountryCodeForNode(node: UnifiedNode): string {
+  // If node already has a valid 2-letter country code (not UN / OTHER / empty), check if it matches ALL_COUNTRIES
+  if (node.country_code && node.country_code.length === 2 && node.country_code !== 'UN' && node.country_code !== 'XX') {
+    const codeUpper = node.country_code.toUpperCase();
+    if (ALL_COUNTRIES.some(c => c.code === codeUpper)) {
+      return codeUpper;
+    }
+  }
+
   const upper = node.name.toUpperCase();
   const words = upper.split(/[^A-Z]+/);
-  const hasCode = (c: string) => words.includes(c);
+  // List of 2-letter country codes that collide with common English words
+  const AMBIGUOUS_CODES = new Set(['IN', 'AT', 'IS', 'NO', 'IT', 'ME', 'SO', 'BY', 'DO', 'AM', 'MY', 'OR', 'TO', 'AS', 'BE', 'AN']);
+  
+  const hasCode = (c: string) => {
+    if (AMBIGUOUS_CODES.has(c)) {
+      // Must not match as a plain word like "server in us" or "node no 1"
+      // Only match if enclosed in brackets or delimiters, e.g. [IN], (IN), -IN-, |IN|
+      const bracketRegex = new RegExp(`([\\[\\(\\{<|\\-_])${c}([\\]\\)\\}>|\\-_])`, 'i');
+      return bracketRegex.test(node.name);
+    }
+    return words.includes(c);
+  };
   
   let code = '';
+  // 1. First try exact Chinese country names in node name
   for (const fc of ALL_COUNTRIES) {
-    if (
-      node.name.includes(fc.zh) || 
-      upper.includes(fc.en.toUpperCase()) || 
-      hasCode(fc.code)
-    ) {
+    if (node.name.includes(fc.zh)) {
       code = fc.code;
       break;
     }
   }
-  
+
+  // 2. Try full English country names
+  if (!code) {
+    for (const fc of ALL_COUNTRIES) {
+      if (upper.includes(fc.en.toUpperCase())) {
+        code = fc.code;
+        break;
+      }
+    }
+  }
+
+  // 3. Special aliases
   if (!code) {
     if (node.name.includes('狮城')) code = 'SG';
     else if (node.name.includes('台湾') || node.name.includes('台灣')) code = 'TW';
     else if (upper.includes('TOKYO')) code = 'JP';
-    else if (hasCode('USA')) code = 'US';
-    else if (hasCode('UK') || upper.includes('BRITAIN')) code = 'GB';
-    else if (node.country_code && node.country_code !== '') code = node.country_code;
+    else if (words.includes('USA')) code = 'US';
+    else if (words.includes('UK') || upper.includes('BRITAIN') || upper.includes('LONDON')) code = 'GB';
+  }
+
+  // 4. Try country codes
+  if (!code) {
+    for (const fc of ALL_COUNTRIES) {
+      if (hasCode(fc.code)) {
+        code = fc.code;
+        break;
+      }
+    }
+  }
+  
+  if (!code) {
+    if (node.country_code && node.country_code !== '') code = node.country_code;
     else code = 'OTHER';
   }
   return code;

@@ -809,6 +809,60 @@ impl NodeManager {
         })
     }
 
+    pub fn detect_country(name: &str) -> (String, String) {
+        let name_upper = name.to_uppercase();
+        let has_code = |code: &str| -> bool {
+            name_upper.split(|c: char| !c.is_ascii_alphabetic()).any(|w| w == code)
+        };
+        let matches = |zh: &str, en: &str, code: &str| -> bool {
+            name.contains(zh) || name_upper.contains(en) || has_code(code)
+        };
+
+        if matches("香港", "HONG KONG", "HK") {
+            ("HK".to_string(), "Hong Kong".to_string())
+        } else if matches("台湾", "TAIWAN", "TW") || name.contains("台灣") {
+            ("TW".to_string(), "Taiwan".to_string())
+        } else if matches("日本", "JAPAN", "JP") || name_upper.contains("TOKYO") {
+            ("JP".to_string(), "Japan".to_string())
+        } else if matches("美国", "UNITED STATES", "US") || name.contains("美國") || has_code("USA") {
+            ("US".to_string(), "United States".to_string())
+        } else if matches("新加坡", "SINGAPORE", "SG") || name.contains("狮城") {
+            ("SG".to_string(), "Singapore".to_string())
+        } else if matches("韩国", "KOREA", "KR") || name_upper.contains("SOUTH KOREA") {
+            ("KR".to_string(), "South Korea".to_string())
+        } else if matches("英国", "UNITED KINGDOM", "GB") || name_upper.contains("BRITAIN") || has_code("UK") {
+            ("GB".to_string(), "United Kingdom".to_string())
+        } else if matches("德国", "GERMANY", "DE") {
+            ("DE".to_string(), "Germany".to_string())
+        } else if matches("法国", "FRANCE", "FR") {
+            ("FR".to_string(), "France".to_string())
+        } else if matches("澳洲", "AUSTRALIA", "AU") || name.contains("澳大利亚") {
+            ("AU".to_string(), "Australia".to_string())
+        } else if matches("加拿大", "CANADA", "CA") {
+            ("CA".to_string(), "Canada".to_string())
+        } else if matches("荷兰", "NETHERLANDS", "NL") {
+            ("NL".to_string(), "Netherlands".to_string())
+        } else if matches("印度", "INDIA", "IN") {
+            ("IN".to_string(), "India".to_string())
+        } else if matches("巴西", "BRAZIL", "BR") {
+            ("BR".to_string(), "Brazil".to_string())
+        } else if matches("俄罗斯", "RUSSIA", "RU") {
+            ("RU".to_string(), "Russia".to_string())
+        } else if matches("土耳其", "TURKEY", "TR") {
+            ("TR".to_string(), "Turkey".to_string())
+        } else if matches("意大利", "ITALY", "IT") {
+            ("IT".to_string(), "Italy".to_string())
+        } else if matches("西班牙", "SPAIN", "ES") {
+            ("ES".to_string(), "Spain".to_string())
+        } else if matches("瑞士", "SWITZERLAND", "CH") {
+            ("CH".to_string(), "Switzerland".to_string())
+        } else if matches("瑞典", "SWEDEN", "SE") {
+            ("SE".to_string(), "Sweden".to_string())
+        } else {
+            ("".to_string(), "".to_string())
+        }
+    }
+
     fn parse_vless_link(link: &str) -> Result<UnifiedNode, String> {
         let parsed = Url::parse(link).map_err(|e| format!("Invalid URL: {}", e))?;
         let uuid = parsed.username();
@@ -826,14 +880,16 @@ impl NodeManager {
         let short_id = query.get("sid").cloned();
         let fingerprint = query.get("fp").cloned().unwrap_or_else(|| "chrome".to_string());
 
+        let (country_code, country_name) = Self::detect_country(&name);
+
         let node = UnifiedNode {
             id: Uuid::new_v4().to_string(),
             name,
             protocol: ProtocolType::Vless,
             address: host.to_string(),
             port,
-            country_code: "".to_string(),
-            country_name: "".to_string(),
+            country_code,
+            country_name,
             city: "".to_string(),
             group: "Imported".to_string(),
             tags: vec!["Imported".to_string()],
@@ -867,14 +923,16 @@ impl NodeManager {
         let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
         let sni = query.get("sni").cloned().unwrap_or_else(|| host.to_string());
 
+        let (country_code, country_name) = Self::detect_country(&name);
+
         Ok(UnifiedNode {
             id: Uuid::new_v4().to_string(),
             name,
             protocol: ProtocolType::Trojan,
             address: host.to_string(),
             port,
-            country_code: "".to_string(),
-            country_name: "".to_string(),
+            country_code,
+            country_name,
             city: "".to_string(),
             group: "Imported".to_string(),
             tags: vec!["Trojan".to_string()],
@@ -897,14 +955,16 @@ impl NodeManager {
         let name = parsed.fragment().map(|f| urlencoding::decode(f).unwrap_or(f.into()).to_string())
             .unwrap_or_else(|| format!("SOCKS5-{}", host));
 
+        let (country_code, country_name) = Self::detect_country(&name);
+
         Ok(UnifiedNode {
             id: Uuid::new_v4().to_string(),
             name,
             protocol: ProtocolType::Socks5,
             address: host.to_string(),
             port,
-            country_code: "".to_string(),
-            country_name: "".to_string(),
+            country_code,
+            country_name,
             city: "".to_string(),
             group: "Imported".to_string(),
             tags: vec!["SOCKS5".to_string()],
@@ -959,14 +1019,16 @@ impl NodeManager {
             .map(|f| urlencoding::decode(f).unwrap_or(f.into()).to_string())
             .unwrap_or_else(|| format!("SS-{}", host));
 
+        let (country_code, country_name) = Self::detect_country(&name);
+
         Ok(UnifiedNode {
             id: Uuid::new_v4().to_string(),
             name,
             protocol: ProtocolType::Shadowsocks,
             address: host.to_string(),
             port,
-            country_code: "".to_string(),
-            country_name: "".to_string(),
+            country_code,
+            country_name,
             city: "".to_string(),
             group: "Imported".to_string(),
             tags: vec!["Shadowsocks".to_string()],

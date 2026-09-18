@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { UnifiedNode } from '../types';
+import { matchNodeKeywords } from './SimpleMode/countries';
 
 function formatSpeed(bytesPerSec?: number | null): string {
   if (!bytesPerSec || bytesPerSec <= 0) return '';
@@ -135,13 +136,7 @@ export const ServerList: React.FC = () => {
       if (selectedProtocol !== 'all' && node.protocol !== selectedProtocol) return false;
       if (selectedGroup !== 'all' && node.group !== selectedGroup) return false;
       if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        return (
-          node.name.toLowerCase().includes(q) ||
-          node.address.toLowerCase().includes(q) ||
-          node.country_name.toLowerCase().includes(q) ||
-          node.group.toLowerCase().includes(q)
-        );
+        return matchNodeKeywords(node, searchQuery);
       }
       return true;
     });

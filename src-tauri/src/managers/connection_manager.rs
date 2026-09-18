@@ -1356,9 +1356,22 @@ rules:
             *self.connected_node.lock() = None;
             *self.connected_chain.lock() = None;
             let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-            return Err("Smart group core startup failed".into());
+            return Err(format!("Smart group core startup failed: {}", exit_status));
         }
 
+        // End-to-End Real Internet Connectivity Verification Probe
+        log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
+        if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
+            log::warn!("Internet connectivity verification failed for smart group: {}", probe_err);
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = WindowsProxy::disable_proxy();
+            *self.status.lock() = ConnectionStatus::Error;
+            *self.connected_node.lock() = None;
+            *self.connected_chain.lock() = None;
+            let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+            return Err(format!("外网连通性校验失败: {}", probe_err));
+        }
 
         *self.process.lock() = Some(child);
         *self.connect_time.lock() = Some(Instant::now());

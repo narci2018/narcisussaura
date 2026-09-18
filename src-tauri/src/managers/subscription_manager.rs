@@ -572,7 +572,7 @@ impl SubscriptionManager {
             };
 
             // Detect Country Code from Node Name
-            let country_code = Self::detect_country_code_from_name(name);
+            let (country_code, country_name) = crate::managers::NodeManager::detect_country(name);
 
             nodes.push(UnifiedNode {
                 id: Uuid::new_v4().to_string(),
@@ -581,7 +581,7 @@ impl SubscriptionManager {
                 address: server.to_string(),
                 port,
                 country_code,
-                country_name: "".to_string(),
+                country_name,
                 city: "".to_string(),
                 group: group_name.to_string(),
                 tags: vec![group_name.to_string()],
@@ -597,64 +597,6 @@ impl SubscriptionManager {
         Ok(nodes)
     }
 
-    fn detect_country_code_from_name(name: &str) -> String {
-        let name_upper = name.to_uppercase();
-        
-        // Use word boundaries for 2-letter codes to avoid "SE" matching "SENEGAL" or "DE" matching "SWEDEN"
-        let has_code = |code: &str| -> bool {
-            name_upper.split(|c: char| !c.is_ascii_alphabetic()).any(|w| w == code)
-        };
-        
-        // Helper to check Chinese, full English, and code
-        let matches = |zh: &str, en: &str, code: &str| -> bool {
-            name.contains(zh) || name_upper.contains(en) || has_code(code)
-        };
-
-        if matches("香港", "HONG KONG", "HK") {
-            "HK".to_string()
-        } else if matches("台湾", "TAIWAN", "TW") || name.contains("台灣") {
-            "TW".to_string()
-        } else if matches("日本", "JAPAN", "JP") || name_upper.contains("TOKYO") {
-            "JP".to_string()
-        } else if matches("美国", "UNITED STATES", "US") || name.contains("美國") || has_code("USA") {
-            "US".to_string()
-        } else if matches("新加坡", "SINGAPORE", "SG") || name.contains("狮城") {
-            "SG".to_string()
-        } else if matches("韩国", "KOREA", "KR") || name_upper.contains("SOUTH KOREA") {
-            "KR".to_string()
-        } else if matches("英国", "UNITED KINGDOM", "GB") || name_upper.contains("BRITAIN") || has_code("UK") {
-            "GB".to_string()
-        } else if matches("德国", "GERMANY", "DE") {
-            "DE".to_string()
-        } else if matches("法国", "FRANCE", "FR") {
-            "FR".to_string()
-        } else if matches("澳洲", "AUSTRALIA", "AU") || name.contains("澳大利亚") {
-            "AU".to_string()
-        } else if matches("加拿大", "CANADA", "CA") {
-            "CA".to_string()
-        } else if matches("荷兰", "NETHERLANDS", "NL") {
-            "NL".to_string()
-        } else if matches("印度", "INDIA", "IN") {
-            "IN".to_string()
-        } else if matches("巴西", "BRAZIL", "BR") {
-            "BR".to_string()
-        } else if matches("俄罗斯", "RUSSIA", "RU") {
-            "RU".to_string()
-        } else if matches("土耳其", "TURKEY", "TR") {
-            "TR".to_string()
-        } else if matches("意大利", "ITALY", "IT") {
-            "IT".to_string()
-        } else if matches("西班牙", "SPAIN", "ES") {
-            "ES".to_string()
-        } else if matches("瑞士", "SWITZERLAND", "CH") {
-            "CH".to_string()
-        } else if matches("瑞典", "SWEDEN", "SE") {
-            "SE".to_string()
-        } else {
-            "".to_string()
-        }
-    }
-
     fn parse_links_text(&self, text: &str, group_name: &str) -> Vec<UnifiedNode> {
         let mut nodes = Vec::new();
         for line in text.lines() {
@@ -663,7 +605,11 @@ impl SubscriptionManager {
                 continue;
             }
             if let Ok(mut node) = self.node_manager.parse_share_link(line) {
-                node.country_code = Self::detect_country_code_from_name(&node.name);
+                if node.country_code.is_empty() {
+                    let (cc, cn) = crate::managers::NodeManager::detect_country(&node.name);
+                    node.country_code = cc;
+                    node.country_name = cn;
+                }
                 node.group = group_name.to_string();
                 nodes.push(node);
             }

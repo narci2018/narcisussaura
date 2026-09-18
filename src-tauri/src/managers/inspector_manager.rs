@@ -1,9 +1,7 @@
 use anyhow::{bail, Result};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration, Instant};
 
 use crate::models::{AppSettings, UnifiedNode};
@@ -77,7 +75,6 @@ impl InspectorManager {
 
             let mut tasks = vec![];
             for (node_id, port) in port_map {
-                let app_handle = app.clone();
                 let task = tokio::spawn(async move {
                     let res = Self::test_node_latency_and_country(port).await;
                     (node_id, res)
@@ -198,7 +195,7 @@ impl InspectorManager {
         Ok(results)
     }
 
-    fn generate_multi_port_config(&self, nodes: &[UnifiedNode], settings: &AppSettings) -> Result<(String, Vec<(String, u16)>)> {
+    fn generate_multi_port_config(&self, nodes: &[UnifiedNode], _settings: &AppSettings) -> Result<(String, Vec<(String, u16)>)> {
         let adapter = SingBoxAdapter::new();
         let mut outbounds = vec![];
         let mut inbounds = vec![];

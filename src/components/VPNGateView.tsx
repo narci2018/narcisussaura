@@ -47,9 +47,7 @@ export const VPNGateView: React.FC = () => {
     }
   };
 
-  const filtered = React.useMemo(() => {
-    return displayNodes.filter((n) => matchNodeKeywords(n, search));
-  }, [displayNodes, search]);
+  const filtered = displayNodes.filter((n) => matchNodeKeywords(n, search));
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#08090d] text-gray-100 overflow-hidden">

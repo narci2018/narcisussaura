@@ -21,50 +21,72 @@ export function matchNodeKeywords(node: UnifiedNode, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
 
-  const name = (node.name || '').toLowerCase();
-  const address = (node.address || '').toLowerCase();
-  const port = node.port ? node.port.toString() : '';
-  const protocol = (node.protocol || '').toLowerCase();
-  const city = (node.city || '').toLowerCase();
-  const countryCode = (node.country_code || '').toLowerCase();
-  const countryName = (node.country_name || '').toLowerCase();
-  const tags = (node.tags || []).join(' ').toLowerCase();
+  const nodeName = (node.name || '').toLowerCase();
+  const nodeAddress = (node.address || '').toLowerCase();
+  const nodePort = node.port ? String(node.port) : '';
+  const nodeProtocol = (node.protocol || '').toLowerCase();
+  const nodeCity = (node.city || '').toLowerCase();
+  const nodeCC = (node.country_code || '').toLowerCase();
+  const nodeCN = (node.country_name || '').toLowerCase();
+  const nodeTags = (node.tags || []).join(' ').toLowerCase();
 
-  // 1. Direct field matches
+  // 1. Check if user is searching for a Country (by Chinese name, English full name, or exact 2-letter country code)
+  const matchedCountries = ALL_COUNTRIES.filter((c) => {
+    const zh = c.zh.toLowerCase();
+    const en = c.en.toLowerCase();
+    const code = c.code.toLowerCase();
+
+    // Exact 2-letter country code match (e.g. user typed "US", "JP", "HK")
+    if (q === code) return true;
+
+    // Chinese country name match (e.g. user typed "美国", "日本", "香港")
+    if (zh.includes(q)) return true;
+
+    // English country name match (e.g. user typed "united states", "japan")
+    if (en.includes(q)) return true;
+
+    return false;
+  });
+
+  if (matchedCountries.length > 0) {
+    for (const c of matchedCountries) {
+      const code = c.code.toLowerCase();
+      const en = c.en.toLowerCase();
+      const zh = c.zh.toLowerCase();
+
+      // A. Node's country_code matches exactly
+      if (nodeCC === code) return true;
+
+      // B. Node's country_name matches the country's English or Chinese name
+      if (nodeCN && (nodeCN.includes(en) || nodeCN.includes(zh))) return true;
+
+      // C. Node's name contains Chinese country name (e.g. "香港", "美国", "日本")
+      if (nodeName.includes(zh)) return true;
+
+      // D. Node's name contains full English country name (e.g. "United States", "Japan")
+      if (nodeName.includes(en)) return true;
+
+      // E. Node's name contains country code WITH PROPER DELIMITERS / BOUNDARIES!
+      // e.g. "[US]", "(US)", " US ", "US-", "-US-", "|US|"
+      // (NEVER naive substring like nodeName.includes("us") which matches Australia / Austria / Cyprus / Belarus / etc.)
+      const codeBoundaryRegex = new RegExp(`([\\[\\(\\{\\<\\|\\-_\\s]|^)${code}([\\]\\)\\}\\>\\|\\-_\\s]|$)`, 'i');
+      if (codeBoundaryRegex.test(node.name || '')) return true;
+    }
+  }
+
+  // 2. Direct field text matches (IP address, Port, Protocol, City, Custom Tag, or Exact Substring in Name)
   if (
-    name.includes(q) ||
-    address.includes(q) ||
-    port.includes(q) ||
-    protocol.includes(q) ||
-    city.includes(q) ||
-    countryCode.includes(q) ||
-    countryName.includes(q) ||
-    tags.includes(q)
+    nodeName.includes(q) ||
+    nodeAddress.includes(q) ||
+    nodePort === q ||
+    nodeProtocol.includes(q) ||
+    nodeCity.includes(q) ||
+    nodeTags.includes(q)
   ) {
     return true;
   }
 
-  // 2. Cross-language Country matches (e.g. searching "日本" matches JP / Japan, searching "美国" matches US / United States)
-  for (const c of ALL_COUNTRIES) {
-    const zhMatch = c.zh.toLowerCase().includes(q);
-    const enMatch = c.en.toLowerCase().includes(q);
-    const codeMatch = c.code.toLowerCase() === q;
-
-    if (zhMatch || enMatch || codeMatch) {
-      const targetCode = c.code.toLowerCase();
-      const targetEn = c.en.toLowerCase();
-      if (
-        countryCode === targetCode ||
-        countryName.includes(targetEn) ||
-        name.includes(targetCode) ||
-        name.includes(targetEn) ||
-        name.includes(c.zh)
-      ) {
-        return true;
-      }
-    }
-  }
-
   return false;
 }
+
 

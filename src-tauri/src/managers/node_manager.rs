@@ -21,7 +21,12 @@ impl NodeManager {
         if data_path.exists() {
             if let Ok(content) = fs::read_to_string(&data_path) {
                 if let Ok(loaded) = serde_json::from_str::<Vec<UnifiedNode>>(&content) {
-                    initial_nodes = loaded;
+                    let mut seen_ids = std::collections::HashSet::new();
+                    for node in loaded {
+                        if seen_ids.insert(node.id.clone()) {
+                            initial_nodes.push(node);
+                        }
+                    }
                 }
             }
         }
@@ -653,6 +658,12 @@ impl NodeManager {
             node.id = Uuid::new_v4().to_string();
         }
         let mut lock = self.nodes.write();
+        if let Some(existing) = lock.iter_mut().find(|n| n.id == node.id) {
+            *existing = node.clone();
+            drop(lock);
+            self.save()?;
+            return Ok(node);
+        }
         lock.push(node.clone());
         drop(lock);
         self.save()?;

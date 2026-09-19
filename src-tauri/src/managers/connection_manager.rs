@@ -889,10 +889,8 @@ r#"  - name: relay
             }
         };
 
-        // 1. Block rules
-        if settings.block_udp_443 {
-            rules_yaml.push_str("  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT\n");
-        }
+        // 1. Block rules: always reject UDP 443 (QUIC) for OpenVPN to prevent Chrome/Edge from hanging
+        rules_yaml.push_str("  - AND,((NETWORK,udp),(DST-PORT,443)),REJECT\n");
         for r in &active_set.block_rules {
             if !r.trim().is_empty() {
                 rules_yaml.push_str(&format_rule(r, "REJECT"));
@@ -953,11 +951,16 @@ dns:
   nameserver:
     - 223.5.5.5
     - 119.29.29.29
+  nameserver-policy:
+    'geosite:geolocation-!cn':
+      - 'https://1.1.1.1/dns-query#proxy'
+      - 'https://8.8.8.8/dns-query#proxy'
+    'geosite:cn':
+      - 223.5.5.5
+      - 119.29.29.29
   fallback:
-    - https://1.1.1.1/dns-query
-    - https://8.8.8.8/dns-query
-    - 8.8.8.8
-    - 1.1.1.1
+    - 'https://1.1.1.1/dns-query#proxy'
+    - 'https://8.8.8.8/dns-query#proxy'
   fallback-filter:
     geoip: true
     geoip-code: CN

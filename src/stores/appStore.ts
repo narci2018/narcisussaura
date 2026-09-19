@@ -521,7 +521,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
             } else {
               // Check 7-day local cache limit
               const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
-              if (now - payload.issued_at < SEVEN_DAYS_MS) {
+              // If token is valid AND has residential_sub_url, use it. Otherwise refresh from remote CF
+              if (now - payload.issued_at < SEVEN_DAYS_MS && payload.residential_sub_url) {
                 // Locally authorized
                 const resUrl = payload.residential_sub_url;
                 const effectiveResUrl = (typeof resUrl === 'string' && resUrl.trim().length > 0) ? resUrl.trim() : null;

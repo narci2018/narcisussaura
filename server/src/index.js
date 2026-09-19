@@ -86,7 +86,7 @@ const ADMIN_HTML = `
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ device.display_text || '-' }}</td>
                             <td class="px-6 py-4 whitespace-nowrap text-xs">
-                                <span v-if="device.residential_sub_url !== '' && device.residential_sub_url !== null" class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">已启用</span>
+                                <span v-if="device.residential_sub_url && device.residential_sub_url.trim() !== ''" class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">已启用</span>
                                 <span v-else class="px-2 py-0.5 rounded bg-gray-100 text-gray-400 border border-gray-200">已隐藏</span>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium" :class="getExpiryClass(device.expires_at)">
@@ -352,15 +352,20 @@ export default {
           }, { headers: corsHeaders });
         }
 
+        const defaultResUrl = (env.RESIDENTIAL_SUB_URL && env.RESIDENTIAL_SUB_URL.trim())
+          || "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+
+        const effectiveResidentialUrl = (userData.residential_sub_url !== undefined && userData.residential_sub_url !== null)
+          ? (typeof userData.residential_sub_url === 'string' ? userData.residential_sub_url.trim() : "")
+          : defaultResUrl;
+
         // --- JWT 签名颁发 ---
         const payload = {
           machine_id: machineId,
           authorized: true,
           display_text: userData.display_text || "NarcissusAura VIP",
           custom_sub_url: userData.custom_sub_url || "",
-          residential_sub_url: (userData.residential_sub_url && typeof userData.residential_sub_url === 'string')
-            ? userData.residential_sub_url.trim()
-            : "",
+          residential_sub_url: effectiveResidentialUrl,
           expires_at: userData.expires_at || null, // CF 中的最终到期时间
           issued_at: Date.now() // 发证时间，App 用它判断 7 天缓存期
         };
@@ -398,13 +403,19 @@ export default {
       }
 
       try {
+        const defaultResUrl = (env.RESIDENTIAL_SUB_URL && env.RESIDENTIAL_SUB_URL.trim())
+          || "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+
         if (url.pathname === "/api/admin/list") {
           const listInfo = await env.AUTH_DB.list();
           const devices = [];
           for (const key of listInfo.keys) {
             const val = await env.AUTH_DB.get(key.name, "json");
             if (val) {
-              devices.push({ machine_id: key.name, ...val });
+              const resUrl = (val.residential_sub_url !== undefined && val.residential_sub_url !== null)
+                ? val.residential_sub_url
+                : defaultResUrl;
+              devices.push({ machine_id: key.name, ...val, residential_sub_url: resUrl });
             }
           }
           return Response.json({ success: true, data: devices }, { headers: corsHeaders });
@@ -427,9 +438,9 @@ export default {
             authorized, 
             display_text,
             custom_sub_url,
-            residential_sub_url: residential_sub_url !== undefined
+            residential_sub_url: (residential_sub_url !== undefined && residential_sub_url !== null)
               ? (typeof residential_sub_url === 'string' ? residential_sub_url.trim() : "")
-              : "",
+              : defaultResUrl,
             status: authorized ? "approved" : "pending", 
             last_seen: Date.now(),
             expires_at

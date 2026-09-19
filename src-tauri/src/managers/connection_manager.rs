@@ -104,7 +104,8 @@ impl ConnectionManager {
                 let _ = guard.assign_process(&child);
             }
 
-            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            let initial_wait = if relay_node.is_some() { 2000 } else { 800 };
+            tokio::time::sleep(std::time::Duration::from_millis(initial_wait)).await;
             if let Ok(Some(exit_status)) = child.try_wait() {
                 let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
                 let _ = WindowsProxy::disable_proxy();
@@ -112,8 +113,7 @@ impl ConnectionManager {
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
                 return Err(format!(
-                    "Mihomo OpenVPN startup failed ({}):
-{}",
+                    "Mihomo OpenVPN startup failed ({}):\n{}",
                     exit_status,
                     err_log.trim()
                 ));
@@ -129,10 +129,10 @@ impl ConnectionManager {
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
 
+                let node_kind = if node.group == "Residential" { "优质住宅IP" } else { "VPNGate" };
                 return Err(format!(
-                    "外网连通性验证失败：该 VPNGate 节点虽然能建立本地传输通道，但无法转发国际互联网流量（数据包被 GFW 阻断或节点失效）。
-已自动断开以防浏览器无法上网。请切换其他低延迟的 VPNGate 节点！
-详细原因: {}",
+                    "外网连通性验证失败：该 {} 节点无法转发国际互联网流量。\n已自动断开以防浏览器无法上网。请切换其他低延迟节点或更换中转节点！\n详细原因: {}",
+                    node_kind,
                     probe_err
                 ));
             }
@@ -1222,15 +1222,15 @@ rules:
 
         let client = reqwest::Client::builder()
             .proxy(proxy)
-            .timeout(std::time::Duration::from_millis(3500))
+            .timeout(std::time::Duration::from_millis(4500))
             .build()
             .map_err(|e| format!("Failed to build probe client: {}", e))?;
 
         let mut last_err = String::new();
-        // Probe up to 4 attempts (allows time for multi-hop relays and OpenVPN tunnels to finish handshake)
-        for attempt in 1..=4 {
+        // Probe up to 6 attempts (allows time for multi-hop relays and OpenVPN tunnels to finish handshake)
+        for attempt in 1..=6 {
             if attempt > 1 {
-                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             }
 
             // Primary probe: Cloudflare captive portal 204 endpoint

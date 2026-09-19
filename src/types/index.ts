@@ -45,6 +45,7 @@ export type ActiveTab =
   | 'chains'
   | 'psiphon'
   | 'vpngate'
+  | 'residential'
   | 'megav'
   | 'subscriptions'
   | 'import'

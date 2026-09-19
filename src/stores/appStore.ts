@@ -51,6 +51,8 @@ interface AppStore {
   machineId: string | null;
   authDisplayText: string | null;
   isAuthorized: boolean;
+  residentialSubUrl: string | null;
+  loadResidentialNodes: () => Promise<UnifiedNode[]>;
 
   // Actions
   init: () => Promise<void>;
@@ -195,6 +197,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   machineId: null,
   authDisplayText: null,
   isAuthorized: false,
+  residentialSubUrl: null,
+  loadResidentialNodes: async () => {
+    const url = get().residentialSubUrl;
+    try {
+      const fetched = await api.fetchResidentialNodes(url || undefined);
+      await get().refreshNodes();
+      return fetched;
+    } catch (e) {
+      console.error('Failed to load residential nodes:', e);
+      return [];
+    }
+  },
   updateSubViaProxy: true,
   setUpdateSubViaProxy: (val) => set({ updateSubViaProxy: val }),
   relayEnabled: false,
@@ -237,6 +251,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         connectedChainId,
         selectedNodeId: selectedId,
       });
+
+      // Immediately verify cached token on startup so UI states (like Residential tab) populate instantly
+      await get().checkAuth(false).catch(console.error);
 
       // Always auto refresh Default subscription on app startup (background)
       get().autoRefreshDefault().catch(console.error);
@@ -503,11 +520,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
               const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
               if (now - payload.issued_at < SEVEN_DAYS_MS) {
                 // Locally authorized
+                const resUrl = payload.residential_sub_url !== undefined
+                  ? payload.residential_sub_url
+                  : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+                const effectiveResUrl = (typeof resUrl === 'string' && resUrl.trim().length > 0) ? resUrl.trim() : null;
+
                 set({
                   isAuthorized: true,
-                  authDisplayText: payload.display_text
+                  authDisplayText: payload.display_text,
+                  residentialSubUrl: effectiveResUrl,
                 });
+                if (get().activeTab === 'residential' && !effectiveResUrl) {
+                  set({ activeTab: 'dashboard' });
+                }
                 get().applyCustomSubscription(payload.custom_sub_url || '');
+                if (effectiveResUrl) {
+                  get().loadResidentialNodes().catch(console.error);
+                }
                 return true;
               }
             }
@@ -530,18 +559,34 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (data && data.success && data.authorized && data.token) {
         localStorage.setItem('vpn_auth_token', data.token);
         const payload = await verifyJWT(data.token);
+        const resUrl = payload?.residential_sub_url !== undefined
+          ? payload.residential_sub_url
+          : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+        const effectiveResUrl = (typeof resUrl === 'string' && resUrl.trim().length > 0) ? resUrl.trim() : null;
+
         set({
           isAuthorized: true,
-          authDisplayText: data.display_text || null
+          authDisplayText: data.display_text || null,
+          residentialSubUrl: effectiveResUrl,
         });
+        if (get().activeTab === 'residential' && !effectiveResUrl) {
+          set({ activeTab: 'dashboard' });
+        }
         if (payload) get().applyCustomSubscription(payload.custom_sub_url || '');
+        if (effectiveResUrl) {
+          get().loadResidentialNodes().catch(console.error);
+        }
         return true;
       } else {
         localStorage.removeItem('vpn_auth_token');
         set({
           isAuthorized: false,
-          authDisplayText: data?.display_text || '认证失败'
+          authDisplayText: data?.display_text || '认证失败',
+          residentialSubUrl: null,
         });
+        if (get().activeTab === 'residential') {
+          set({ activeTab: 'dashboard' });
+        }
         return false;
       }
     } catch (e) {

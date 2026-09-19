@@ -366,6 +366,11 @@ async fn fetch_psiphon_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNo
     Ok(crate::managers::SpecialSources::fetch_psiphon_nodes(&state.node_manager))
 }
 
+#[tauri::command]
+async fn fetch_residential_nodes(url: Option<String>, state: State<'_, AppState>) -> Result<Vec<UnifiedNode>, String> {
+    crate::managers::SpecialSources::fetch_residential_nodes(&state.node_manager, url).await.map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -496,6 +501,7 @@ pub fn run() {
             fetch_megav_nodes,
             fetch_vpngate_nodes,
             fetch_psiphon_nodes,
+            fetch_residential_nodes,
             get_relay_candidates,
             get_settings,
             save_settings,

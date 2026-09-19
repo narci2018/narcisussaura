@@ -6,6 +6,7 @@ import { Dashboard } from './components/Dashboard';
 import { ServerList } from './components/ServerList';
 import { PsiphonView } from './components/PsiphonView';
 import { VPNGateView } from './components/VPNGateView';
+import { ResidentialView } from './components/ResidentialView';
 import { MegaVView } from './components/MegaVView';
 import { SubscriptionsView } from './components/SubscriptionsView';
 import { ImportModal } from './components/ImportModal';
@@ -125,6 +126,7 @@ export const App: React.FC = () => {
         {activeTab === 'chains' && <ChainedProxyView />}
         {activeTab === 'psiphon' && <PsiphonView />}
         {activeTab === 'vpngate' && <VPNGateView />}
+        {activeTab === 'residential' && <ResidentialView />}
         {activeTab === 'megav' && <MegaVView />}
         {activeTab === 'subscriptions' && <SubscriptionsView />}
         {activeTab === 'import' && <ImportModal />}

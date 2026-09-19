@@ -570,6 +570,7 @@ impl NodeManager {
                 n.group != "VPNGate"
                     && n.group != "MegaV"
                     && n.group != "Psiphon"
+                    && n.group != "Residential"
                     && n.protocol != ProtocolType::Psiphon
                     && n.protocol != ProtocolType::Openvpn
                     && n.protocol != ProtocolType::Masque

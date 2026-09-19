@@ -97,7 +97,7 @@ export const ServerList: React.FC = () => {
     for (const node of nodes) {
       if (node.group && node.group.trim()) {
         const groupUpper = node.group.toUpperCase();
-        const isSpecialGroup = ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g));
+        const isSpecialGroup = ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP', 'RESIDENTIAL'].some(g => groupUpper.includes(g));
         if (!isSpecialGroup) {
           groupSet.add(node.group);
         }
@@ -123,13 +123,13 @@ export const ServerList: React.FC = () => {
 
   const filteredAndSortedNodes = useMemo(() => {
     let result = nodes.filter((node) => {
-      // Exclude Psiphon / VPNGate / MegaV nodes from the general server list
+      // Exclude Psiphon / VPNGate / MegaV / Residential nodes from the general server list
       const nameUpper = node.name.toUpperCase();
       const groupUpper = (node.group || '').toUpperCase();
       const isSpecial = 
-        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
+        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP', 'RESIDENTIAL'].some(g => groupUpper.includes(g)) || 
         ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
-        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
+        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP') || nameUpper.includes('RESIDENTIAL');
         
       if (isSpecial) return false;
       if (filterFavorite && !node.favorite) return false;

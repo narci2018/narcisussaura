@@ -1,4 +1,4 @@
-﻿const ADMIN_PASSWORD = "admin"; // 管理员密码
+const ADMIN_PASSWORD = "admin"; // 管理员密码
 const JWT_SECRET = "NARCISSUS_AURA_SUPER_SECRET_KEY_2026"; // 签名密钥
 
 // Base64URL 编码辅助函数
@@ -71,6 +71,7 @@ const ADMIN_HTML = `
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">机器码</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">显示文本</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">住宅IP订阅</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">到期时间</th>
                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">最后活跃</th>
                             <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
@@ -84,6 +85,10 @@ const ADMIN_HTML = `
                                 <span v-else class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">待审批</span>
                             </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{{ device.display_text || '-' }}</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-xs">
+                                <span v-if="device.residential_sub_url !== '' && device.residential_sub_url !== null" class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">已启用</span>
+                                <span v-else class="px-2 py-0.5 rounded bg-gray-100 text-gray-400 border border-gray-200">已隐藏</span>
+                            </td>
                             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium" :class="getExpiryClass(device.expires_at)">
                                 {{ formatExpires(device.expires_at, device.authorized) }}
                             </td>
@@ -94,7 +99,7 @@ const ADMIN_HTML = `
                             </td>
                         </tr>
                         <tr v-if="devices.length === 0">
-                            <td colspan="6" class="px-6 py-10 text-center text-gray-500">暂无任何设备记录</td>
+                            <td colspan="7" class="px-6 py-10 text-center text-gray-500">暂无任何设备记录</td>
                         </tr>
                     </tbody>
                 </table>
@@ -108,7 +113,7 @@ const ADMIN_HTML = `
 
         <!-- 授权弹窗 -->
         <div v-if="showModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-            <div class="bg-white p-6 rounded-lg shadow-xl w-96">
+            <div class="bg-white p-6 rounded-lg shadow-xl w-[480px]">
                 <h2 class="text-xl font-bold mb-4">设备授权配置</h2>
                 <div class="mb-4 font-mono text-xs text-gray-500 break-all">{{ currentDevice?.machine_id }}</div>
                 
@@ -120,6 +125,12 @@ const ADMIN_HTML = `
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-700 mb-1">专属订阅源 (留空则用Default)</label>
                     <input v-model="authForm.custom_sub_url" type="text" class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="https://...">
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">住宅IP订阅源 (留空则APP隐藏优质住宅IP)</label>
+                    <input v-model="authForm.residential_sub_url" type="text" class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json">
+                    <div class="text-[11px] text-gray-400 mt-1">默认值：https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json</div>
                 </div>
                 
                 <div class="mb-6">
@@ -148,7 +159,7 @@ const ADMIN_HTML = `
                 
                 const showModal = ref(false);
                 const currentDevice = ref(null);
-                const authForm = ref({ display_text: '', days: '', custom_sub_url: '' });
+                const authForm = ref({ display_text: '', days: '', custom_sub_url: '', residential_sub_url: '' });
 
                 onMounted(() => {
                     const savedPwd = localStorage.getItem('vpn_admin_pwd');
@@ -201,6 +212,9 @@ const ADMIN_HTML = `
                     currentDevice.value = device;
                     authForm.value.display_text = device.display_text || 'NarcissusAura VIP';
                     authForm.value.custom_sub_url = device.custom_sub_url || '';
+                    authForm.value.residential_sub_url = device.residential_sub_url !== undefined
+                        ? device.residential_sub_url
+                        : 'https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json';
                     
                     if (device.authorized) {
                         if (device.expires_at) {
@@ -224,6 +238,7 @@ const ADMIN_HTML = `
                             authorized: true,
                             display_text: authForm.value.display_text,
                             custom_sub_url: authForm.value.custom_sub_url,
+                            residential_sub_url: authForm.value.residential_sub_url,
                             days: authForm.value.days === '' ? 0 : Number(authForm.value.days)
                         })
                     });
@@ -240,9 +255,13 @@ const ADMIN_HTML = `
                             authorized: false,
                             display_text: '未授权设备',
                             custom_sub_url: '',
+                            residential_sub_url: '',
                             days: 0
                         })
                     });
+                    showModal.value = false;
+                    fetchDevices();
+                };
                     showModal.value = false;
                     fetchDevices();
                 };
@@ -342,6 +361,9 @@ export default {
           authorized: true,
           display_text: userData.display_text || "NarcissusAura VIP",
           custom_sub_url: userData.custom_sub_url || "",
+          residential_sub_url: userData.residential_sub_url !== undefined
+            ? userData.residential_sub_url
+            : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json",
           expires_at: userData.expires_at || null, // CF 中的最终到期时间
           issued_at: Date.now() // 发证时间，App 用它判断 7 天缓存期
         };
@@ -393,7 +415,7 @@ export default {
         
         if (url.pathname === "/api/admin/update" && request.method === "POST") {
           const body = await request.json();
-          const { machine_id, authorized, display_text, days, custom_sub_url } = body;
+          const { machine_id, authorized, display_text, days, custom_sub_url, residential_sub_url } = body;
           
           let putOptions = {};
           let expires_at = null;
@@ -408,6 +430,9 @@ export default {
             authorized, 
             display_text,
             custom_sub_url,
+            residential_sub_url: residential_sub_url !== undefined
+              ? residential_sub_url
+              : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json",
             status: authorized ? "approved" : "pending", 
             last_seen: Date.now(),
             expires_at

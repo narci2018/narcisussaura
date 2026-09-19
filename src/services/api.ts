@@ -42,6 +42,7 @@ export const api = {
   fetchMegaVNodes: () => invoke<UnifiedNode[]>('fetch_megav_nodes'),
   fetchVPNGateNodes: () => invoke<UnifiedNode[]>('fetch_vpngate_nodes'),
   fetchPsiphonNodes: () => invoke<UnifiedNode[]>('fetch_psiphon_nodes'),
+  fetchResidentialNodes: (url?: string) => invoke<UnifiedNode[]>('fetch_residential_nodes', { url: url || null }),
   
   getMachineId: () => invoke<string>('get_machine_id'),
 

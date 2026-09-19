@@ -7,12 +7,17 @@ use std::time::Duration;
 pub struct SpecialSources;
 
 impl SpecialSources {
-    /// Helper to extract OpenVPN parameters from base64 configuration
+    /// Helper to extract OpenVPN parameters from base64 or raw configuration
     pub fn parse_openvpn_fields(
-        b64: &str,
+        cfg_or_b64: &str,
     ) -> Option<(String, u16, String, String, String, String, String, String)> {
-        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64).ok()?;
-        let text = String::from_utf8_lossy(&bytes);
+        let text = if cfg_or_b64.contains("<ca>") || cfg_or_b64.contains("remote ") {
+            cfg_or_b64.to_string()
+        } else if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, cfg_or_b64) {
+            String::from_utf8_lossy(&bytes).to_string()
+        } else {
+            cfg_or_b64.to_string()
+        };
         let mut host = String::new();
         let mut port = 1194;
         let mut proto = "tcp".to_string();
@@ -603,5 +608,143 @@ impl SpecialSources {
 
         let _ = node_manager.save();
         result_nodes
+    }
+
+    /// Fetch and sync Residential nodes from specified URL or default
+    pub async fn fetch_residential_nodes(
+        node_manager: &NodeManager,
+        url_override: Option<String>,
+    ) -> Result<Vec<UnifiedNode>> {
+        let target_url = url_override
+            .filter(|u| !u.trim().is_empty())
+            .unwrap_or_else(|| {
+                "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json".to_string()
+            });
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(12))
+            .build()?;
+
+        let mut body_opt = None;
+        if let Ok(resp) = client.get(&target_url).header("User-Agent", "Mozilla/5.0").send().await {
+            if resp.status().is_success() {
+                if let Ok(text) = resp.text().await {
+                    body_opt = Some(text);
+                }
+            }
+        }
+
+        // Fallback for default jsdelivr if needed
+        if body_opt.is_none() && target_url.contains("jsdelivr.net") {
+            let fallbacks = [
+                "https://raw.githubusercontent.com/narci2018/freesubplus/main/output/residential_nodes.json",
+                "https://ghproxy.net/https://raw.githubusercontent.com/narci2018/freesubplus/main/output/residential_nodes.json",
+            ];
+            for fb in &fallbacks {
+                if let Ok(resp) = client.get(*fb).header("User-Agent", "Mozilla/5.0").send().await {
+                    if resp.status().is_success() {
+                        if let Ok(text) = resp.text().await {
+                            body_opt = Some(text);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result_nodes = Vec::new();
+        if let Some(body) = body_opt {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body) {
+                let nodes_array = val.get("nodes").and_then(|s| s.as_array())
+                    .or_else(|| val.get("servers").and_then(|s| s.as_array()))
+                    .or_else(|| val.as_array());
+
+                if let Some(items) = nodes_array {
+                    for s in items {
+                        let ip = s.get("ip").and_then(|v| v.as_str()).unwrap_or("");
+                        let ovpn_cfg = s.get("ovpn_config")
+                            .or_else(|| s.get("openvpn_config_base64"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if ip.is_empty() && ovpn_cfg.is_empty() {
+                            continue;
+                        }
+
+                        let (host, port, proto, cipher, auth, ca, cert, key) =
+                            match Self::parse_openvpn_fields(ovpn_cfg) {
+                                Some(f) => f,
+                                None => {
+                                    if ip.is_empty() {
+                                        continue;
+                                    }
+                                    let p = s.get("port").and_then(|v| v.as_u64()).unwrap_or(1194) as u16;
+                                    (ip.to_string(), p, "tcp".to_string(), "AES-128-CBC".to_string(), "SHA1".to_string(), String::new(), String::new(), String::new())
+                                }
+                            };
+
+                        let country_code = s.get("country_code")
+                            .or_else(|| s.get("country_short"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("UN");
+                        let country_name = s.get("country_name_cn")
+                            .or_else(|| s.get("country_name"))
+                            .or_else(|| s.get("country_long"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Residential");
+                        let isp = s.get("operator")
+                            .or_else(|| s.get("isp"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Residential ISP");
+                        let ping = s.get("ping_ms").and_then(|v| v.as_i64()).unwrap_or(30);
+                        let speed = s.get("speed_bps").and_then(|v| v.as_u64())
+                            .or_else(|| s.get("speed_mbps").and_then(|v| v.as_f64()).map(|m| (m * 1_000_000.0) as u64))
+                            .unwrap_or(100_000_000);
+
+                        let node_id = format!("residential-{}", host.replace('.', "-"));
+
+                        let b64_ovpn = if ovpn_cfg.contains("<ca>") || ovpn_cfg.contains("remote ") {
+                            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, ovpn_cfg.as_bytes())
+                        } else {
+                            ovpn_cfg.to_string()
+                        };
+
+                        let node = UnifiedNode {
+                            id: node_id.clone(),
+                            name: format!("Residential [{}] {} ({})", country_code, host, isp),
+                            protocol: ProtocolType::Openvpn,
+                            address: host.clone(),
+                            port,
+                            country_code: country_code.to_string(),
+                            country_name: country_name.to_string(),
+                            city: isp.to_string(),
+                            group: "Residential".to_string(),
+                            tags: vec!["Residential".to_string(), "优质住宅IP".to_string(), isp.to_string(), country_code.to_string()],
+                            favorite: false,
+                            latency_ms: if ping > 0 { Some(ping) } else { Some(35) },
+                            speed_bps: if speed > 0 { Some(speed) } else { Some(50_000_000) },
+                            last_checked: None,
+                            status: NodeStatus::Alive,
+                            config: json!({
+                                "proto": proto,
+                                "cipher": cipher,
+                                "auth": auth,
+                                "ca": ca,
+                                "cert": cert,
+                                "key": key,
+                                "openvpn_config_base64": b64_ovpn,
+                                "isp": isp
+                            }),
+                        };
+
+                        let _ = node_manager.add_node(node.clone());
+                        result_nodes.push(node);
+                    }
+                }
+            }
+        }
+
+        let _ = node_manager.save();
+        log::info!("Residential: fetched {} nodes", result_nodes.len());
+        Ok(result_nodes)
     }
 }

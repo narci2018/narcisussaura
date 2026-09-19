@@ -15,6 +15,7 @@ import {
   FolderSync,
   ChevronLeft,
   ChevronRight,
+  Square,
 } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { UnifiedNode } from '../types';
@@ -49,6 +50,7 @@ export const ServerList: React.FC = () => {
     setSortMode,
     setSelectedNodeId,
     connect,
+    disconnect,
     testLatency,
     testSpeed,
     testAllNodes,
@@ -69,18 +71,28 @@ export const ServerList: React.FC = () => {
   const groupContainerRef = useRef<HTMLDivElement>(null);
   const protocols = ['all', 'masque', 'wireguard', 'vless', 'shadowsocks', 'trojan', 'socks5', 'http'];
 
-  // Calculate group node counts
+  // Non-special nodes for Servers view (exclude Psiphon / VPNGate / MegaV / Residential nodes which have dedicated tabs)
+  const serverNodes = useMemo(() => {
+    return nodes.filter((node) => {
+      const nameUpper = node.name.toUpperCase();
+      const groupUpper = (node.group || '').toUpperCase();
+      const isSpecial = 
+        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP', 'RESIDENTIAL'].some(g => groupUpper.includes(g)) || 
+        ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
+        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP') || nameUpper.includes('RESIDENTIAL');
+      return !isSpecial;
+    });
+  }, [nodes]);
+
+  // Calculate group node counts based on serverNodes
   const groupCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const node of nodes) {
+    for (const node of serverNodes) {
       const g = node.group?.trim() || 'Default';
       counts[g] = (counts[g] || 0) + 1;
     }
     return counts;
-  }, [nodes]);
-
-  // Groups to exclude from Servers view (these have dedicated tabs)
-  // const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV'];
+  }, [serverNodes]);
 
   // Extract unique groups from nodes and subscriptions
   const availableGroups = useMemo(() => {
@@ -88,17 +100,13 @@ export const ServerList: React.FC = () => {
     for (const sub of subscriptions) {
       if (sub.name) groupSet.add(sub.name);
     }
-    for (const node of nodes) {
+    for (const node of serverNodes) {
       if (node.group && node.group.trim()) {
-        const groupUpper = node.group.toUpperCase();
-        const isSpecialGroup = ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP', 'RESIDENTIAL'].some(g => groupUpper.includes(g));
-        if (!isSpecialGroup) {
-          groupSet.add(node.group);
-        }
+        groupSet.add(node.group);
       }
     }
     return ['all', ...Array.from(groupSet)];
-  }, [subscriptions, nodes]);
+  }, [subscriptions, serverNodes]);
 
   const handleGroupWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (groupContainerRef.current && e.deltaY !== 0) {
@@ -114,18 +122,8 @@ export const ServerList: React.FC = () => {
   };
 
   // Filtering & Sorting
-
   const filteredAndSortedNodes = useMemo(() => {
-    let result = nodes.filter((node) => {
-      // Exclude Psiphon / VPNGate / MegaV / Residential nodes from the general server list
-      const nameUpper = node.name.toUpperCase();
-      const groupUpper = (node.group || '').toUpperCase();
-      const isSpecial = 
-        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP', 'RESIDENTIAL'].some(g => groupUpper.includes(g)) || 
-        ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
-        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP') || nameUpper.includes('RESIDENTIAL');
-        
-      if (isSpecial) return false;
+    let result = serverNodes.filter((node) => {
       if (filterFavorite && !node.favorite) return false;
       if (selectedProtocol !== 'all' && node.protocol !== selectedProtocol) return false;
       if (selectedGroup !== 'all' && node.group !== selectedGroup) return false;
@@ -483,7 +481,7 @@ export const ServerList: React.FC = () => {
         >
           {availableGroups.map((grp) => {
             const isSelected = selectedGroup === grp;
-            const count = grp === 'all' ? nodes.length : (groupCounts[grp] ?? 0);
+            const count = grp === 'all' ? serverNodes.length : (groupCounts[grp] ?? 0);
             return (
               <button
                 key={grp}
@@ -567,6 +565,7 @@ export const ServerList: React.FC = () => {
           filteredAndSortedNodes.map((node) => {
             const isSelected = selectedNodeId === node.id;
             const isLiveConnected = connectedNode?.id === node.id && status === 'connected';
+            const isThisConnecting = (connectedNode?.id === node.id || selectedNodeId === node.id) && status === 'connecting';
             const isTestingLat = testingLatencyIds.includes(node.id);
             const isTestingSpd = testingSpeedIds.includes(node.id);
             const recommended = isRecommended(node);
@@ -694,18 +693,40 @@ export const ServerList: React.FC = () => {
                     />
                   </button>
 
-                  {/* Connect / Active Button */}
+                  {/* Connect / Active / Cancel Button */}
                   {isLiveConnected ? (
-                    <div className="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center">
-                      <Check className="w-4 h-4" />
-                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        disconnect();
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-red-500/20 text-emerald-400 hover:text-red-400 border border-emerald-500/30 hover:border-red-500/40 text-xs font-medium transition-all flex items-center gap-1.5 group"
+                      title="已连接，点击断开"
+                    >
+                      <Check className="w-3.5 h-3.5 group-hover:hidden" />
+                      <Square className="w-3 h-3 fill-red-400 hidden group-hover:inline" />
+                      <span className="group-hover:hidden">Connected</span>
+                      <span className="hidden group-hover:inline text-red-400">断开</span>
+                    </button>
+                  ) : isThisConnecting ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        disconnect();
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 text-xs font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95"
+                      title="点击终止当前连接"
+                    >
+                      <Square className="w-3 h-3 fill-red-400 text-red-400 animate-pulse" />
+                      <span>终止</span>
+                    </button>
                   ) : (
                     <button
                       onClick={() => {
                         setSelectedNodeId(node.id);
                         connect(node.id);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-medium transition-all"
+                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-medium transition-all active:scale-95"
                     >
                       Connect
                     </button>

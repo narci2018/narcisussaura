@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Copy,
   Check,
+  Square,
 } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { QuoteBar } from './QuoteBar';
@@ -55,7 +56,7 @@ export const Dashboard: React.FC = () => {
   const isConnecting = status === 'connecting';
 
   const handleToggle = () => {
-    if (isConnected) {
+    if (isConnected || isConnecting) {
       disconnect();
     } else {
       if (nodes.length === 0) {
@@ -151,22 +152,26 @@ export const Dashboard: React.FC = () => {
             {/* Center Interactive Button */}
             <button
               onClick={handleToggle}
-              disabled={isConnecting}
-              className={`w-36 h-36 rounded-full flex flex-col items-center justify-center gap-1.5 transition-transform active:scale-95 shadow-xl ${
+              className={`w-36 h-36 rounded-full flex flex-col items-center justify-center gap-1.5 transition-all active:scale-95 shadow-xl ${
                 isConnected
                   ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-emerald-500/25'
                   : isConnecting
-                  ? 'bg-[#181c28] text-blue-400 cursor-wait'
+                  ? 'bg-gradient-to-br from-[#271018] to-[#170a11] hover:from-red-950/90 hover:to-red-900/70 text-red-300 border border-red-500/40 shadow-red-500/15 cursor-pointer group'
                   : 'bg-gradient-to-br from-[#1b1f2d] to-[#121520] hover:from-[#212638] hover:to-[#171b29] text-gray-200 border border-[#2b3145]'
               }`}
+              title={isConnecting ? "点击终止连接" : undefined}
             >
-              <Power
-                className={`w-9 h-9 transition-transform duration-300 ${
-                  isConnected ? 'rotate-0' : 'text-gray-400'
-                }`}
-              />
+              {isConnecting ? (
+                <Square className="w-8 h-8 text-red-400 fill-red-400 animate-pulse group-hover:scale-110 transition-transform" />
+              ) : (
+                <Power
+                  className={`w-9 h-9 transition-transform duration-300 ${
+                    isConnected ? 'rotate-0' : 'text-gray-400'
+                  }`}
+                />
+              )}
               <span className="text-xs font-semibold uppercase tracking-wider">
-                {isConnected ? 'Disconnect' : isConnecting ? 'Connecting' : 'Connect'}
+                {isConnected ? 'Disconnect' : isConnecting ? '终止连接' : 'Connect'}
               </span>
             </button>
           </div>
@@ -192,6 +197,17 @@ export const Dashboard: React.FC = () => {
               </>
             )}
           </div>
+          {isConnecting && (
+            <div className="mt-2.5 flex justify-center">
+              <button
+                onClick={() => disconnect()}
+                className="px-4 py-1.5 rounded-full bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-red-100 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-red-500/10 active:scale-95"
+              >
+                <Square className="w-3 h-3 fill-red-400 text-red-400" />
+                <span>终止当前连接</span>
+              </button>
+            </div>
+          )}
           <p className="text-xs text-gray-400 mt-1">
             {isConnected
               ? `${connectedNode?.country_name || 'Global Proxy'} · ${connectedNode?.name || ''}`

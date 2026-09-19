@@ -7,6 +7,7 @@ import {
   Settings2,
   AlertTriangle,
   WifiOff,
+  Square,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
 import { CountryNodeSelector, getBestNode, getCountryCodeForNode } from './CountryNodeSelector';
@@ -88,7 +89,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
   }, [errorMessage, setErrorMessage]);
 
   const handleToggle = () => {
-    if (isConnected) {
+    if (isConnected || isConnecting) {
       disconnect();
     } else {
       if (regularNodes.length === 0) {
@@ -205,22 +206,26 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
             {/* Center button */}
             <button
               onClick={handleToggle}
-              disabled={isConnecting}
-              className={`w-40 h-40 rounded-full flex flex-col items-center justify-center gap-2 transition-all active:scale-95 shadow-xl disabled:opacity-50 disabled:cursor-not-allowed ${
+              className={`w-40 h-40 rounded-full flex flex-col items-center justify-center gap-2 transition-all active:scale-95 shadow-xl ${
                 isConnected
                   ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-emerald-500/25'
                   : isConnecting
-                  ? 'bg-[#181c28] text-blue-400 cursor-wait'
+                  ? 'bg-gradient-to-br from-[#271018] to-[#170a11] hover:from-red-950/90 hover:to-red-900/70 text-red-300 border border-red-500/40 shadow-red-500/15 cursor-pointer group'
                   : 'bg-gradient-to-br from-[#1b1f2d] to-[#121520] hover:from-[#212638] hover:to-[#171b29] text-gray-200 border border-[#2b3145]'
               }`}
+              title={isConnecting ? "点击立即终止连接" : undefined}
             >
-              <Power
-                className={`w-10 h-10 transition-transform duration-300 ${
-                  isConnected ? 'text-white' : 'text-gray-400'
-                }`}
-              />
+              {isConnecting ? (
+                <Square className="w-10 h-10 text-red-400 fill-red-400 animate-pulse group-hover:scale-110 transition-transform" />
+              ) : (
+                <Power
+                  className={`w-10 h-10 transition-transform duration-300 ${
+                    isConnected ? 'text-white' : 'text-gray-400'
+                  }`}
+                />
+              )}
               <span className="text-sm font-bold uppercase tracking-wider">
-                {isConnected ? '断开' : isConnecting ? '连接中' : '连接'}
+                {isConnected ? '断开' : isConnecting ? '终止连接' : '连接'}
               </span>
             </button>
           </div>
@@ -252,6 +257,17 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
               {displayCountry && displayNodeName && <span> · </span>}
               {displayNodeName && <span className="truncate">{displayNodeName}</span>}
             </p>
+          )}
+          {isConnecting && (
+            <div className="mt-3 flex justify-center">
+              <button
+                onClick={() => disconnect()}
+                className="px-4 py-1.5 rounded-full bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-red-100 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-red-500/10 active:scale-95"
+              >
+                <Square className="w-3 h-3 fill-red-400 text-red-400" />
+                <span>终止当前连接</span>
+              </button>
+            </div>
           )}
         </div>
 

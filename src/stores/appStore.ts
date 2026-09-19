@@ -148,6 +148,8 @@ async function verifyJWT(token: string) {
   }
 }
 
+let currentConnectSeq = 0;
+
 export const useAppStore = create<AppStore>((set, get) => ({
   status: 'disconnected',
   connectedNode: null,
@@ -303,27 +305,33 @@ export const useAppStore = create<AppStore>((set, get) => ({
   closeInspectReport: () => set({ inspectReport: null }),
 
   connect: async (overrideId, relayIdOverride) => {
+    const connectSeq = ++currentConnectSeq;
     // Auth Check
     const isAuth = await get().checkAuth();
     if (!isAuth) {
-      set({ errorMessage: "请联系服务商授权" });
+      if (connectSeq === currentConnectSeq) {
+        set({ errorMessage: "请联系服务商授权" });
+      }
       return;
     }
 
     const state = get();
     const targetId = overrideId || state.selectedNodeId;
     if (!targetId) {
-      set({ errorMessage: 'Please select a server first.' });
+      if (connectSeq === currentConnectSeq) {
+        set({ errorMessage: 'Please select a server first.' });
+      }
       return;
     }
 
     const connectingNode = state.nodes.find((n) => n.id === targetId) || null;
+    const isResidential = connectingNode?.group === 'Residential';
     set({ status: 'connecting', selectedNodeId: targetId, connectedNode: connectingNode, connectedChainId: null, errorMessage: null });
 
     let relayParam: string | null = null;
     if (relayIdOverride !== undefined) {
       relayParam = relayIdOverride;
-    } else if (state.relayEnabled) {
+    } else if (state.relayEnabled || isResidential) {
       relayParam = state.selectedRelayNodeId || 'auto';
     } else {
       relayParam = 'none';
@@ -331,16 +339,23 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     try {
       await api.connect(targetId, relayParam);
-      const connected = state.nodes.find((n) => n.id === targetId) || connectingNode;
+      if (connectSeq !== currentConnectSeq) return;
+      const connected = get().nodes.find((n) => n.id === targetId) || connectingNode;
       set({ status: 'connected', connectedNode: connected, selectedNodeId: targetId, connectedChainId: null });
     } catch (e: any) {
+      if (connectSeq !== currentConnectSeq) return;
       console.error('Connect failed:', e);
       const errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
-      set({ status: 'error', errorMessage: errStr });
+      if (errStr.includes('cancelled') || errStr.includes('abort') || errStr.includes('终止')) {
+        set({ status: 'disconnected', connectedNode: null });
+      } else {
+        set({ status: 'error', errorMessage: errStr });
+      }
     }
   },
 
   disconnect: async () => {
+    currentConnectSeq++;
     set({ status: 'disconnecting', errorMessage: null });
     try {
       await api.disconnect();
@@ -824,6 +839,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   connectChain: async (chainId) => {
+    const connectSeq = ++currentConnectSeq;
     const state = get();
     if (state.connectedChainId === chainId && state.status === 'connected') {
       await state.disconnect();
@@ -833,42 +849,58 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ status: 'connecting', connectedChainId: chainId, errorMessage: null });
     try {
       await api.connectChain(chainId);
+      if (connectSeq !== currentConnectSeq) return;
       const [status, connectedNode] = await Promise.all([
         api.getConnectionStatus(),
         api.getConnectedNode(),
       ]);
       set({ status, connectedNode, connectedChainId: chainId });
     } catch (e: any) {
+      if (connectSeq !== currentConnectSeq) return;
       console.error('Chain connect failed:', e);
       const errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
-      set({
-        status: 'error',
-        connectedNode: null,
-        connectedChainId: null,
-        errorMessage: `链式代理连接失败: ${errStr}`,
-      });
+      if (errStr.includes('cancelled') || errStr.includes('abort') || errStr.includes('终止')) {
+        set({ status: 'disconnected', connectedNode: null, connectedChainId: null });
+      } else {
+        set({
+          status: 'error',
+          connectedNode: null,
+          connectedChainId: null,
+          errorMessage: `链式代理连接失败: ${errStr}`,
+        });
+      }
     }
   },
 
   connectSmartGroup: async (nodeIds) => {
+    const connectSeq = ++currentConnectSeq;
     // Auth Check
     const isAuth = await get().checkAuth();
     if (!isAuth) {
-      set({ errorMessage: "请联系服务商授权" });
+      if (connectSeq === currentConnectSeq) {
+        set({ errorMessage: "请联系服务商授权" });
+      }
       return;
     }
 
     set({ status: 'connecting', connectedChainId: 'smart-group', errorMessage: null });
     try {
       await api.connectSmartGroup(nodeIds);
+      if (connectSeq !== currentConnectSeq) return;
       const [status, connectedNode] = await Promise.all([
         api.getConnectionStatus(),
         api.getConnectedNode(),
       ]);
       set({ status, connectedNode });
     } catch (e: any) {
+      if (connectSeq !== currentConnectSeq) return;
       console.error('Smart Group connect failed:', e);
-      set({ status: 'disconnected', errorMessage: `Connect failed: ${e}`, connectedChainId: null });
+      const errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
+      if (errStr.includes('cancelled') || errStr.includes('abort') || errStr.includes('终止')) {
+        set({ status: 'disconnected', connectedNode: null, connectedChainId: null });
+      } else {
+        set({ status: 'disconnected', errorMessage: `Connect failed: ${e}`, connectedChainId: null });
+      }
     }
   },
 

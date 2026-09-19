@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
@@ -23,6 +23,7 @@ pub struct ConnectionManager {
     is_traffic_running: Arc<AtomicBool>,
     connect_time: Arc<Mutex<Option<Instant>>>,
     connected_chain: Arc<Mutex<Option<String>>>,
+    connect_generation: Arc<AtomicU64>,
 }
 
 impl ConnectionManager {
@@ -72,6 +73,7 @@ impl ConnectionManager {
             is_traffic_running: Arc::new(AtomicBool::new(false)),
             connect_time: Arc::new(Mutex::new(None)),
             connected_chain: Arc::new(Mutex::new(None)),
+            connect_generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -96,8 +98,12 @@ impl ConnectionManager {
     ) -> Result<(), String> {
         // Disconnect any existing session first
         let _ = self.disconnect(app.clone()).await;
+        let current_gen = self.connect_generation.fetch_add(1, Ordering::SeqCst) + 1;
         *self.connected_chain.lock() = None;
         Self::wait_for_port_release(settings.mixed_port, 2000).await;
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            return Err("Connection cancelled by user".to_string());
+        }
 
         self.ensure_rules_deployed(&app);
 
@@ -107,7 +113,7 @@ impl ConnectionManager {
 
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-        // Specialized handling for OpenVPN (VPNGate SoftEther) via Mihomo core
+        // Specialized handling for OpenVPN (VPNGate SoftEther / Residential) via Mihomo core
         if node.protocol == crate::models::ProtocolType::Openvpn {
             let binary_path = self.locate_mihomo(&app)?;
             let config_str = Self::generate_mihomo_openvpn_config(&node, relay_node.as_ref(), &settings);
@@ -139,8 +145,25 @@ impl ConnectionManager {
 
             *self.process.lock() = Some(child);
 
-            let initial_wait = if relay_node.is_some() { 2000 } else { 800 };
+            let is_residential = node.group == "Residential";
+            let initial_wait = if is_residential {
+                3500
+            } else if relay_node.is_some() {
+                2000
+            } else {
+                800
+            };
             tokio::time::sleep(std::time::Duration::from_millis(initial_wait)).await;
+            if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = WindowsProxy::disable_proxy();
+                return Err("Connection cancelled by user".to_string());
+            }
+
             {
                 let mut proc_lock = self.process.lock();
                 if let Some(ref mut c) = *proc_lock {
@@ -161,7 +184,22 @@ impl ConnectionManager {
             }
 
             log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
-            if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
+            if let Err(probe_err) = Self::verify_internet_connectivity(
+                settings.mixed_port,
+                is_residential,
+                current_gen,
+                Arc::clone(&self.connect_generation),
+            ).await {
+                if self.connect_generation.load(Ordering::SeqCst) != current_gen || probe_err.contains("cancelled") {
+                    if let Some(mut c) = self.process.lock().take() {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
+                    Self::force_kill_all_cores();
+                    let _ = WindowsProxy::disable_proxy();
+                    log::info!("Connection aborted by user during OpenVPN probe");
+                    return Err("Connection cancelled by user".to_string());
+                }
                 log::warn!("Internet connectivity verification failed: {}", probe_err);
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
@@ -173,12 +211,22 @@ impl ConnectionManager {
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
 
-                let node_kind = if node.group == "Residential" { "优质住宅IP" } else { "VPNGate" };
+                let node_kind = if is_residential { "优质住宅IP" } else { "VPNGate" };
                 return Err(format!(
                     "外网连通性验证失败：该 {} 节点无法转发国际互联网流量。\n已自动断开以防浏览器无法上网。请切换其他低延迟节点或更换中转节点！\n详细原因: {}",
                     node_kind,
                     probe_err
                 ));
+            }
+
+            if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = WindowsProxy::disable_proxy();
+                return Err("Connection cancelled by user".to_string());
             }
 
             *self.connect_time.lock() = Some(Instant::now());
@@ -472,7 +520,36 @@ impl ConnectionManager {
 
         // 5.5 End-to-End Real Internet Connectivity Verification Probe
         log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
-        if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
+        let is_residential = node.group == "Residential";
+        if let Err(probe_err) = Self::verify_internet_connectivity(
+            settings.mixed_port,
+            is_residential,
+            current_gen,
+            Arc::clone(&self.connect_generation),
+        ).await {
+            if self.connect_generation.load(Ordering::SeqCst) != current_gen || probe_err.contains("cancelled") {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                if let Some(mut achild) = self.aether_process.lock().take() {
+                    let _ = achild.kill();
+                    let _ = achild.wait();
+                }
+                if let Some(mut pchild) = self.psiphon_process.lock().take() {
+                    let _ = pchild.kill();
+                    let _ = pchild.wait();
+                }
+                if let Some(mut rchild) = self.relay_process.lock().take() {
+                    let _ = rchild.kill();
+                    let _ = rchild.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = WindowsProxy::disable_proxy();
+                log::info!("Connection aborted by user during sing-box probe");
+                return Err("Connection cancelled by user".to_string());
+            }
+
             log::warn!("Internet connectivity verification failed: {}", probe_err);
             if let Some(mut c) = self.process.lock().take() {
                 let _ = c.kill();
@@ -502,6 +579,16 @@ impl ConnectionManager {
             ));
         }
 
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            Self::force_kill_all_cores();
+            let _ = WindowsProxy::disable_proxy();
+            return Err("Connection cancelled by user".to_string());
+        }
+
         *self.connect_time.lock() = Some(Instant::now());
 
         // 6. Handle System Proxy if configured (only enabled AFTER verification succeeds!)
@@ -521,6 +608,7 @@ impl ConnectionManager {
     }
 
     pub async fn disconnect(&self, app: AppHandle) -> Result<(), String> {
+        self.connect_generation.fetch_add(1, Ordering::SeqCst);
         *self.status.lock() = ConnectionStatus::Disconnecting;
         let _ = app.emit("core:status-changed", ConnectionStatus::Disconnecting);
 
@@ -578,7 +666,11 @@ impl ConnectionManager {
 
         // Disconnect any existing session first
         let _ = self.disconnect(app.clone()).await;
+        let current_gen = self.connect_generation.fetch_add(1, Ordering::SeqCst) + 1;
         Self::wait_for_port_release(settings.mixed_port, 2000).await;
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            return Err("Connection cancelled by user".to_string());
+        }
 
         self.ensure_rules_deployed(&app);
 
@@ -626,6 +718,16 @@ impl ConnectionManager {
         *self.process.lock() = Some(child);
 
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            Self::force_kill_all_cores();
+            let _ = WindowsProxy::disable_proxy();
+            return Err("Connection cancelled by user".to_string());
+        }
+
         {
             let mut proc_lock = self.process.lock();
             if let Some(ref mut c) = *proc_lock {
@@ -647,7 +749,23 @@ impl ConnectionManager {
         }
 
         log::info!("Probing chain internet connectivity through proxy port {}...", settings.mixed_port);
-        if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
+        if let Err(probe_err) = Self::verify_internet_connectivity(
+            settings.mixed_port,
+            false,
+            current_gen,
+            Arc::clone(&self.connect_generation),
+        ).await {
+            if self.connect_generation.load(Ordering::SeqCst) != current_gen || probe_err.contains("cancelled") {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = WindowsProxy::disable_proxy();
+                log::info!("Chain connection aborted by user during probe");
+                return Err("Connection cancelled by user".to_string());
+            }
+
             log::warn!("Chain connectivity verification failed: {}", probe_err);
             if let Some(mut c) = self.process.lock().take() {
                 let _ = c.kill();
@@ -664,6 +782,16 @@ impl ConnectionManager {
                 "外网连通性验证失败：链式代理未能成功转发外网流量（可能链中节点失效或被阻断）。\n已自动断开以防浏览器断网。\n详细原因: {}",
                 probe_err
             ));
+        }
+
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            Self::force_kill_all_cores();
+            let _ = WindowsProxy::disable_proxy();
+            return Err("Connection cancelled by user".to_string());
         }
 
         *self.connect_time.lock() = Some(Instant::now());
@@ -1281,22 +1409,37 @@ rules:
     /// Verifies end-to-end internet connectivity through the newly started local proxy port.
     /// Sends a lightweight HTTP GET request to Cloudflare / Google 204 endpoint.
     /// If internet is unreachable, returns an Err describing the failure.
-    async fn verify_internet_connectivity(proxy_port: u16) -> Result<(), String> {
+    async fn verify_internet_connectivity(
+        proxy_port: u16,
+        is_residential: bool,
+        current_gen: u64,
+        connect_gen: Arc<AtomicU64>,
+    ) -> Result<(), String> {
         let proxy_url = format!("http://127.0.0.1:{}", proxy_port);
         let proxy = reqwest::Proxy::all(&proxy_url)
             .map_err(|e| format!("Invalid local proxy configuration: {}", e))?;
 
+        let timeout_ms = if is_residential { 6000 } else { 4500 };
+        let max_attempts = if is_residential { 12 } else { 6 };
+
         let client = reqwest::Client::builder()
             .proxy(proxy)
-            .timeout(std::time::Duration::from_millis(4500))
+            .timeout(std::time::Duration::from_millis(timeout_ms))
             .build()
             .map_err(|e| format!("Failed to build probe client: {}", e))?;
 
         let mut last_err = String::new();
-        // Probe up to 6 attempts (allows time for multi-hop relays and OpenVPN tunnels to finish handshake)
-        for attempt in 1..=6 {
+        // Probe up to max_attempts (allows time for multi-hop relays and OpenVPN tunnels to finish handshake)
+        for attempt in 1..=max_attempts {
+            if connect_gen.load(Ordering::SeqCst) != current_gen {
+                return Err("Connection cancelled by user".to_string());
+            }
+
             if attempt > 1 {
                 tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                if connect_gen.load(Ordering::SeqCst) != current_gen {
+                    return Err("Connection cancelled by user".to_string());
+                }
             }
 
             // Primary probe: Cloudflare captive portal 204 endpoint
@@ -1310,6 +1453,10 @@ rules:
                 Err(e) => {
                     last_err = e.to_string();
                 }
+            }
+
+            if connect_gen.load(Ordering::SeqCst) != current_gen {
+                return Err("Connection cancelled by user".to_string());
             }
 
             // Secondary fallback probe: Google 204 endpoint
@@ -1326,6 +1473,10 @@ rules:
                     return Ok(());
                 }
             }
+        }
+
+        if connect_gen.load(Ordering::SeqCst) != current_gen {
+            return Err("Connection cancelled by user".to_string());
         }
 
         Err(format!("端到端测试超时：数据包无法在预定时限内到达国际互联网目标（{}）", last_err))
@@ -1410,7 +1561,12 @@ rules:
         }
 
         let _ = self.disconnect(app.clone()).await;
+        let current_gen = self.connect_generation.fetch_add(1, Ordering::SeqCst) + 1;
         Self::wait_for_port_release(settings.mixed_port, 2000).await;
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            return Err("Connection cancelled by user".to_string());
+        }
+
         self.ensure_rules_deployed(&app);
 
         *self.status.lock() = ConnectionStatus::Connecting;
@@ -1447,6 +1603,16 @@ rules:
         *self.process.lock() = Some(child);
 
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            Self::force_kill_all_cores();
+            let _ = WindowsProxy::disable_proxy();
+            return Err("Connection cancelled by user".to_string());
+        }
+
         {
             let mut proc_lock = self.process.lock();
             if let Some(ref mut c) = *proc_lock {
@@ -1464,7 +1630,23 @@ rules:
 
         // End-to-End Real Internet Connectivity Verification Probe
         log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
-        if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
+        if let Err(probe_err) = Self::verify_internet_connectivity(
+            settings.mixed_port,
+            false,
+            current_gen,
+            Arc::clone(&self.connect_generation),
+        ).await {
+            if self.connect_generation.load(Ordering::SeqCst) != current_gen || probe_err.contains("cancelled") {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = WindowsProxy::disable_proxy();
+                log::info!("Smart group connection aborted by user during probe");
+                return Err("Connection cancelled by user".to_string());
+            }
+
             log::warn!("Internet connectivity verification failed for smart group: {}", probe_err);
             if let Some(mut c) = self.process.lock().take() {
                 let _ = c.kill();
@@ -1477,6 +1659,16 @@ rules:
             *self.connected_chain.lock() = None;
             let _ = app.emit("core:status-changed", ConnectionStatus::Error);
             return Err(format!("外网连通性校验失败: {}", probe_err));
+        }
+
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            Self::force_kill_all_cores();
+            let _ = WindowsProxy::disable_proxy();
+            return Err("Connection cancelled by user".to_string());
         }
 
         *self.connect_time.lock() = Some(Instant::now());

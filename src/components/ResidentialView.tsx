@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Home, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Building2 } from 'lucide-react';
+import { Home, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Building2, Square } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { UnifiedNode } from '../types';
 import { RelayBar } from './RelayBar';
@@ -18,6 +18,8 @@ export const ResidentialView: React.FC = () => {
     setErrorMessage,
     loadResidentialNodes,
     residentialSubUrl,
+    relayEnabled,
+    setRelayEnabled,
   } = useAppStore();
 
   const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'Residential'), [nodes]);
@@ -25,6 +27,13 @@ export const ResidentialView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [copiedError, setCopiedError] = useState(false);
+
+  // Requirement #2: Default enable relay proxy for residential broadband nodes
+  useEffect(() => {
+    if (!relayEnabled) {
+      setRelayEnabled(true);
+    }
+  }, []);
 
   const displayNodes = residentialNodes.length > 0 ? residentialNodes : storeNodes;
 
@@ -239,14 +248,22 @@ export const ResidentialView: React.FC = () => {
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>Connected</span>
                       </button>
+                    ) : isConnecting ? (
+                      <button
+                        onClick={() => disconnect()}
+                        className="px-3 py-1.5 bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 rounded-xl text-xs font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
+                        title="点击终止连接"
+                      >
+                        <Square className="w-3.5 h-3.5 fill-red-400 text-red-400 animate-pulse" />
+                        <span>终止</span>
+                      </button>
                     ) : (
                       <button
                         onClick={() => connect(node.id)}
-                        disabled={isConnecting}
-                        className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-amber-600/20 flex items-center gap-1.5"
+                        className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-amber-600/20 flex items-center gap-1.5 active:scale-95"
                       >
                         <ArrowUpRight className="w-3.5 h-3.5" />
-                        <span>{isConnecting ? 'Connecting...' : 'Connect'}</span>
+                        <span>Connect</span>
                       </button>
                     )}
                   </div>

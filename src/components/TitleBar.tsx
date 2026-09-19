@@ -10,7 +10,7 @@ interface TitleBarProps {
 }
 
 export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
-  const { status, connectedNode, settings, saveSettings } = useAppStore();
+  const { status, connectedNode, settings, saveSettings, disconnect } = useAppStore();
   const [isMaximized, setIsMaximized] = useState(false);
   const [appVersion, setAppVersion] = useState('');
 
@@ -63,9 +63,17 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
             <span>Connected: {connectedNode?.name || 'Proxy Active'}</span>
           </div>
         ) : status === 'connecting' ? (
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px]">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[11px] pointer-events-auto">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-ping" />
             <span>Connecting...</span>
+            <button
+              onClick={() => disconnect()}
+              className="ml-1 px-1.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/40 text-red-300 hover:text-red-100 text-[10px] font-semibold border border-red-500/30 transition-all flex items-center gap-1 shadow-sm active:scale-95"
+              title="终止连接"
+            >
+              <Square className="w-2.5 h-2.5 fill-red-400 text-red-400" />
+              <span>终止</span>
+            </button>
           </div>
         ) : (
           <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-gray-800/40 text-gray-400 border border-gray-700/30 text-[11px]">

@@ -26,8 +26,40 @@ pub struct ConnectionManager {
 }
 
 impl ConnectionManager {
+    pub fn force_kill_all_cores() {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let binaries = ["sing-box.exe", "mihomo.exe", "aether.exe", "psiphon-tunnel-core.exe"];
+        for bin in &binaries {
+            let _ = Command::new("taskkill")
+                .args(&["/F", "/T", "/IM", bin])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output();
+        }
+    }
+
+    async fn wait_for_port_release(port: u16, timeout_ms: u64) -> bool {
+        let addr = std::net::SocketAddrV4::new(std::net::Ipv4Addr::new(127, 0, 0, 1), port);
+        let start = std::time::Instant::now();
+        while start.elapsed().as_millis() < timeout_ms as u128 {
+            match std::net::TcpListener::bind(addr) {
+                Ok(listener) => {
+                    drop(listener);
+                    return true;
+                }
+                Err(_) => {
+                    if start.elapsed().as_millis() > 300 {
+                        Self::force_kill_all_cores();
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+        false
+    }
+
     pub fn new(app_data_dir: &Path) -> Self {
         let job_guard = JobObjectGuard::new().ok();
+        Self::force_kill_all_cores();
         Self {
             status: Arc::new(Mutex::new(ConnectionStatus::Disconnected)),
             connected_node: Arc::new(Mutex::new(None)),
@@ -65,6 +97,7 @@ impl ConnectionManager {
         // Disconnect any existing session first
         let _ = self.disconnect(app.clone()).await;
         *self.connected_chain.lock() = None;
+        Self::wait_for_port_release(settings.mixed_port, 2000).await;
 
         self.ensure_rules_deployed(&app);
 
@@ -96,7 +129,7 @@ impl ConnectionManager {
                 .stderr(std::process::Stdio::from(log_err))
                 .creation_flags(CREATE_NO_WINDOW);
 
-            let mut child = cmd
+            let child = cmd
                 .spawn()
                 .map_err(|e| format!("Failed to start mihomo process: {}", e))?;
 
@@ -104,26 +137,37 @@ impl ConnectionManager {
                 let _ = guard.assign_process(&child);
             }
 
+            *self.process.lock() = Some(child);
+
             let initial_wait = if relay_node.is_some() { 2000 } else { 800 };
             tokio::time::sleep(std::time::Duration::from_millis(initial_wait)).await;
-            if let Ok(Some(exit_status)) = child.try_wait() {
-                let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
-                let _ = WindowsProxy::disable_proxy();
-                *self.status.lock() = ConnectionStatus::Error;
-                *self.connected_node.lock() = None;
-                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(format!(
-                    "Mihomo OpenVPN startup failed ({}):\n{}",
-                    exit_status,
-                    err_log.trim()
-                ));
+            {
+                let mut proc_lock = self.process.lock();
+                if let Some(ref mut c) = *proc_lock {
+                    if let Ok(Some(exit_status)) = c.try_wait() {
+                        let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                        let _ = WindowsProxy::disable_proxy();
+                        *self.status.lock() = ConnectionStatus::Error;
+                        *self.connected_node.lock() = None;
+                        let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                        *proc_lock = None;
+                        return Err(format!(
+                            "Mihomo OpenVPN startup failed ({}):\n{}",
+                            exit_status,
+                            err_log.trim()
+                        ));
+                    }
+                }
             }
 
             log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
             if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
                 log::warn!("Internet connectivity verification failed: {}", probe_err);
-                let _ = child.kill();
-                let _ = child.wait();
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
                 let _ = WindowsProxy::disable_proxy();
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
@@ -137,7 +181,6 @@ impl ConnectionManager {
                 ));
             }
 
-            *self.process.lock() = Some(child);
             *self.connect_time.lock() = Some(Instant::now());
 
             if settings.proxy_mode == ProxyMode::SystemProxy {
@@ -395,7 +438,7 @@ impl ConnectionManager {
             .stderr(std::process::Stdio::from(log_err))
             .creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = cmd
+        let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to start sing-box process: {}", e))?;
 
@@ -404,28 +447,37 @@ impl ConnectionManager {
             let _ = guard.assign_process(&child);
         }
 
+        *self.process.lock() = Some(child);
+
         // 5. Verification probe: Ensure core process did not exit on startup
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if let Ok(Some(exit_status)) = child.try_wait() {
-            let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
-            let _ = WindowsProxy::disable_proxy();
-            *self.status.lock() = ConnectionStatus::Error;
-            *self.connected_node.lock() = None;
-            let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-            return Err(format!(
-                "Core startup failed ({}):
-{}",
-                exit_status,
-                err_log.trim()
-            ));
+        {
+            let mut proc_lock = self.process.lock();
+            if let Some(ref mut c) = *proc_lock {
+                if let Ok(Some(exit_status)) = c.try_wait() {
+                    let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                    let _ = WindowsProxy::disable_proxy();
+                    *self.status.lock() = ConnectionStatus::Error;
+                    *self.connected_node.lock() = None;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    *proc_lock = None;
+                    return Err(format!(
+                        "Core startup failed ({}):\n{}",
+                        exit_status,
+                        err_log.trim()
+                    ));
+                }
+            }
         }
 
         // 5.5 End-to-End Real Internet Connectivity Verification Probe
         log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
         if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
             log::warn!("Internet connectivity verification failed: {}", probe_err);
-            let _ = child.kill();
-            let _ = child.wait();
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
             if let Some(mut achild) = self.aether_process.lock().take() {
                 let _ = achild.kill();
                 let _ = achild.wait();
@@ -438,6 +490,7 @@ impl ConnectionManager {
                 let _ = rchild.kill();
                 let _ = rchild.wait();
             }
+            Self::force_kill_all_cores();
             let _ = WindowsProxy::disable_proxy();
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
@@ -449,7 +502,6 @@ impl ConnectionManager {
             ));
         }
 
-        *self.process.lock() = Some(child);
         *self.connect_time.lock() = Some(Instant::now());
 
         // 6. Handle System Proxy if configured (only enabled AFTER verification succeeds!)
@@ -499,6 +551,8 @@ impl ConnectionManager {
             let _ = rchild.wait();
         }
 
+        Self::force_kill_all_cores();
+
         // Always restore Windows System Proxy
         let _ = WindowsProxy::disable_proxy();
 
@@ -524,6 +578,7 @@ impl ConnectionManager {
 
         // Disconnect any existing session first
         let _ = self.disconnect(app.clone()).await;
+        Self::wait_for_port_release(settings.mixed_port, 2000).await;
 
         self.ensure_rules_deployed(&app);
 
@@ -560,7 +615,7 @@ impl ConnectionManager {
             .stderr(std::process::Stdio::from(log_err))
             .creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = cmd
+        let child = cmd
             .spawn()
             .map_err(|e| format!("Failed to start sing-box process: {}", e))?;
 
@@ -568,26 +623,37 @@ impl ConnectionManager {
             let _ = guard.assign_process(&child);
         }
 
+        *self.process.lock() = Some(child);
+
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if let Ok(Some(exit_status)) = child.try_wait() {
-            let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
-            let _ = WindowsProxy::disable_proxy();
-            *self.status.lock() = ConnectionStatus::Error;
-            *self.connected_node.lock() = None;
-            *self.connected_chain.lock() = None;
-            let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-            return Err(format!(
-                "Chain core startup failed ({}):\n{}",
-                exit_status,
-                err_log.trim()
-            ));
+        {
+            let mut proc_lock = self.process.lock();
+            if let Some(ref mut c) = *proc_lock {
+                if let Ok(Some(exit_status)) = c.try_wait() {
+                    let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                    let _ = WindowsProxy::disable_proxy();
+                    *self.status.lock() = ConnectionStatus::Error;
+                    *self.connected_node.lock() = None;
+                    *self.connected_chain.lock() = None;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    *proc_lock = None;
+                    return Err(format!(
+                        "Chain core startup failed ({}):\n{}",
+                        exit_status,
+                        err_log.trim()
+                    ));
+                }
+            }
         }
 
         log::info!("Probing chain internet connectivity through proxy port {}...", settings.mixed_port);
         if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
             log::warn!("Chain connectivity verification failed: {}", probe_err);
-            let _ = child.kill();
-            let _ = child.wait();
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            Self::force_kill_all_cores();
             let _ = WindowsProxy::disable_proxy();
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
@@ -600,7 +666,6 @@ impl ConnectionManager {
             ));
         }
 
-        *self.process.lock() = Some(child);
         *self.connect_time.lock() = Some(Instant::now());
 
         if settings.proxy_mode == ProxyMode::SystemProxy {
@@ -633,6 +698,7 @@ impl ConnectionManager {
         if let Some(mut rchild) = rproc_lock.take() {
             let _ = rchild.kill();
         }
+        Self::force_kill_all_cores();
         let _ = WindowsProxy::disable_proxy();
     }
 
@@ -1344,6 +1410,7 @@ rules:
         }
 
         let _ = self.disconnect(app.clone()).await;
+        Self::wait_for_port_release(settings.mixed_port, 2000).await;
         self.ensure_rules_deployed(&app);
 
         *self.status.lock() = ConnectionStatus::Connecting;
@@ -1371,28 +1438,39 @@ rules:
             .stderr(std::process::Stdio::from(log_err))
             .creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = cmd.spawn().map_err(|e| format!("Failed to start sing-box process: {}", e))?;
+        let child = cmd.spawn().map_err(|e| format!("Failed to start sing-box process: {}", e))?;
 
         if let Some(ref guard) = self.job_guard {
             let _ = guard.assign_process(&child);
         }
 
+        *self.process.lock() = Some(child);
+
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if let Ok(Some(exit_status)) = child.try_wait() {
-            let _ = WindowsProxy::disable_proxy();
-            *self.status.lock() = ConnectionStatus::Error;
-            *self.connected_node.lock() = None;
-            *self.connected_chain.lock() = None;
-            let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-            return Err(format!("Smart group core startup failed: {}", exit_status));
+        {
+            let mut proc_lock = self.process.lock();
+            if let Some(ref mut c) = *proc_lock {
+                if let Ok(Some(exit_status)) = c.try_wait() {
+                    let _ = WindowsProxy::disable_proxy();
+                    *self.status.lock() = ConnectionStatus::Error;
+                    *self.connected_node.lock() = None;
+                    *self.connected_chain.lock() = None;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    *proc_lock = None;
+                    return Err(format!("Smart group core startup failed: {}", exit_status));
+                }
+            }
         }
 
         // End-to-End Real Internet Connectivity Verification Probe
         log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
         if let Err(probe_err) = Self::verify_internet_connectivity(settings.mixed_port).await {
             log::warn!("Internet connectivity verification failed for smart group: {}", probe_err);
-            let _ = child.kill();
-            let _ = child.wait();
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            Self::force_kill_all_cores();
             let _ = WindowsProxy::disable_proxy();
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
@@ -1401,7 +1479,6 @@ rules:
             return Err(format!("外网连通性校验失败: {}", probe_err));
         }
 
-        *self.process.lock() = Some(child);
         *self.connect_time.lock() = Some(Instant::now());
 
         if settings.routing_mode == "global" || settings.routing_mode == "rule" {

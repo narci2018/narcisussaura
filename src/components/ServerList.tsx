@@ -82,15 +82,9 @@ export const ServerList: React.FC = () => {
   // Groups to exclude from Servers view (these have dedicated tabs)
   // const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV'];
 
-  // Extract unique groups from nodes and subscriptions, with WARP groups prioritized
+  // Extract unique groups from nodes and subscriptions
   const availableGroups = useMemo(() => {
     const groupSet = new Set<string>();
-    const warpPriorities = ['Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
-    for (const wp of warpPriorities) {
-      if (subscriptions.some((s) => s.name === wp) || nodes.some((n) => n.group === wp)) {
-        groupSet.add(wp);
-      }
-    }
     for (const sub of subscriptions) {
       if (sub.name) groupSet.add(sub.name);
     }

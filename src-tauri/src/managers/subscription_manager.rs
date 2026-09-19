@@ -53,7 +53,7 @@ impl SubscriptionManager {
                 });
             }
         } else {
-            // Ensure WARP subscription exists
+            // Ensure default subscription exists
             for (name, url) in Self::default_subscriptions() {
                 if !initial_subs.iter().any(|s| s.url == url) {
                     initial_subs.push(Subscription {

@@ -131,6 +131,7 @@ impl ConnectionManager {
             let mut cmd = Command::new(&binary_path);
             cmd.arg("-f")
                 .arg(&config_path)
+                .current_dir(&self.app_data_dir)
                 .stdout(std::process::Stdio::from(log_out))
                 .stderr(std::process::Stdio::from(log_err))
                 .creation_flags(CREATE_NO_WINDOW);
@@ -994,6 +995,36 @@ r#"  - name: relay
                     relay.address, relay.port, password, sni
                 ))
             }
+            crate::models::ProtocolType::Socks5 => {
+                let user = conf.get("username").and_then(|v| v.as_str()).unwrap_or_default();
+                let pass = conf.get("password").and_then(|v| v.as_str()).unwrap_or_default();
+                let mut s = format!(
+r#"  - name: relay
+    type: socks5
+    server: {}
+    port: {}"#,
+                    relay.address, relay.port
+                );
+                if !user.is_empty() {
+                    s.push_str(&format!("\n    username: \"{}\"\n    password: \"{}\"", user, pass));
+                }
+                Some(s)
+            }
+            crate::models::ProtocolType::Http => {
+                let user = conf.get("username").and_then(|v| v.as_str()).unwrap_or_default();
+                let pass = conf.get("password").and_then(|v| v.as_str()).unwrap_or_default();
+                let mut s = format!(
+r#"  - name: relay
+    type: http
+    server: {}
+    port: {}"#,
+                    relay.address, relay.port
+                );
+                if !user.is_empty() {
+                    s.push_str(&format!("\n    username: \"{}\"\n    password: \"{}\"", user, pass));
+                }
+                Some(s)
+            }
             _ => None,
         }
     }
@@ -1004,7 +1035,11 @@ r#"  - name: relay
         settings: &AppSettings,
     ) -> String {
         let conf = &node.config;
-        let proto = conf.get("proto").and_then(|v| v.as_str()).unwrap_or("tcp");
+        let proto = if relay_node.is_some() {
+            "tcp"
+        } else {
+            conf.get("proto").and_then(|v| v.as_str()).unwrap_or("tcp")
+        };
         let cipher = conf.get("cipher").and_then(|v| v.as_str()).unwrap_or("AES-128-CBC");
         let auth = conf.get("auth").and_then(|v| v.as_str()).unwrap_or("SHA1");
 
@@ -1139,31 +1174,14 @@ dns:
     - "*.test"
     - "*.local"
     - "*.home.arpa"
-  default-nameserver:
-    - 223.5.5.5
-    - 119.29.29.29
   nameserver:
     - 223.5.5.5
     - 119.29.29.29
-  nameserver-policy:
-    'geosite:geolocation-!cn':
-      - 'https://1.1.1.1/dns-query#proxy'
-      - 'https://8.8.8.8/dns-query#proxy'
-    'geosite:cn':
-      - 223.5.5.5
-      - 119.29.29.29
+    - 1.1.1.1
+    - 8.8.8.8
   fallback:
-    - 'https://1.1.1.1/dns-query#proxy'
-    - 'https://8.8.8.8/dns-query#proxy'
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    ipcidr:
-      - 240.0.0.0/4
-      - 0.0.0.0/32
-  proxy-server-nameserver:
-    - 223.5.5.5
-    - 119.29.29.29
+    - 1.1.1.1
+    - 8.8.8.8
 
 proxies:
 {}  - name: proxy

@@ -39,7 +39,7 @@ impl SpecialSources {
                 if parts.len() >= 2 {
                     proto = parts[1].to_lowercase();
                 }
-            } else if line.starts_with("cipher ") {
+            } else if line.starts_with("cipher ") || line.starts_with("data-ciphers ") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 {
                     cipher = parts[1].to_string();

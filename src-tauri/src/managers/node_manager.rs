@@ -385,15 +385,49 @@ impl NodeManager {
     }
 
     /// Returns suitable candidates for being a relay / dialer-proxy node.
-    /// Excludes VPNGate, MegaV, and Psiphon nodes, prioritizing Alive nodes with lowest latency_ms.
-    /// Filters out fake-low-latency CDN Anycast traps.
+    /// Returns suitable candidates for being a relay / dialer-proxy node.
+    /// Detects active local proxy ports (10808, 7890, 10809), includes MegaV/custom VPS nodes,
+    /// and filters out fake-low-latency CDN Anycast / dead Cloudflare worker traps.
     pub fn get_relay_candidates(&self) -> Vec<UnifiedNode> {
+        let mut candidates: Vec<UnifiedNode> = Vec::new();
+
+        // 1. Proactively detect active local upstream proxy ports (e.g. v2rayN, Clash, Xray, Sing-Box)
+        let local_probes = [
+            (10808, "SOCKS5 本地代理 (127.0.0.1:10808 · v2rayN/Xray)", ProtocolType::Socks5),
+            (7890, "SOCKS5 本地代理 (127.0.0.1:7890 · Clash)", ProtocolType::Socks5),
+            (10809, "HTTP 本地代理 (127.0.0.1:10809 · v2rayN)", ProtocolType::Http),
+            (1080, "SOCKS5 本地代理 (127.0.0.1:1080)", ProtocolType::Socks5),
+        ];
+
+        for (port, name, proto) in local_probes {
+            let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+            if std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(25)).is_ok() {
+                candidates.push(UnifiedNode {
+                    id: format!("local-relay-{}", port),
+                    name: name.to_string(),
+                    protocol: proto,
+                    address: "127.0.0.1".to_string(),
+                    port,
+                    country_code: "LOCAL".to_string(),
+                    country_name: "本地极速中转".to_string(),
+                    city: "Localhost".to_string(),
+                    group: "LocalProxy".to_string(),
+                    tags: vec!["Local".to_string(), "Relay".to_string(), "Verified".to_string()],
+                    favorite: true,
+                    latency_ms: Some(1),
+                    speed_bps: Some(100_000_000),
+                    last_checked: None,
+                    status: NodeStatus::Alive,
+                    config: serde_json::json!({}),
+                });
+            }
+        }
+
         let nodes = self.nodes.read();
-        let mut candidates: Vec<UnifiedNode> = nodes
+        let mut sub_candidates: Vec<UnifiedNode> = nodes
             .iter()
             .filter(|n| {
                 n.group != "VPNGate"
-                    && n.group != "MegaV"
                     && n.group != "Psiphon"
                     && n.group != "Residential"
                     && n.protocol != ProtocolType::Psiphon
@@ -403,16 +437,27 @@ impl NodeManager {
                         || n.protocol == ProtocolType::Trojan
                         || n.protocol == ProtocolType::Shadowsocks
                         || n.protocol == ProtocolType::Vmess
-                        || n.protocol == ProtocolType::Hysteria2)
+                        || n.protocol == ProtocolType::Hysteria2
+                        || n.protocol == ProtocolType::Socks5
+                        || n.protocol == ProtocolType::Http)
             })
             .cloned()
             .collect();
 
-        // Helper: identify Cloudflare Anycast IP traps with false low latency (backend dead)
-        let is_anycast_trap = |n: &UnifiedNode| -> bool {
+        // Helper: identify Cloudflare Anycast IP or Worker/Pages traps (cannot dial arbitrary OpenVPN TCP ports)
+        let is_cf_trap = |n: &UnifiedNode| -> bool {
             let addr = &n.address;
             let lat = n.latency_ms.unwrap_or(9999);
-            // Cloudflare anycast CIDRs commonly used as fronting IPs in public subscriptions
+            let sni = n.config.get("sni").and_then(|v| v.as_str()).unwrap_or("");
+            let host = n.config.get("host").and_then(|v| v.as_str()).unwrap_or("");
+            
+            // Cloudflare Pages or Workers cannot dial arbitrary OpenVPN TCP ports
+            if sni.ends_with(".pages.dev") || sni.ends_with(".workers.dev") 
+                || host.ends_with(".pages.dev") || host.ends_with(".workers.dev") {
+                return true;
+            }
+
+            // Cloudflare anycast CIDRs commonly used as fronting IPs
             let is_cf_ip = addr.starts_with("104.1")
                 || addr.starts_with("104.2")
                 || addr.starts_with("172.6")
@@ -420,34 +465,35 @@ impl NodeManager {
                 || addr.starts_with("162.15")
                 || addr.starts_with("108.162.")
                 || addr.starts_with("198.41.");
-            // If it's a VMess on Cloudflare IP, it's almost certainly a dead CDN trap
             if is_cf_ip && n.protocol == ProtocolType::Vmess {
                 return true;
             }
             is_cf_ip && lat < 120
         };
 
-        // Protocol weight: Vless/Trojan/Shadowsocks with verified transport
+        // Protocol weight: Shadowsocks/Trojan/Vless with direct transport
         let proto_weight = |n: &UnifiedNode| -> u32 {
             match n.protocol {
-                ProtocolType::Vless => 0,
+                ProtocolType::Shadowsocks => 0,
                 ProtocolType::Trojan => 1,
-                ProtocolType::Shadowsocks => 2,
+                ProtocolType::Vless => 2,
                 ProtocolType::Hysteria2 => 3,
                 ProtocolType::Vmess => 4,
-                _ => 5,
+                ProtocolType::Socks5 => 5,
+                ProtocolType::Http => 6,
+                _ => 7,
             }
         };
 
-        candidates.sort_by(|a, b| {
+        sub_candidates.sort_by(|a, b| {
             let a_alive = a.status == NodeStatus::Alive;
             let b_alive = b.status == NodeStatus::Alive;
             if a_alive != b_alive {
                 return b_alive.cmp(&a_alive);
             }
 
-            let a_trap = is_anycast_trap(a);
-            let b_trap = is_anycast_trap(b);
+            let a_trap = is_cf_trap(a);
+            let b_trap = is_cf_trap(b);
             if a_trap != b_trap {
                 return a_trap.cmp(&b_trap); // Non-trap first
             }
@@ -466,7 +512,9 @@ impl NodeManager {
             b.favorite.cmp(&a.favorite)
         });
 
-        // If no candidate from user subscriptions, provide verified built-in relay seeds
+        candidates.extend(sub_candidates);
+
+        // If no candidate from local probes or subscriptions, provide verified built-in relay seeds
         if candidates.is_empty() {
             candidates = Self::build_seed_relay_nodes();
         }

@@ -867,6 +867,12 @@ r#"  - name: relay
             String::new()
         };
 
+        let mihomo_mode = match settings.routing_mode.as_str() {
+            "global" => "global",
+            "direct" => "direct",
+            _ => "rule",
+        };
+
         let active_set = settings.get_active_rule_set();
         let mut rules_yaml = String::new();
 
@@ -875,13 +881,9 @@ r#"  - name: relay
             if let Some(cat) = r.strip_prefix("geosite:") {
                 format!("  - GEOSITE,{},{}\n", cat, action)
             } else if let Some(cat) = r.strip_prefix("geoip:") {
-                if cat == "private" && action == "DIRECT" {
-                    "  - GEOIP,private,DIRECT,no-resolve\n".to_string()
-                } else {
-                    format!("  - GEOIP,{},{}\n", cat, action)
-                }
+                format!("  - GEOIP,{},{},no-resolve\n", cat, action)
             } else if r.contains('/') || r.parse::<std::net::IpAddr>().is_ok() {
-                format!("  - IP-CIDR,{},{}\n", r, action)
+                format!("  - IP-CIDR,{},{},no-resolve\n", r, action)
             } else {
                 format!("  - DOMAIN-SUFFIX,{},{}\n", r, action)
             }
@@ -927,19 +929,41 @@ r#"  - name: relay
         format!(
 r#"mixed-port: {}
 allow-lan: false
-mode: rule
+mode: {}
 log-level: info
 external-controller: 127.0.0.1:{}
 
 dns:
   enable: true
   ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "*.localdomain"
+    - "*.example"
+    - "*.invalid"
+    - "*.localhost"
+    - "*.test"
+    - "*.local"
+    - "*.home.arpa"
   default-nameserver:
     - 223.5.5.5
     - 119.29.29.29
   nameserver:
     - 223.5.5.5
     - 119.29.29.29
+  fallback:
+    - https://1.1.1.1/dns-query
+    - https://8.8.8.8/dns-query
+    - 8.8.8.8
+    - 1.1.1.1
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    ipcidr:
+      - 240.0.0.0/4
+      - 0.0.0.0/32
   proxy-server-nameserver:
     - 223.5.5.5
     - 119.29.29.29
@@ -962,6 +986,7 @@ proxies:
 rules:
 {}"#,
             settings.mixed_port,
+            mihomo_mode,
             settings.clash_api_port,
             relay_block,
             node.address,

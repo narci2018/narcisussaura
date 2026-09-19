@@ -17,6 +17,7 @@ export const ResidentialView: React.FC = () => {
     errorMessage,
     setErrorMessage,
     loadResidentialNodes,
+    residentialSubUrl,
   } = useAppStore();
 
   const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'Residential'), [nodes]);
@@ -35,6 +36,7 @@ export const ResidentialView: React.FC = () => {
   };
 
   const handleSync = async () => {
+    if (!residentialSubUrl) return;
     setLoading(true);
     try {
       const fetched = await loadResidentialNodes();
@@ -49,10 +51,10 @@ export const ResidentialView: React.FC = () => {
   };
 
   useEffect(() => {
-    if (storeNodes.length === 0) {
+    if (storeNodes.length === 0 && residentialSubUrl) {
       handleSync();
     }
-  }, []);
+  }, [residentialSubUrl]);
 
   const handleTestAllPing = async () => {
     for (const n of displayNodes) {

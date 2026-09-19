@@ -610,19 +610,21 @@ impl SpecialSources {
         result_nodes
     }
 
-    /// Fetch and sync Residential nodes from specified URL or default
+    /// Fetch and sync Residential nodes from specified URL
     pub async fn fetch_residential_nodes(
         node_manager: &NodeManager,
         url_override: Option<String>,
     ) -> Result<Vec<UnifiedNode>> {
-        let target_url = url_override
-            .filter(|u| !u.trim().is_empty())
-            .unwrap_or_else(|| {
-                "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json".to_string()
-            });
+        let target_url = match url_override.filter(|u| !u.trim().is_empty()) {
+            Some(u) => u,
+            None => {
+                log::info!("fetch_residential_nodes: No residential sub URL configured, skipping fetch");
+                return Ok(vec![]);
+            }
+        };
 
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(12))
+            .timeout(Duration::from_secs(15))
             .build()?;
 
         let mut body_opt = None;
@@ -634,7 +636,7 @@ impl SpecialSources {
             }
         }
 
-        // Fallback for default jsdelivr if needed
+        // Fallback mirrors if jsdelivr fails
         if body_opt.is_none() && target_url.contains("jsdelivr.net") {
             let fallbacks = [
                 "https://raw.githubusercontent.com/narci2018/freesubplus/main/output/residential_nodes.json",
@@ -660,27 +662,36 @@ impl SpecialSources {
                     .or_else(|| val.as_array());
 
                 if let Some(items) = nodes_array {
+                    // Remove old residential nodes before adding verified new ones
+                    let old_ids: Vec<String> = node_manager
+                        .get_all()
+                        .into_iter()
+                        .filter(|n| n.group == "Residential")
+                        .map(|n| n.id)
+                        .collect();
+                    for id in old_ids {
+                        let _ = node_manager.delete_node(&id);
+                    }
+
                     for s in items {
-                        let ip = s.get("ip").and_then(|v| v.as_str()).unwrap_or("");
                         let ovpn_cfg = s.get("ovpn_config")
                             .or_else(|| s.get("openvpn_config_base64"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("");
-                        if ip.is_empty() && ovpn_cfg.is_empty() {
+                        if ovpn_cfg.is_empty() {
                             continue;
                         }
 
                         let (host, port, proto, cipher, auth, ca, cert, key) =
                             match Self::parse_openvpn_fields(ovpn_cfg) {
                                 Some(f) => f,
-                                None => {
-                                    if ip.is_empty() {
-                                        continue;
-                                    }
-                                    let p = s.get("port").and_then(|v| v.as_u64()).unwrap_or(1194) as u16;
-                                    (ip.to_string(), p, "tcp".to_string(), "AES-128-CBC".to_string(), "SHA1".to_string(), String::new(), String::new(), String::new())
-                                }
+                                None => continue,
                             };
+
+                        // Must have valid remote address and CA certificate
+                        if host.is_empty() || ca.is_empty() {
+                            continue;
+                        }
 
                         let country_code = s.get("country_code")
                             .or_else(|| s.get("country_short"))
@@ -696,9 +707,19 @@ impl SpecialSources {
                             .and_then(|v| v.as_str())
                             .unwrap_or("Residential ISP");
                         let ping = s.get("ping_ms").and_then(|v| v.as_i64()).unwrap_or(30);
-                        let speed = s.get("speed_bps").and_then(|v| v.as_u64())
-                            .or_else(|| s.get("speed_mbps").and_then(|v| v.as_f64()).map(|m| (m * 1_000_000.0) as u64))
-                            .unwrap_or(100_000_000);
+
+                        // Residential nodes bandwidth scale fix: 5101.57 Mbps is scaled by 10x, actual bandwidth is 400-500 Mbps
+                        let speed_raw = s.get("speed_mbps").and_then(|v| v.as_f64())
+                            .or_else(|| s.get("speed_bps").and_then(|v| v.as_f64()).map(|b| b / 1_000_000.0))
+                            .unwrap_or(0.0);
+                        let speed_mbps = if speed_raw > 1000.0 {
+                            speed_raw / 10.0
+                        } else if speed_raw > 0.0 {
+                            speed_raw
+                        } else {
+                            50.0
+                        };
+                        let speed_bps = (speed_mbps * 1_000_000.0) as u64;
 
                         let node_id = format!("residential-{}", host.replace('.', "-"));
 
@@ -721,7 +742,7 @@ impl SpecialSources {
                             tags: vec!["Residential".to_string(), "优质住宅IP".to_string(), isp.to_string(), country_code.to_string()],
                             favorite: false,
                             latency_ms: if ping > 0 { Some(ping) } else { Some(35) },
-                            speed_bps: if speed > 0 { Some(speed) } else { Some(50_000_000) },
+                            speed_bps: if speed_bps > 0 { Some(speed_bps) } else { Some(50_000_000) },
                             last_checked: None,
                             status: NodeStatus::Alive,
                             config: json!({

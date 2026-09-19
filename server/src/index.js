@@ -358,9 +358,9 @@ export default {
           authorized: true,
           display_text: userData.display_text || "NarcissusAura VIP",
           custom_sub_url: userData.custom_sub_url || "",
-          residential_sub_url: userData.residential_sub_url !== undefined
-            ? userData.residential_sub_url
-            : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json",
+          residential_sub_url: (userData.residential_sub_url && typeof userData.residential_sub_url === 'string')
+            ? userData.residential_sub_url.trim()
+            : "",
           expires_at: userData.expires_at || null, // CF 中的最终到期时间
           issued_at: Date.now() // 发证时间，App 用它判断 7 天缓存期
         };
@@ -428,8 +428,8 @@ export default {
             display_text,
             custom_sub_url,
             residential_sub_url: residential_sub_url !== undefined
-              ? residential_sub_url
-              : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json",
+              ? (typeof residential_sub_url === 'string' ? residential_sub_url.trim() : "")
+              : "",
             status: authorized ? "approved" : "pending", 
             last_seen: Date.now(),
             expires_at

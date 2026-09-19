@@ -200,8 +200,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   residentialSubUrl: null,
   loadResidentialNodes: async () => {
     const url = get().residentialSubUrl;
+    if (!url || !url.trim()) {
+      return [];
+    }
     try {
-      const fetched = await api.fetchResidentialNodes(url || undefined);
+      const fetched = await api.fetchResidentialNodes(url.trim());
       await get().refreshNodes();
       return fetched;
     } catch (e) {
@@ -520,9 +523,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
               const SEVEN_DAYS_MS = 7 * 24 * 3600 * 1000;
               if (now - payload.issued_at < SEVEN_DAYS_MS) {
                 // Locally authorized
-                const resUrl = payload.residential_sub_url !== undefined
-                  ? payload.residential_sub_url
-                  : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+                const resUrl = payload.residential_sub_url;
                 const effectiveResUrl = (typeof resUrl === 'string' && resUrl.trim().length > 0) ? resUrl.trim() : null;
 
                 set({
@@ -559,9 +560,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       if (data && data.success && data.authorized && data.token) {
         localStorage.setItem('vpn_auth_token', data.token);
         const payload = await verifyJWT(data.token);
-        const resUrl = payload?.residential_sub_url !== undefined
-          ? payload.residential_sub_url
-          : "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+        const resUrl = payload?.residential_sub_url;
         const effectiveResUrl = (typeof resUrl === 'string' && resUrl.trim().length > 0) ? resUrl.trim() : null;
 
         set({

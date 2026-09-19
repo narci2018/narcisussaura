@@ -262,9 +262,6 @@ const ADMIN_HTML = `
                     showModal.value = false;
                     fetchDevices();
                 };
-                    showModal.value = false;
-                    fetchDevices();
-                };
 
                 const deleteDevice = async (id) => {
                     if (!confirm('确定删除该请求记录吗？如果该设备再次连接会重新生成待审批记录。')) return;

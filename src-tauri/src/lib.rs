@@ -335,29 +335,61 @@ async fn update_all_subscriptions(
 
 #[tauri::command]
 async fn minimize_window(window: Window) -> Result<(), String> {
-    window.hide().map_err(|e| e.to_string())
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        window.hide().map_err(|e| e.to_string())
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = window;
+        Ok(())
+    }
 }
 
 #[tauri::command]
 async fn toggle_maximize(window: Window) -> Result<bool, String> {
-    let is_max = window.is_maximized().map_err(|e| e.to_string())?;
-    if is_max {
-        window.unmaximize().map_err(|e| e.to_string())?;
-        Ok(false)
-    } else {
-        window.maximize().map_err(|e| e.to_string())?;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let is_max = window.is_maximized().map_err(|e| e.to_string())?;
+        if is_max {
+            window.unmaximize().map_err(|e| e.to_string())?;
+            Ok(false)
+        } else {
+            window.maximize().map_err(|e| e.to_string())?;
+            Ok(true)
+        }
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = window;
         Ok(true)
     }
 }
 
 #[tauri::command]
 async fn is_window_maximized(window: Window) -> Result<bool, String> {
-    window.is_maximized().map_err(|e| e.to_string())
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        window.is_maximized().map_err(|e| e.to_string())
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = window;
+        Ok(true)
+    }
 }
 
 #[tauri::command]
 async fn close_window(window: Window) -> Result<(), String> {
-    window.close().map_err(|e| e.to_string())
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        window.close().map_err(|e| e.to_string())
+    }
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = window;
+        Ok(())
+    }
 }
 
 #[tauri::command]

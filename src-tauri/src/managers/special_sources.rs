@@ -2,7 +2,6 @@ use crate::managers::node_manager::NodeManager;
 use crate::models::{NodeStatus, ProtocolType, UnifiedNode};
 use anyhow::Result;
 use serde_json::json;
-use std::time::Duration;
 
 pub struct SpecialSources;
 
@@ -85,26 +84,15 @@ impl SpecialSources {
         }
 
         // --- Try to fetch fresh nodes online ---
-        let urls = [
-            "https://cdn.jsdelivr.net/gh/Romaxa55/MegaV_Public@main/subs/servers.json",
-            "https://raw.githubusercontent.com/Romaxa55/MegaV_Public/main/subs/servers.json",
-        ];
-
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(8))
-            .build()?;
-
-        let mut body_opt = None;
-        for u in &urls {
-            if let Ok(resp) = client.get(*u).header("User-Agent", "Mozilla/5.0").send().await {
-                if resp.status().is_success() {
-                    if let Ok(text) = resp.text().await {
-                        body_opt = Some(text);
-                        break;
-                    }
-                }
+        // --- Try to fetch fresh nodes online with smart multi-mirror fallback ---
+        let base_url = "https://testingcf.jsdelivr.net/gh/Romaxa55/MegaV_Public@main/subs/servers.json";
+        let body_opt = match crate::managers::url_fallback::fetch_with_smart_fallback(base_url, None, 8, None).await {
+            Ok((body, _)) => Some(body),
+            Err(e) => {
+                log::warn!("fetch_megav_nodes: all fallback mirrors failed: {}", e);
+                None
             }
-        }
+        };
 
         let mut online_nodes = Vec::new();
         if let Some(body) = body_opt {
@@ -268,27 +256,15 @@ impl SpecialSources {
             let _ = node_manager.add_node(node.clone());
         }
 
-        // Try to fetch fresh VPNGate list
-        let urls = [
-            "https://cdn.jsdelivr.net/gh/GeorgeXie2333/vpngate-list-mirror@main/data/servers.json",
-            "https://ghproxy.net/https://raw.githubusercontent.com/GeorgeXie2333/vpngate-list-mirror/main/data/servers.json",
-        ];
-
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(8))
-            .build()?;
-
-        let mut body_opt = None;
-        for u in &urls {
-            if let Ok(resp) = client.get(*u).header("User-Agent", "Mozilla/5.0").send().await {
-                if resp.status().is_success() {
-                    if let Ok(text) = resp.text().await {
-                        body_opt = Some(text);
-                        break;
-                    }
-                }
+        // Try to fetch fresh VPNGate list with smart multi-mirror fallback
+        let base_url = "https://testingcf.jsdelivr.net/gh/GeorgeXie2333/vpngate-list-mirror@main/data/servers.json";
+        let body_opt = match crate::managers::url_fallback::fetch_with_smart_fallback(base_url, None, 8, None).await {
+            Ok((body, _)) => Some(body),
+            Err(e) => {
+                log::warn!("fetch_vpngate_nodes: all fallback mirrors failed: {}", e);
+                None
             }
-        }
+        };
 
         let mut added = 0usize;
         if let Some(body) = body_opt {
@@ -623,36 +599,13 @@ impl SpecialSources {
             }
         };
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()?;
-
-        let mut body_opt = None;
-        if let Ok(resp) = client.get(&target_url).header("User-Agent", "Mozilla/5.0").send().await {
-            if resp.status().is_success() {
-                if let Ok(text) = resp.text().await {
-                    body_opt = Some(text);
-                }
+        let body_opt = match crate::managers::url_fallback::fetch_with_smart_fallback(&target_url, None, 8, None).await {
+            Ok((body, _)) => Some(body),
+            Err(e) => {
+                log::warn!("fetch_residential_nodes: all fallback mirrors failed: {}", e);
+                None
             }
-        }
-
-        // Fallback mirrors if jsdelivr fails
-        if body_opt.is_none() && target_url.contains("jsdelivr.net") {
-            let fallbacks = [
-                "https://raw.githubusercontent.com/narci2018/freesubplus/main/output/residential_nodes.json",
-                "https://ghproxy.net/https://raw.githubusercontent.com/narci2018/freesubplus/main/output/residential_nodes.json",
-            ];
-            for fb in &fallbacks {
-                if let Ok(resp) = client.get(*fb).header("User-Agent", "Mozilla/5.0").send().await {
-                    if resp.status().is_success() {
-                        if let Ok(text) = resp.text().await {
-                            body_opt = Some(text);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        };
 
         let mut result_nodes = Vec::new();
         if let Some(body) = body_opt {

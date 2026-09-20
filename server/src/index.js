@@ -129,8 +129,8 @@ const ADMIN_HTML = `
 
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-700 mb-1">住宅IP订阅源 (留空则APP隐藏优质住宅IP)</label>
-                    <input v-model="authForm.residential_sub_url" type="text" class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json">
-                    <div class="text-[11px] text-gray-400 mt-1">默认值：https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json</div>
+                    <input v-model="authForm.residential_sub_url" type="text" class="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500" placeholder="https://testingcf.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json">
+                    <div class="text-[11px] text-gray-400 mt-1">默认值：https://testingcf.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json</div>
                 </div>
                 
                 <div class="mb-6">
@@ -214,7 +214,7 @@ const ADMIN_HTML = `
                     authForm.value.custom_sub_url = device.custom_sub_url || '';
                     authForm.value.residential_sub_url = device.residential_sub_url !== undefined
                         ? device.residential_sub_url
-                        : 'https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json';
+                        : 'https://testingcf.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json';
                     
                     if (device.authorized) {
                         if (device.expires_at) {
@@ -353,7 +353,7 @@ export default {
         }
 
         const defaultResUrl = (env.RESIDENTIAL_SUB_URL && env.RESIDENTIAL_SUB_URL.trim())
-          || "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+          || "https://testingcf.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
 
         const effectiveResidentialUrl = (userData.residential_sub_url !== undefined && userData.residential_sub_url !== null)
           ? (typeof userData.residential_sub_url === 'string' ? userData.residential_sub_url.trim() : "")
@@ -404,7 +404,7 @@ export default {
 
       try {
         const defaultResUrl = (env.RESIDENTIAL_SUB_URL && env.RESIDENTIAL_SUB_URL.trim())
-          || "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
+          || "https://testingcf.jsdelivr.net/gh/narci2018/freesubplus@main/output/residential_nodes.json";
 
         if (url.pathname === "/api/admin/list") {
           const listInfo = await env.AUTH_DB.list();

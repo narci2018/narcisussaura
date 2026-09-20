@@ -21,7 +21,7 @@ pub struct SubscriptionManager {
 impl SubscriptionManager {
     pub fn default_subscriptions() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("Default", "https://cdn.jsdelivr.net/gh/narci2018/freesubplus@main/output/v2ray.txt"),
+            ("Default", "https://testingcf.jsdelivr.net/gh/narci2018/freesubplus@main/output/v2ray.txt"),
         ]
     }
 
@@ -53,9 +53,13 @@ impl SubscriptionManager {
                 });
             }
         } else {
-            // Ensure default subscription exists
+            // Ensure default subscription exists and migrate legacy blocked jsdelivr URLs
             for (name, url) in Self::default_subscriptions() {
-                if !initial_subs.iter().any(|s| s.url == url) {
+                if let Some(existing) = initial_subs.iter_mut().find(|s| s.name == name) {
+                    if existing.url.contains("cdn.jsdelivr.net") {
+                        existing.url = url.to_string();
+                    }
+                } else if !initial_subs.iter().any(|s| s.url == url) {
                     initial_subs.push(Subscription {
                         id: Uuid::new_v4().to_string(),
                         name: name.to_string(),
@@ -282,74 +286,25 @@ impl SubscriptionManager {
     }
 
     async fn fetch_and_parse(&self, sub: &Subscription, proxy_url: Option<&str>) -> Result<(Vec<UnifiedNode>, Option<SubscriptionTraffic>)> {
-        // Collect URLs to attempt: primary URL first, and if from GitHub, fallback mirrors to bypass GFW blocks
-        let mut urls_to_try = vec![sub.url.clone()];
-        if sub.url.contains("raw.githubusercontent.com") || sub.url.contains("github.com") {
-            urls_to_try.push(format!("https://ghproxy.net/{}", sub.url));
-            urls_to_try.push(format!("https://ghfast.top/{}", sub.url));
-        }
+        let (body, headers) = crate::managers::url_fallback::fetch_with_smart_fallback(
+            &sub.url,
+            proxy_url,
+            8,
+            Some("clash.meta/1.18.0 NarcissusAura/1.0.0"),
+        ).await.map_err(|e| anyhow::anyhow!("Failed to fetch subscription after trying all mirrors: {}", e))?;
 
-        let mut last_err = anyhow::anyhow!("No candidate URL attempted");
-
-        for target_url in &urls_to_try {
-            let mut client_builder = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(12));
-
-            if let Some(p) = proxy_url {
-                if let Ok(proxy) = reqwest::Proxy::all(p) {
-                    client_builder = client_builder.proxy(proxy);
-                }
-            }
-
-            let client = match client_builder.build() {
-                Ok(c) => c,
-                Err(e) => {
-                    last_err = e.into();
-                    continue;
-                }
-            };
-
-            let resp = match client
-                .get(target_url)
-                .header("User-Agent", "clash.meta/1.18.0 NarcissusAura/1.0.0")
-                .send()
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    last_err = e.into();
-                    continue;
-                }
-            };
-
-            if !resp.status().is_success() {
-                last_err = anyhow::anyhow!("HTTP request failed with status: {}", resp.status());
-                continue;
-            }
-
-            let traffic = if let Some(header_val) = resp.headers().get("subscription-userinfo") {
-                if let Ok(val_str) = header_val.to_str() {
-                    Self::parse_userinfo(val_str)
-                } else {
-                    None
-                }
+        let traffic = if let Some(header_val) = headers.get("subscription-userinfo") {
+            if let Ok(val_str) = header_val.to_str() {
+                Self::parse_userinfo(val_str)
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
-            let body = match resp.text().await {
-                Ok(b) => b,
-                Err(e) => {
-                    last_err = e.into();
-                    continue;
-                }
-            };
-
-            let nodes = self.parse_subscription_body(&body, &sub.name)?;
-            return Ok((nodes, traffic));
-        }
-
-        Err(last_err)
+        let nodes = self.parse_subscription_body(&body, &sub.name)?;
+        Ok((nodes, traffic))
     }
 
     fn parse_userinfo(info: &str) -> Option<SubscriptionTraffic> {

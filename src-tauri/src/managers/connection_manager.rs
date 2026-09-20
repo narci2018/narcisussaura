@@ -1,9 +1,7 @@
 use crate::core::{CoreAdapter, SingBoxAdapter};
 use crate::models::{AppSettings, ConnectionStatus, ProxyMode, TrafficStats, UnifiedNode};
-use crate::platform::job_object::JobObjectGuard;
-use crate::platform::win_proxy::WindowsProxy;
+use crate::platform::{core_binary_name, hide_window_std, PlatformProxy, ProcessGuard};
 use parking_lot::Mutex;
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -18,7 +16,7 @@ pub struct ConnectionManager {
     aether_process: Arc<Mutex<Option<Child>>>,
     psiphon_process: Arc<Mutex<Option<Child>>>,
     relay_process: Arc<Mutex<Option<Child>>>,
-    job_guard: Option<JobObjectGuard>,
+    job_guard: Option<ProcessGuard>,
     app_data_dir: PathBuf,
     is_traffic_running: Arc<AtomicBool>,
     connect_time: Arc<Mutex<Option<Instant>>>,
@@ -28,13 +26,24 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     pub fn force_kill_all_cores() {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let binaries = ["sing-box.exe", "mihomo.exe", "aether.exe", "psiphon-tunnel-core.exe"];
-        for bin in &binaries {
-            let _ = Command::new("taskkill")
-                .args(&["/F", "/T", "/IM", bin])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
+        let binaries = ["sing-box", "mihomo", "aether", "psiphon-tunnel-core"];
+        #[cfg(windows)]
+        {
+            for bin in &binaries {
+                let bin_exe = format!("{}.exe", bin);
+                let mut cmd = Command::new("taskkill");
+                cmd.args(&["/F", "/T", "/IM", &bin_exe]);
+                hide_window_std(&mut cmd);
+                let _ = cmd.output();
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            for bin in &binaries {
+                let _ = Command::new("pkill")
+                    .args(&["-9", "-f", bin])
+                    .output();
+            }
         }
     }
 
@@ -59,7 +68,7 @@ impl ConnectionManager {
     }
 
     pub fn new(app_data_dir: &Path) -> Self {
-        let job_guard = JobObjectGuard::new().ok();
+        let job_guard = ProcessGuard::new().ok();
         Self::force_kill_all_cores();
         Self {
             status: Arc::new(Mutex::new(ConnectionStatus::Disconnected)),
@@ -111,8 +120,6 @@ impl ConnectionManager {
         *self.connected_node.lock() = Some(node.clone());
         let _ = app.emit("core:status-changed", ConnectionStatus::Connecting);
 
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
         // Specialized handling for OpenVPN (VPNGate SoftEther / Residential) via Mihomo core
         if node.protocol == crate::models::ProtocolType::Openvpn {
             let binary_path = self.locate_mihomo(&app)?;
@@ -133,8 +140,8 @@ impl ConnectionManager {
                 .arg(&config_path)
                 .current_dir(&self.app_data_dir)
                 .stdout(std::process::Stdio::from(log_out))
-                .stderr(std::process::Stdio::from(log_err))
-                .creation_flags(CREATE_NO_WINDOW);
+                .stderr(std::process::Stdio::from(log_err));
+            hide_window_std(&mut cmd);
 
             let child = cmd
                 .spawn()
@@ -161,7 +168,7 @@ impl ConnectionManager {
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
-                let _ = WindowsProxy::disable_proxy();
+                let _ = PlatformProxy::disable_proxy();
                 return Err("Connection cancelled by user".to_string());
             }
 
@@ -170,7 +177,7 @@ impl ConnectionManager {
                 if let Some(ref mut c) = *proc_lock {
                     if let Ok(Some(exit_status)) = c.try_wait() {
                         let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
-                        let _ = WindowsProxy::disable_proxy();
+                        let _ = PlatformProxy::disable_proxy();
                         *self.status.lock() = ConnectionStatus::Error;
                         *self.connected_node.lock() = None;
                         let _ = app.emit("core:status-changed", ConnectionStatus::Error);
@@ -197,7 +204,7 @@ impl ConnectionManager {
                         let _ = c.wait();
                     }
                     Self::force_kill_all_cores();
-                    let _ = WindowsProxy::disable_proxy();
+                    let _ = PlatformProxy::disable_proxy();
                     log::info!("Connection aborted by user during OpenVPN probe");
                     return Err("Connection cancelled by user".to_string());
                 }
@@ -207,7 +214,7 @@ impl ConnectionManager {
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
-                let _ = WindowsProxy::disable_proxy();
+                let _ = PlatformProxy::disable_proxy();
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
@@ -226,14 +233,14 @@ impl ConnectionManager {
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
-                let _ = WindowsProxy::disable_proxy();
+                let _ = PlatformProxy::disable_proxy();
                 return Err("Connection cancelled by user".to_string());
             }
 
             *self.connect_time.lock() = Some(Instant::now());
 
             if settings.proxy_mode == ProxyMode::SystemProxy {
-                if let Err(e) = WindowsProxy::enable_proxy(settings.mixed_port) {
+                if let Err(e) = PlatformProxy::enable_proxy(settings.mixed_port) {
                     log::error!("Failed to enable Windows system proxy: {}", e);
                 }
             }
@@ -285,8 +292,8 @@ impl ConnectionManager {
                     let relay_cfg_path = self.app_data_dir.join("psiphon_relay.json");
                     let _ = std::fs::write(&relay_cfg_path, relay_cfg.to_string());
                     let mut rcmd = Command::new(&sing_box_bin);
-                    rcmd.arg("run").arg("-c").arg(&relay_cfg_path)
-                        .creation_flags(CREATE_NO_WINDOW);
+                    rcmd.arg("run").arg("-c").arg(&relay_cfg_path);
+                    hide_window_std(&mut rcmd);
                     if let Ok(rchild) = rcmd.spawn() {
                         if let Some(ref guard) = self.job_guard {
                             let _ = guard.assign_process(&rchild);
@@ -353,8 +360,8 @@ impl ConnectionManager {
                 .arg("-dataRootDirectory").arg(&self.app_data_dir)
                 .arg("-formatNotices")
                 .stdout(std::process::Stdio::from(plog_out))
-                .stderr(std::process::Stdio::from(plog_err))
-                .creation_flags(CREATE_NO_WINDOW);
+                .stderr(std::process::Stdio::from(plog_err));
+            hide_window_std(&mut pcmd);
 
             let pchild = pcmd.spawn()
                 .map_err(|e| format!("Failed to start psiphon-tunnel-core: {}", e))?;
@@ -391,7 +398,7 @@ impl ConnectionManager {
                     let _ = rproc.kill();
                     let _ = rproc.wait();
                 }
-                let _ = WindowsProxy::disable_proxy();
+                let _ = PlatformProxy::disable_proxy();
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
@@ -424,8 +431,8 @@ impl ConnectionManager {
                 .arg("--no-data-check")
                 .current_dir(&self.app_data_dir)
                 .stdout(std::process::Stdio::from(alog_out))
-                .stderr(std::process::Stdio::from(alog_err))
-                .creation_flags(CREATE_NO_WINDOW);
+                .stderr(std::process::Stdio::from(alog_err));
+            hide_window_std(&mut acmd);
 
             let achild = acmd
                 .spawn()
@@ -484,8 +491,8 @@ impl ConnectionManager {
             .arg("-c")
             .arg(&config_path)
             .stdout(std::process::Stdio::from(log_out))
-            .stderr(std::process::Stdio::from(log_err))
-            .creation_flags(CREATE_NO_WINDOW);
+            .stderr(std::process::Stdio::from(log_err));
+        hide_window_std(&mut cmd);
 
         let child = cmd
             .spawn()
@@ -505,7 +512,7 @@ impl ConnectionManager {
             if let Some(ref mut c) = *proc_lock {
                 if let Ok(Some(exit_status)) = c.try_wait() {
                     let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
-                    let _ = WindowsProxy::disable_proxy();
+                    let _ = PlatformProxy::disable_proxy();
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     let _ = app.emit("core:status-changed", ConnectionStatus::Error);
@@ -546,7 +553,7 @@ impl ConnectionManager {
                     let _ = rchild.wait();
                 }
                 Self::force_kill_all_cores();
-                let _ = WindowsProxy::disable_proxy();
+                let _ = PlatformProxy::disable_proxy();
                 log::info!("Connection aborted by user during sing-box probe");
                 return Err("Connection cancelled by user".to_string());
             }
@@ -569,7 +576,7 @@ impl ConnectionManager {
                 let _ = rchild.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
             let _ = app.emit("core:status-changed", ConnectionStatus::Error);
@@ -586,7 +593,7 @@ impl ConnectionManager {
                 let _ = c.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             return Err("Connection cancelled by user".to_string());
         }
 
@@ -594,7 +601,7 @@ impl ConnectionManager {
 
         // 6. Handle System Proxy if configured (only enabled AFTER verification succeeds!)
         if settings.proxy_mode == ProxyMode::SystemProxy {
-            if let Err(e) = WindowsProxy::enable_proxy(settings.mixed_port) {
+            if let Err(e) = PlatformProxy::enable_proxy(settings.mixed_port) {
                 log::error!("Failed to enable Windows system proxy: {}", e);
             }
         }
@@ -643,7 +650,7 @@ impl ConnectionManager {
         Self::force_kill_all_cores();
 
         // Always restore Windows System Proxy
-        let _ = WindowsProxy::disable_proxy();
+        let _ = PlatformProxy::disable_proxy();
 
         *self.connected_node.lock() = None;
         *self.connected_chain.lock() = None;
@@ -681,8 +688,6 @@ impl ConnectionManager {
         *self.connected_chain.lock() = Some(chain_id);
         let _ = app.emit("core:status-changed", ConnectionStatus::Connecting);
 
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
         let binary_path = self.locate_sing_box(&app)?;
         let adapter = SingBoxAdapter::new();
         let config_str = adapter
@@ -705,8 +710,8 @@ impl ConnectionManager {
             .arg("-c")
             .arg(&config_path)
             .stdout(std::process::Stdio::from(log_out))
-            .stderr(std::process::Stdio::from(log_err))
-            .creation_flags(CREATE_NO_WINDOW);
+            .stderr(std::process::Stdio::from(log_err));
+        hide_window_std(&mut cmd);
 
         let child = cmd
             .spawn()
@@ -725,7 +730,7 @@ impl ConnectionManager {
                 let _ = c.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             return Err("Connection cancelled by user".to_string());
         }
 
@@ -734,7 +739,7 @@ impl ConnectionManager {
             if let Some(ref mut c) = *proc_lock {
                 if let Ok(Some(exit_status)) = c.try_wait() {
                     let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
-                    let _ = WindowsProxy::disable_proxy();
+                    let _ = PlatformProxy::disable_proxy();
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     *self.connected_chain.lock() = None;
@@ -762,7 +767,7 @@ impl ConnectionManager {
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
-                let _ = WindowsProxy::disable_proxy();
+                let _ = PlatformProxy::disable_proxy();
                 log::info!("Chain connection aborted by user during probe");
                 return Err("Connection cancelled by user".to_string());
             }
@@ -773,7 +778,7 @@ impl ConnectionManager {
                 let _ = c.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
             *self.connected_chain.lock() = None;
@@ -791,14 +796,14 @@ impl ConnectionManager {
                 let _ = c.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             return Err("Connection cancelled by user".to_string());
         }
 
         *self.connect_time.lock() = Some(Instant::now());
 
         if settings.proxy_mode == ProxyMode::SystemProxy {
-            if let Err(e) = WindowsProxy::enable_proxy(settings.mixed_port) {
+            if let Err(e) = PlatformProxy::enable_proxy(settings.mixed_port) {
                 log::error!("Failed to enable Windows system proxy: {}", e);
             }
         }
@@ -828,7 +833,7 @@ impl ConnectionManager {
             let _ = rchild.kill();
         }
         Self::force_kill_all_cores();
-        let _ = WindowsProxy::disable_proxy();
+        let _ = PlatformProxy::disable_proxy();
     }
 
     fn format_mihomo_relay_proxy(relay: &UnifiedNode) -> Option<String> {
@@ -1258,22 +1263,23 @@ rules:
         }
     }
 
-    fn locate_sing_box(&self, app: &AppHandle) -> Result<PathBuf, String> {
+    fn locate_binary(&self, app: &AppHandle, base_name: &str) -> Result<PathBuf, String> {
         use tauri::Manager;
+        let bin_name = core_binary_name(base_name);
         let mut candidates = Vec::new();
 
         if let Ok(res_dir) = app.path().resource_dir() {
-            candidates.push(res_dir.join("binaries").join("sing-box.exe"));
-            candidates.push(res_dir.join("sing-box.exe"));
+            candidates.push(res_dir.join("binaries").join(&bin_name));
+            candidates.push(res_dir.join(&bin_name));
         }
 
         let exe_dir = std::env::current_exe()
             .map(|p| p.parent().unwrap_or(Path::new("")).to_path_buf())
             .unwrap_or_default();
 
-        candidates.push(exe_dir.join("binaries").join("sing-box.exe"));
-        candidates.push(exe_dir.join("sing-box.exe"));
-        candidates.push(PathBuf::from("sing-box.exe"));
+        candidates.push(exe_dir.join("binaries").join(&bin_name));
+        candidates.push(exe_dir.join(&bin_name));
+        candidates.push(PathBuf::from(&bin_name));
 
         for path in candidates {
             if path.exists() {
@@ -1281,7 +1287,8 @@ rules:
             }
         }
 
-        if let Ok(output) = Command::new("where.exe").arg("sing-box").output() {
+        let which_cmd = if cfg!(windows) { "where.exe" } else { "which" };
+        if let Ok(output) = Command::new(which_cmd).arg(base_name).output() {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if let Some(first_line) = stdout.lines().next() {
@@ -1293,83 +1300,19 @@ rules:
             }
         }
 
-        Err("sing-box.exe core binary not found in application directories or PATH".to_string())
+        Err(format!("{} core binary not found in application directories or PATH", bin_name))
+    }
+
+    fn locate_sing_box(&self, app: &AppHandle) -> Result<PathBuf, String> {
+        self.locate_binary(app, "sing-box")
     }
 
     fn locate_mihomo(&self, app: &AppHandle) -> Result<PathBuf, String> {
-        use tauri::Manager;
-        let mut candidates = Vec::new();
-
-        if let Ok(res_dir) = app.path().resource_dir() {
-            candidates.push(res_dir.join("binaries").join("mihomo.exe"));
-            candidates.push(res_dir.join("mihomo.exe"));
-        }
-
-        let exe_dir = std::env::current_exe()
-            .map(|p| p.parent().unwrap_or(Path::new("")).to_path_buf())
-            .unwrap_or_default();
-
-        candidates.push(exe_dir.join("binaries").join("mihomo.exe"));
-        candidates.push(exe_dir.join("mihomo.exe"));
-        candidates.push(PathBuf::from("mihomo.exe"));
-
-        for path in candidates {
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        if let Ok(output) = Command::new("where.exe").arg("mihomo").output() {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(first_line) = stdout.lines().next() {
-                    let path = PathBuf::from(first_line.trim());
-                    if path.exists() {
-                        return Ok(path);
-                    }
-                }
-            }
-        }
-
-        Err("mihomo.exe core binary not found in application directories or PATH".to_string())
+        self.locate_binary(app, "mihomo")
     }
 
     fn locate_aether(&self, app: &AppHandle) -> Result<PathBuf, String> {
-        use tauri::Manager;
-        let mut candidates = Vec::new();
-
-        if let Ok(res_dir) = app.path().resource_dir() {
-            candidates.push(res_dir.join("binaries").join("aether.exe"));
-            candidates.push(res_dir.join("aether.exe"));
-        }
-
-        let exe_dir = std::env::current_exe()
-            .map(|p| p.parent().unwrap_or(Path::new("")).to_path_buf())
-            .unwrap_or_default();
-
-        candidates.push(exe_dir.join("binaries").join("aether.exe"));
-        candidates.push(exe_dir.join("aether.exe"));
-        candidates.push(PathBuf::from("aether.exe"));
-
-        for path in candidates {
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        if let Ok(output) = Command::new("where.exe").arg("aether").output() {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(first_line) = stdout.lines().next() {
-                    let path = PathBuf::from(first_line.trim());
-                    if path.exists() {
-                        return Ok(path);
-                    }
-                }
-            }
-        }
-
-        Err("aether.exe core binary not found in application directories or PATH".to_string())
+        self.locate_binary(app, "aether")
     }
 
     fn locate_server_entries(&self, app: &AppHandle) -> Result<PathBuf, String> {
@@ -1399,29 +1342,7 @@ rules:
     }
 
     fn locate_psiphon(&self, app: &AppHandle) -> Result<PathBuf, String> {
-        use tauri::Manager;
-        let mut candidates = Vec::new();
-
-        if let Ok(res_dir) = app.path().resource_dir() {
-            candidates.push(res_dir.join("binaries").join("psiphon-tunnel-core.exe"));
-            candidates.push(res_dir.join("psiphon-tunnel-core.exe"));
-        }
-
-        let exe_dir = std::env::current_exe()
-            .map(|p| p.parent().unwrap_or(Path::new("")).to_path_buf())
-            .unwrap_or_default();
-
-        candidates.push(exe_dir.join("binaries").join("psiphon-tunnel-core.exe"));
-        candidates.push(exe_dir.join("psiphon-tunnel-core.exe"));
-        candidates.push(PathBuf::from("psiphon-tunnel-core.exe"));
-
-        for path in candidates {
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        Err("psiphon-tunnel-core.exe binary not found. Please reinstall the application.".to_string())
+        self.locate_binary(app, "psiphon-tunnel-core")
     }
 
     /// Verifies end-to-end internet connectivity through the newly started local proxy port.
@@ -1592,7 +1513,6 @@ rules:
         *self.connected_chain.lock() = Some("smart-group".to_string());
         let _ = app.emit("core:status-changed", ConnectionStatus::Connecting);
 
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
         let binary_path = self.locate_sing_box(&app)?;
         let adapter = SingBoxAdapter::new();
         let config_str = adapter
@@ -1609,8 +1529,8 @@ rules:
         let mut cmd = Command::new(&binary_path);
         cmd.arg("run").arg("-c").arg(&config_path)
             .stdout(std::process::Stdio::from(log_out))
-            .stderr(std::process::Stdio::from(log_err))
-            .creation_flags(CREATE_NO_WINDOW);
+            .stderr(std::process::Stdio::from(log_err));
+        hide_window_std(&mut cmd);
 
         let child = cmd.spawn().map_err(|e| format!("Failed to start sing-box process: {}", e))?;
 
@@ -1627,7 +1547,7 @@ rules:
                 let _ = c.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             return Err("Connection cancelled by user".to_string());
         }
 
@@ -1635,7 +1555,7 @@ rules:
             let mut proc_lock = self.process.lock();
             if let Some(ref mut c) = *proc_lock {
                 if let Ok(Some(exit_status)) = c.try_wait() {
-                    let _ = WindowsProxy::disable_proxy();
+                    let _ = PlatformProxy::disable_proxy();
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     *self.connected_chain.lock() = None;
@@ -1660,7 +1580,7 @@ rules:
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
-                let _ = WindowsProxy::disable_proxy();
+                let _ = PlatformProxy::disable_proxy();
                 log::info!("Smart group connection aborted by user during probe");
                 return Err("Connection cancelled by user".to_string());
             }
@@ -1671,7 +1591,7 @@ rules:
                 let _ = c.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
             *self.connected_chain.lock() = None;
@@ -1685,14 +1605,14 @@ rules:
                 let _ = c.wait();
             }
             Self::force_kill_all_cores();
-            let _ = WindowsProxy::disable_proxy();
+            let _ = PlatformProxy::disable_proxy();
             return Err("Connection cancelled by user".to_string());
         }
 
         *self.connect_time.lock() = Some(Instant::now());
 
         if settings.routing_mode == "global" || settings.routing_mode == "rule" {
-            let _ = WindowsProxy::enable_proxy(settings.mixed_port);
+            let _ = PlatformProxy::enable_proxy(settings.mixed_port);
         }
 
         *self.status.lock() = ConnectionStatus::Connected;

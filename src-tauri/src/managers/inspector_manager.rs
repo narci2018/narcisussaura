@@ -6,7 +6,7 @@ use tokio::time::{sleep, Duration, Instant};
 
 use crate::models::{AppSettings, UnifiedNode};
 use crate::core::SingBoxAdapter;
-use std::os::windows::process::CommandExt;
+use crate::platform::{core_binary_name, hide_window_std};
 
 #[derive(Clone, serde::Serialize)]
 pub struct InspectProgress {
@@ -59,8 +59,8 @@ impl InspectorManager {
 
             let binary_path = self.locate_sing_box(&app)?;
             let mut cmd = std::process::Command::new(&binary_path);
-            cmd.arg("run").arg("-c").arg(&config_path)
-                .creation_flags(0x08000000); // CREATE_NO_WINDOW
+            cmd.arg("run").arg("-c").arg(&config_path);
+            hide_window_std(&mut cmd);
 
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
@@ -129,8 +129,8 @@ impl InspectorManager {
 
             let binary_path = self.locate_sing_box(&app)?;
             let mut cmd = std::process::Command::new(&binary_path);
-            cmd.arg("run").arg("-c").arg(&config_path)
-                .creation_flags(0x08000000); // CREATE_NO_WINDOW
+            cmd.arg("run").arg("-c").arg(&config_path);
+            hide_window_std(&mut cmd);
 
             let mut child = cmd.spawn()?;
             sleep(Duration::from_millis(1000)).await;
@@ -320,27 +320,42 @@ impl InspectorManager {
 
     fn locate_sing_box(&self, app: &AppHandle) -> Result<PathBuf> {
         use tauri::Manager;
+        let bin_name = core_binary_name("sing-box");
         let mut candidates = Vec::new();
 
         if let Ok(res_dir) = app.path().resource_dir() {
-            candidates.push(res_dir.join("binaries").join("sing-box.exe"));
-            candidates.push(res_dir.join("sing-box.exe"));
+            candidates.push(res_dir.join("binaries").join(&bin_name));
+            candidates.push(res_dir.join(&bin_name));
         }
 
         let exe_dir = std::env::current_exe()
             .map(|p| p.parent().unwrap_or(Path::new("")).to_path_buf())
             .unwrap_or_default();
 
-        candidates.push(exe_dir.join("binaries").join("sing-box.exe"));
-        candidates.push(exe_dir.join("sing-box.exe"));
-        candidates.push(PathBuf::from("sing-box.exe"));
+        candidates.push(exe_dir.join("binaries").join(&bin_name));
+        candidates.push(exe_dir.join(&bin_name));
+        candidates.push(PathBuf::from(&bin_name));
 
         for cand in candidates {
             if cand.exists() {
                 return Ok(cand);
             }
         }
-        bail!("sing-box.exe not found")
+
+        let which_cmd = if cfg!(windows) { "where.exe" } else { "which" };
+        if let Ok(output) = std::process::Command::new(which_cmd).arg("sing-box").output() {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(first_line) = stdout.lines().next() {
+                    let path = PathBuf::from(first_line.trim());
+                    if path.exists() {
+                        return Ok(path);
+                    }
+                }
+            }
+        }
+
+        bail!("{} not found", bin_name)
     }
 
     fn country_code_to_emoji(cc: &str) -> String {

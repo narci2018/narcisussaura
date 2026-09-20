@@ -1,0 +1,130 @@
+name: Build and Release Cross-Platform
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Download Windows Core Binaries
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries/rules
+          # Download sing-box for Windows
+          $sbUrl = "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-windows-amd64.zip"
+          Invoke-WebRequest -Uri $sbUrl -OutFile sing-box.zip
+          Expand-Archive sing-box.zip -DestinationPath sb_temp
+          Get-ChildItem -Path sb_temp -Filter "sing-box.exe" -Recurse | Copy-Item -Destination src-tauri/binaries/sing-box.exe -Force
+          
+          # Download mihomo for Windows
+          $mhUrl = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.2/mihomo-windows-amd64-compatible-v1.19.2.zip"
+          Invoke-WebRequest -Uri $mhUrl -OutFile mihomo.zip
+          Expand-Archive mihomo.zip -DestinationPath mh_temp
+          Get-ChildItem -Path mh_temp -Filter "*.exe" -Recurse | Copy-Item -Destination src-tauri/binaries/mihomo.exe -Force
+
+      - name: Install Frontend Dependencies
+        run: pnpm install
+
+      - name: Build Windows Application
+        run: pnpm tauri build
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+
+  build-macos:
+    name: Build macOS Apple Silicon (arm64)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Download macOS Core Binaries
+        run: |
+          mkdir -p src-tauri/binaries/rules
+          # Download sing-box for macOS (arm64)
+          curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-darwin-arm64.tar.gz" -o sing-box.tar.gz
+          tar -xzf sing-box.tar.gz
+          cp sing-box-*/sing-box src-tauri/binaries/sing-box
+          chmod +x src-tauri/binaries/sing-box
+          
+          # Download mihomo for macOS (arm64)
+          curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.2/mihomo-darwin-arm64-v1.19.2.gz" -o mihomo.gz
+          gzip -d mihomo.gz
+          mv mihomo src-tauri/binaries/mihomo
+          chmod +x src-tauri/binaries/mihomo
+
+      - name: Install Frontend Dependencies
+        run: pnpm install
+
+      - name: Build macOS Application
+        run: pnpm tauri build --target aarch64-apple-darwin
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-arm64-dmg
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            windows-installer/*.exe
+            windows-installer/*.msi
+            macos-arm64-dmg/*.dmg
+          generate_release_notes: true

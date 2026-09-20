@@ -129,9 +129,71 @@ function parseMetrics(node: UnifiedNode) {
   return { speed, latency };
 }
 
+export const isSpecialOrAdvancedNode = (node: UnifiedNode): boolean => {
+  if (!node) return false;
+  const nameUpper = (node.name || '').toUpperCase();
+  const groupUpper = (node.group || '').toUpperCase();
+  const proto = (node.protocol || '').toLowerCase();
+  const idLower = (node.id || '').toLowerCase();
+
+  // 1. Special core protocols (OpenVPN, Psiphon, Masque, WireGuard) handled outside standard subscription core
+  if (['openvpn', 'psiphon', 'masque', 'wireguard'].includes(proto)) {
+    return true;
+  }
+
+  // 2. Special / Advanced proxy mode groups
+  const specialGroups = [
+    'RESIDENTIAL',
+    'VPNGATE',
+    'PSIPHON',
+    'MEGAV',
+    'WARP',
+    'LOCALPROXY',
+    'RELAY SEEDS',
+    'SEED-RELAY',
+  ];
+  if (specialGroups.some(g => groupUpper.includes(g))) {
+    return true;
+  }
+
+  // 3. Special tags
+  const tags = (node.tags || []).map(t => (t || '').toUpperCase());
+  if (tags.some(t => t.includes('RESIDENTIAL') || t.includes('优质住宅IP') || t.includes('VPNGATE') || t.includes('SOFTETHER') || t.includes('PSIPHON') || t.includes('MEGAV') || t.includes('WARP') || t.includes('LOCAL'))) {
+    return true;
+  }
+
+  // 4. Special name indicators or IDs
+  if (
+    nameUpper.includes('RESIDENTIAL') ||
+    nameUpper.includes('住宅') ||
+    nameUpper.includes('VPNGATE') ||
+    nameUpper.includes('PSIPHON') ||
+    nameUpper.includes('MEGAV') ||
+    nameUpper.includes('WARP') ||
+    idLower.startsWith('residential-') ||
+    idLower.startsWith('vpngate-') ||
+    idLower.startsWith('psiphon-') ||
+    idLower.startsWith('megav-') ||
+    idLower.startsWith('local-relay-') ||
+    idLower.startsWith('seed-relay-')
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+export const isRegularSubscriptionNode = (node: UnifiedNode): boolean => {
+  return !isSpecialOrAdvancedNode(node);
+};
+
 export function getBestNode(nodes: UnifiedNode[]): UnifiedNode | null {
-  const alive = nodes.filter((n) => n.status !== 'dead');
-  if (!alive.length) return nodes[0] || null; // all dead, return first for display
+  // Only regular subscription nodes are allowed for smart auto-selection
+  const validNodes = (nodes || []).filter(isRegularSubscriptionNode);
+  if (!validNodes.length) return null;
+
+  const alive = validNodes.filter((n) => n.status !== 'dead');
+  if (!alive.length) return validNodes[0] || null; // all dead, return first for display
 
   // Sort alive nodes by parsed speed (descending) and then latency (ascending)
   const sorted = [...alive].sort((a, b) => {
@@ -243,17 +305,9 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
 
   const [pickerCountry, setPickerCountry] = useState<CountryGroup | null>(null);
 
-  // 1) Filter out all special nodes completely
+  // 1) Filter out all special nodes completely, only keep regular subscription nodes
   const regularNodes = useMemo(() => {
-    return nodes.filter(node => {
-      const nameUpper = node.name.toUpperCase();
-      const groupUpper = (node.group || '').toUpperCase();
-      const isSpecial = 
-        ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
-        ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(node.protocol) ||
-        nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
-      return !isSpecial;
-    });
+    return nodes.filter(isRegularSubscriptionNode);
   }, [nodes]);
   const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 

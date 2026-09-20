@@ -324,12 +324,17 @@ impl SingBoxAdapter {
         let mut outbounds = Vec::new();
         let mut tags = Vec::new();
 
-        for (i, node) in nodes.iter().enumerate() {
-            let mut ob = self.build_outbound(node)?;
-            let tag = format!("node-{}", i);
-            ob["tag"] = json!(tag);
-            tags.push(tag);
-            outbounds.push(ob);
+        for node in nodes.iter() {
+            if let Ok(mut ob) = self.build_outbound(node) {
+                let tag = format!("node-{}", tags.len());
+                ob["tag"] = json!(tag);
+                tags.push(tag);
+                outbounds.push(ob);
+            }
+        }
+
+        if outbounds.is_empty() {
+            bail!("No compatible outbound nodes available for urltest");
         }
 
         // Add the urltest outbound

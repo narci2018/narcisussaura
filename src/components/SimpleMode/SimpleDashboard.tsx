@@ -10,7 +10,7 @@ import {
   Square,
 } from 'lucide-react';
 import { useAppStore } from '../../stores/appStore';
-import { CountryNodeSelector, getBestNode, getCountryCodeForNode } from './CountryNodeSelector';
+import { CountryNodeSelector, getBestNode, getCountryCodeForNode, isRegularSubscriptionNode } from './CountryNodeSelector';
 import { ExpertModeGate } from './ExpertModeGate';
 
 function formatSpeed(bytesPerSec: number): string {
@@ -45,9 +45,9 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     connectedChainId,
   } = useAppStore();
 
-  // 'smart' means auto-pick best node; otherwise it's a specific node id
+  // 'smart' means auto-pick best node; otherwise it's a specific node id (only for regular subscription nodes)
   const [selectedValue, setSelectedValue] = useState<string>(() => {
-    if (connectedNode && !['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'].includes(connectedNode.group)) {
+    if (connectedNode && isRegularSubscriptionNode(connectedNode)) {
       return connectedNode.id;
     }
     return 'smart';
@@ -57,17 +57,8 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting' || status === 'disconnecting';
 
-  // Compute which node to actually connect (exclude special groups)
-  // const SPECIAL_GROUPS = ['Psiphon', 'VPNGate', 'MegaV', 'Cloudflare WARP (MASQUE)', 'Cloudflare WARP (WireGuard)'];
-  const regularNodes = useMemo(() => nodes.filter(n => {
-    const nameUpper = n.name.toUpperCase();
-    const groupUpper = (n.group || '').toUpperCase();
-    const isSpecial = 
-      ['PSIPHON', 'VPNGATE', 'MEGAV', 'WARP'].some(g => groupUpper.includes(g)) || 
-      ['psiphon', 'vpngate', 'masque', 'wireguard'].includes(n.protocol) ||
-      nameUpper.includes('VPNGATE') || nameUpper.includes('PSIPHON') || nameUpper.includes('MEGAV') || nameUpper.includes('WARP');
-    return !isSpecial;
-  }), [nodes]);
+  // Compute regular subscription nodes (strictly exclude all special/advanced proxy modes)
+  const regularNodes = useMemo(() => nodes.filter(isRegularSubscriptionNode), [nodes]);
   const globalBest = useMemo(() => getBestNode(regularNodes), [regularNodes]);
 
   const resolvedNodeId = useMemo(() => {

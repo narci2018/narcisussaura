@@ -616,12 +616,33 @@ async fn connect_smart_group(
     let mut nodes = Vec::new();
     for id in node_ids {
         if let Some(node) = state.node_manager.get_by_id(&id) {
-            nodes.push(node);
+            // Smart group strictly accepts regular subscription nodes only (Vless, Vmess, Trojan, Shadowsocks, Hysteria2)
+            // Advanced proxy modes (Residential, VPNGate, Psiphon, MegaV, WARP, LocalProxy) are excluded
+            let is_special = match node.protocol {
+                models::ProtocolType::Openvpn
+                | models::ProtocolType::Psiphon
+                | models::ProtocolType::Masque
+                | models::ProtocolType::Wireguard => true,
+                _ => {
+                    let g = node.group.to_uppercase();
+                    g.contains("RESIDENTIAL")
+                        || g.contains("VPNGATE")
+                        || g.contains("PSIPHON")
+                        || g.contains("MEGAV")
+                        || g.contains("WARP")
+                        || g.contains("LOCAL")
+                        || g.contains("SEED")
+                }
+            };
+
+            if !is_special {
+                nodes.push(node);
+            }
         }
     }
     
     if nodes.is_empty() {
-        return Err("No valid nodes found for smart group".to_string());
+        return Err("当前没有可用的常规订阅节点供智能最优选路连接".to_string());
     }
     
     let settings = state.settings.read().clone();

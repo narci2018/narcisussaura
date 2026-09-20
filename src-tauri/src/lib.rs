@@ -33,7 +33,14 @@ async fn start_deep_inspection(nodes: Vec<UnifiedNode>, state: State<'_, AppStat
 
 #[tauri::command]
 async fn get_machine_id() -> Result<String, String> {
-    machine_uid::get().map_err(|e| e.to_string())
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        Ok("mobile-client".to_string())
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        machine_uid::get().map_err(|e| e.to_string())
+    }
 }
 
 #[tauri::command]

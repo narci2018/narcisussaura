@@ -1,6 +1,5 @@
 import os
 import shutil
-import xml.etree.ElementTree as ET
 
 def inject_vpn_components():
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -16,31 +15,28 @@ def inject_vpn_components():
 
     # 2. Patch AndroidManifest.xml
     manifest_path = os.path.join(android_app_dir, "src", "main", "AndroidManifest.xml")
-    if not os.path.exists(manifest_path):
-        print(f"[Android Inject] AndroidManifest.xml not found at {manifest_path}")
-        return
+    if os.path.exists(manifest_path):
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            content = f.read()
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        content = f.read()
+        # Add permissions if not present
+        permissions = [
+            '<uses-permission android:name="android.permission.INTERNET" />',
+            '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+            '<uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />',
+            '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+            '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />',
+            '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
+        ]
+        
+        needed_perms = [p for p in permissions if p not in content]
+        if needed_perms:
+            perm_block = "\n    " + "\n    ".join(needed_perms)
+            if "<application" in content:
+                content = content.replace("<application", f"{perm_block}\n\n    <application", 1)
 
-    # Add permissions if not present
-    permissions = [
-        '<uses-permission android:name="android.permission.INTERNET" />',
-        '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
-        '<uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />',
-        '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
-        '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />',
-        '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'
-    ]
-    
-    needed_perms = [p for p in permissions if p not in content]
-    if needed_perms:
-        perm_block = "\n    " + "\n    ".join(needed_perms)
-        if "<application" in content:
-            content = content.replace("<application", f"{perm_block}\n\n    <application", 1)
-
-    # Add VpnService inside <application>
-    service_entry = """        <service
+        # Add VpnService inside <application>
+        service_entry = """        <service
             android:name=".NarcissusVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:exported="false"
@@ -53,13 +49,29 @@ def inject_vpn_components():
             </intent-filter>
         </service>"""
 
-    if "NarcissusVpnService" not in content:
-        if "</application>" in content:
-            content = content.replace("</application>", f"{service_entry}\n    </application>", 1)
+        if "NarcissusVpnService" not in content:
+            if "</application>" in content:
+                content = content.replace("</application>", f"{service_entry}\n    </application>", 1)
 
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"[Android Inject] Updated AndroidManifest.xml with VPN service and permissions")
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        print(f"[Android Inject] Updated AndroidManifest.xml with VPN service and permissions")
+
+    # 3. Patch build.gradle.kts for release signing
+    gradle_path = os.path.join(android_app_dir, "build.gradle.kts")
+    if os.path.exists(gradle_path):
+        with open(gradle_path, "r", encoding="utf-8") as f:
+            gradle_content = f.read()
+        if 'signingConfig = signingConfigs.getByName("debug")' not in gradle_content:
+            target_str = 'getByName("release") {'
+            if target_str in gradle_content:
+                gradle_content = gradle_content.replace(
+                    target_str,
+                    target_str + '\n            signingConfig = signingConfigs.getByName("debug")'
+                )
+                with open(gradle_path, "w", encoding="utf-8") as f:
+                    f.write(gradle_content)
+                print("[Android Inject] Configured release signing in build.gradle.kts")
 
 if __name__ == "__main__":
     inject_vpn_components()

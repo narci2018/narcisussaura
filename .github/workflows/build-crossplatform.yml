@@ -111,9 +111,73 @@ jobs:
           name: macos-arm64-dmg
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
 
+  build-android:
+    name: Build Android APK (arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+          link-to-sdk: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Download Android Core Binaries
+        run: |
+          mkdir -p src-tauri/binaries/rules
+          # Download sing-box for linux/android arm64
+          curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz" -o sing-box.tar.gz
+          tar -xzf sing-box.tar.gz
+          cp sing-box-*/sing-box src-tauri/binaries/sing-box
+          chmod +x src-tauri/binaries/sing-box
+
+      - name: Install Frontend Dependencies
+        run: pnpm install
+
+      - name: Init and Build Android APK
+        env:
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          pnpm tauri android init --ci
+          python3 src-tauri/mobile/android/inject_vpn.py
+          pnpm tauri android build --apk --target aarch64-linux-android
+
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+
   release:
     name: Publish GitHub Release
-    needs: [build-windows, build-macos]
+    needs: [build-windows, build-macos, build-android]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -127,4 +191,6 @@ jobs:
             windows-installer/*.exe
             windows-installer/*.msi
             macos-arm64-dmg/*.dmg
+            android-apk/**/*.apk
           generate_release_notes: true
+

@@ -7,10 +7,12 @@ use crate::managers::{ChainManager, ConnectionManager, NodeManager, SpeedTestMan
 use crate::models::{AppSettings, ConnectionStatus, ProxyChain, Subscription, UnifiedNode};
 use parking_lot::RwLock;
 use std::sync::Arc;
+use tauri::{AppHandle, Manager, State, Window};
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, State, Window,
 };
 
 pub struct AppState {
@@ -429,48 +431,51 @@ pub fn run() {
                 settings,
             });
 
-            let show_i = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                let show_i = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)?;
+                let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
 
-            let mut builder = TrayIconBuilder::new()
-                .menu(&menu)
-                .show_menu_on_left_click(false);
+                let mut builder = TrayIconBuilder::new()
+                    .menu(&menu)
+                    .show_menu_on_left_click(false);
 
-            if let Some(icon) = app.default_window_icon() {
-                builder = builder.icon(icon.clone());
-            }
+                if let Some(icon) = app.default_window_icon() {
+                    builder = builder.icon(icon.clone());
+                }
 
-            builder
-                .on_menu_event(|app, event| {
-                    match event.id.as_ref() {
-                        "show" => {
+                builder
+                    .on_menu_event(|app, event| {
+                        match event.id.as_ref() {
+                            "show" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.unminimize();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            "quit" => {
+                                if let Some(state) = app.try_state::<AppState>() {
+                                    state.connection_manager.shutdown();
+                                }
+                                app.exit(0);
+                            }
+                            _ => {}
+                        }
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } = event {
+                            let app = tray.app_handle();
                             if let Some(window) = app.get_webview_window("main") {
                                 let _ = window.show();
                                 let _ = window.unminimize();
                                 let _ = window.set_focus();
                             }
                         }
-                        "quit" => {
-                            if let Some(state) = app.try_state::<AppState>() {
-                                state.connection_manager.shutdown();
-                            }
-                            app.exit(0);
-                        }
-                        _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.unminimize();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
+                    })
+                    .build(app)?;
+            }
 
             Ok(())
         })

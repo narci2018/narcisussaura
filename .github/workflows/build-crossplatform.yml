@@ -175,7 +175,9 @@ jobs:
           ANDROID_HOME: /usr/local/lib/android/sdk
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: pnpm tauri android init --ci --skip-targets-install
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: pnpm tauri android init --ci
 
       - name: Inject VPN Components
         run: |
@@ -189,9 +191,17 @@ jobs:
           ANDROID_HOME: /usr/local/lib/android/sdk
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           set -o pipefail
           pnpm tauri android build --apk --target aarch64 2>&1 | tee /tmp/android-build.log
+
+      - name: Show build errors on failure
+        if: failure()
+        run: |
+          echo "===== LAST 150 LINES OF BUILD LOG ====="
+          tail -150 /tmp/android-build.log
 
       - name: Upload Android build log on failure
         if: failure()

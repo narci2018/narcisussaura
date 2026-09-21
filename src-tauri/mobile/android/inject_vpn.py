@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 
 def inject_vpn_components():
@@ -117,7 +118,6 @@ def inject_vpn_components():
             gradle_content = f.read()
 
         if "narcissus.keystore" not in gradle_content:
-            import re
             m = re.search(r"^([ \t]*)buildTypes \{", gradle_content, re.MULTILINE)
             if not m:
                 raise RuntimeError("buildTypes block not found in build.gradle.kts; cannot inject signing config")
@@ -153,6 +153,45 @@ def inject_vpn_components():
             with open(gradle_path, "w", encoding="utf-8") as f:
                 f.write(gradle_content)
             print("[Android Inject] Configured stable release signing in build.gradle.kts")
+
+        # Force native libs to be extracted to nativeLibraryDir (executable at
+        # runtime). For targetSdk>=29 the app data dir is mounted noexec, so
+        # exec'ing cores from there fails with EACCES (os error 13).
+        if "useLegacyPackaging" not in gradle_content:
+            m3 = re.search(r"^([ \t]*)buildTypes \{", gradle_content, re.MULTILINE)
+            if not m3:
+                raise RuntimeError("buildTypes block not found in build.gradle.kts; cannot inject jniLibs packaging")
+            indent = m3.group(1)
+            packaging_block = (
+                f"{indent}packaging {{\n"
+                f"{indent}    jniLibs {{\n"
+                f"{indent}        useLegacyPackaging = true\n"
+                f"{indent}    }}\n"
+                f"{indent}}}\n\n"
+                f"{m3.group(0)}"
+            )
+            gradle_content = gradle_content[:m3.start()] + packaging_block + gradle_content[m3.end():]
+            if "useLegacyPackaging = true" not in gradle_content:
+                raise RuntimeError("jniLibs packaging injection verification failed in build.gradle.kts")
+            with open(gradle_path, "w", encoding="utf-8") as f:
+                f.write(gradle_content)
+            print("[Android Inject] Enabled jniLibs useLegacyPackaging in build.gradle.kts")
+
+    # 5. Package core binaries as jniLibs pseudo-.so files so the installer
+    #    extracts them into nativeLibraryDir, which IS executable.
+    #    Rust locate_binary reads native_lib_dir (written by VpnInitProvider)
+    #    and prefers lib<name>.so from there.
+    binaries_dir = os.path.join(project_root, "src-tauri", "binaries")
+    jni_abi_dir = os.path.join(android_app_dir, "src", "main", "jniLibs", "arm64-v8a")
+    os.makedirs(jni_abi_dir, exist_ok=True)
+    for bin_name in ["sing-box", "mihomo"]:
+        bin_src = os.path.join(binaries_dir, bin_name)
+        if os.path.exists(bin_src):
+            dst = os.path.join(jni_abi_dir, f"lib{bin_name}.so")
+            shutil.copy2(bin_src, dst)
+            print(f"[Android Inject] Packaged {bin_name} as {dst}")
+        else:
+            print(f"[Android Inject] WARNING: {bin_name} not found at {bin_src}")
 
 if __name__ == "__main__":
     inject_vpn_components()

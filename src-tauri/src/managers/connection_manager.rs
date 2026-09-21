@@ -515,7 +515,7 @@ impl ConnectionManager {
 
         let child = cmd
             .spawn()
-            .map_err(|e| format!("Failed to start sing-box process: {}", e))?;
+            .map_err(|e| format!("Failed to start sing-box process ({}): {}", binary_path.display(), e))?;
 
         // 4. Bind child process to Windows Job Object for crash protection
         if let Some(ref guard) = self.job_guard {
@@ -754,7 +754,7 @@ impl ConnectionManager {
 
         let child = cmd
             .spawn()
-            .map_err(|e| format!("Failed to start sing-box process: {}", e))?;
+            .map_err(|e| format!("Failed to start sing-box process ({}): {}", binary_path.display(), e))?;
 
         if let Some(ref guard) = self.job_guard {
             let _ = guard.assign_process(&child);
@@ -1315,6 +1315,15 @@ rules:
 
         #[cfg(target_os = "android")]
         if let Ok(app_data_dir) = app.path().app_data_dir() {
+            // dataDir is mounted noexec for targetSdk>=29; the only reliably
+            // executable location is nativeLibraryDir, where the installer
+            // extracts our lib<name>.so pseudo-libs (written by VpnInitProvider).
+            if let Ok(nd) = std::fs::read_to_string(app_data_dir.join("native_lib_dir")) {
+                let nd = nd.trim();
+                if !nd.is_empty() {
+                    candidates.push(PathBuf::from(nd).join(format!("lib{}.so", base_name)));
+                }
+            }
             candidates.push(app_data_dir.join("binaries").join(&bin_name));
             candidates.push(app_data_dir.join(&bin_name));
         }
@@ -1606,7 +1615,7 @@ rules:
             .stderr(std::process::Stdio::from(log_err));
         hide_window_std(&mut cmd);
 
-        let child = cmd.spawn().map_err(|e| format!("Failed to start sing-box process: {}", e))?;
+        let child = cmd.spawn().map_err(|e| format!("Failed to start sing-box process ({}): {}", binary_path.display(), e))?;
 
         if let Some(ref guard) = self.job_guard {
             let _ = guard.assign_process(&child);

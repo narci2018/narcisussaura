@@ -17,6 +17,10 @@ class VpnInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val ctx = context ?: return true
         try {
+            // Expose nativeLibraryDir (the only reliably executable dir; dataDir is
+            // noexec for targetSdk>=29) so the Rust side can locate lib<core>.so.
+            File(ctx.dataDir, "native_lib_dir").writeText(ctx.applicationInfo.nativeLibraryDir)
+
             val idFile = File(ctx.dataDir, "machine_id")
             // Use stable UUID: if file exists, keep it; otherwise generate new one
             if (!idFile.exists() || idFile.readText().trim().isEmpty()) {

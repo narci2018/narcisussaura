@@ -21,6 +21,7 @@ class NarcissusVpnService : VpnService() {
         const val TAG = "NarcissusVpnService"
         const val ACTION_CONNECT = "com.narcissus.aura.VPN_CONNECT"
         const val ACTION_DISCONNECT = "com.narcissus.aura.VPN_DISCONNECT"
+        const val ACTION_STANDBY = "com.narcissus.aura.VPN_STANDBY"
         const val CHANNEL_ID = "narcissus_vpn_channel"
         const val NOTIFICATION_ID = 1001
 
@@ -43,6 +44,17 @@ class NarcissusVpnService : VpnService() {
             }
         }
 
+        fun startStandby(context: Context) {
+            val intent = Intent(context, NarcissusVpnService::class.java).apply {
+                action = ACTION_STANDBY
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
         fun stopVpn(context: Context) {
             isTunReady = false
             val intent = Intent(context, NarcissusVpnService::class.java).apply {
@@ -55,10 +67,12 @@ class NarcissusVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     private var lifecycleRegistered = false
     private var watchThread: Thread? = null
+    @Volatile
+    private var tunnelRequested = false
 
     private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
-            if (isRunning && vpnInterface == null) {
+            if (tunnelRequested && vpnInterface == null) {
                 Log.i(TAG, "Activity resumed, retrying VPN establishment")
                 tryEstablishTunnel()
             }
@@ -82,6 +96,7 @@ class NarcissusVpnService : VpnService() {
         when (intent?.action) {
             ACTION_CONNECT -> {
                 isRunning = true
+                tunnelRequested = true
                 try {
                     startForeground(NOTIFICATION_ID, buildNotification("正在连接", "Narcissus Aura VPN 正在建立连接..."))
                 } catch (e: Exception) {
@@ -92,6 +107,15 @@ class NarcissusVpnService : VpnService() {
             }
             ACTION_DISCONNECT -> {
                 shutdown()
+            }
+            ACTION_STANDBY -> {
+                isRunning = true
+                try {
+                    startForeground(NOTIFICATION_ID, buildNotification("待机中", "Narcissus Aura VPN 服务就绪"))
+                } catch (e: Exception) {
+                    Log.w(TAG, "startForeground failed (notification permission?): ${e.message}")
+                }
+                startPendingWatch()
             }
             else -> {
                 // No action specified (e.g. restart from ContentProvider)
@@ -166,6 +190,7 @@ class NarcissusVpnService : VpnService() {
             while (isRunning && !Thread.currentThread().isInterrupted) {
                 if (pendingFile.exists() && vpnInterface == null) {
                     Log.i(TAG, "Detected vpn_pending signal, establishing tunnel")
+                    tunnelRequested = true
                     try {
                         pendingFile.delete()
                     } catch (_: Exception) {}
@@ -195,6 +220,7 @@ class NarcissusVpnService : VpnService() {
     private fun shutdown() {
         isRunning = false
         isTunReady = false
+        tunnelRequested = false
         watchThread?.interrupt()
         watchThread = null
         cleanupVpnInterface()

@@ -20,8 +20,8 @@ class VpnInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val ctx = context ?: return true
         try {
-            Log.i(TAG, "Auto-starting NarcissusVpnService in standby mode")
-            NarcissusVpnService.startVpn(ctx)
+            Log.i(TAG, "Starting NarcissusVpnService in standby mode")
+            NarcissusVpnService.startStandby(ctx)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to auto-start VpnService", e)
         }

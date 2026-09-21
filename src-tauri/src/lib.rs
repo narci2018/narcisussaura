@@ -46,7 +46,7 @@ async fn get_machine_id(app: AppHandle) -> Result<String, String> {
                     return Ok(trimmed);
                 }
             }
-            std::thread::sleep(std::thread::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
         Err("machine_id not found: VpnInitProvider has not written the file yet".to_string())
     }

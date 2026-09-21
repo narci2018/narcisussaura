@@ -189,6 +189,18 @@ jobs:
           cp sing-box-*/sing-box src-tauri/binaries/sing-box
           chmod +x src-tauri/binaries/sing-box
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: tunrelay/go.sum
+
+      - name: Build tunrelay (android/arm64)
+        run: |
+          cd tunrelay
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../src-tauri/binaries/tunrelay .
+          ls -la ../src-tauri/binaries/tunrelay
+
       - name: Install Frontend Dependencies
         run: pnpm install
 

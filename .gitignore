@@ -56,6 +56,7 @@ aether_bin/
 # 4. 本地运行时数据、测试文件与临时脚本 (Local Data & Test Files)
 # ==========================================
 # 测试与试跑临时文件
+.tmpcheck/
 test_*.json
 test_*.yaml
 test_*.yml

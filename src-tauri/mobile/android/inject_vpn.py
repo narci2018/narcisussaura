@@ -193,5 +193,14 @@ def inject_vpn_components():
         else:
             print(f"[Android Inject] WARNING: {bin_name} not found at {bin_src}")
 
+    # tunrelay (Go gVisor netstack bridging the VpnService fd to sing-box's
+    # SOCKS5 port) is mandatory for Android TUN mode — fail loudly if missing.
+    relay_src = os.path.join(binaries_dir, "tunrelay")
+    if os.path.exists(relay_src):
+        shutil.copy2(relay_src, os.path.join(jni_abi_dir, "libtunrelay.so"))
+        print(f"[Android Inject] Packaged tunrelay as {os.path.join(jni_abi_dir, 'libtunrelay.so')}")
+    else:
+        raise RuntimeError(f"tunrelay binary not found at {relay_src}; build it in CI before injection")
+
 if __name__ == "__main__":
     inject_vpn_components()

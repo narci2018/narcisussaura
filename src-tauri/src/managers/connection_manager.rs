@@ -16,6 +16,7 @@ pub struct ConnectionManager {
     aether_process: Arc<Mutex<Option<Child>>>,
     psiphon_process: Arc<Mutex<Option<Child>>>,
     relay_process: Arc<Mutex<Option<Child>>>,
+    tunrelay_process: Arc<Mutex<Option<Child>>>,
     job_guard: Option<ProcessGuard>,
     app_data_dir: PathBuf,
     is_traffic_running: Arc<AtomicBool>,
@@ -26,7 +27,13 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     pub fn force_kill_all_cores() {
-        let binaries = ["sing-box", "mihomo", "aether", "psiphon-tunnel-core"];
+        let binaries = [
+            "sing-box",
+            "mihomo",
+            "aether",
+            "psiphon-tunnel-core",
+            "tunrelay",
+        ];
         #[cfg(windows)]
         {
             for bin in &binaries {
@@ -47,7 +54,32 @@ impl ConnectionManager {
         }
         #[cfg(target_os = "android")]
         {
-            let _ = binaries;
+            // No pkill on Android; scan /proc (our own uid's processes are
+            // visible) and SIGKILL orphaned cores from a previous crash.
+            if let Ok(entries) = std::fs::read_dir("/proc") {
+                for entry in entries.flatten() {
+                    let Some(pid) = entry
+                        .file_name()
+                        .to_string_lossy()
+                        .parse::<i32>()
+                        .ok()
+                    else {
+                        continue;
+                    };
+                    let Ok(cmdline) = std::fs::read(entry.path().join("cmdline")) else {
+                        continue;
+                    };
+                    let cmdline = String::from_utf8_lossy(&cmdline).replace('\0', " ");
+                    if binaries
+                        .iter()
+                        .any(|b| cmdline.contains(b) || cmdline.contains(&format!("lib{}.so", b)))
+                    {
+                        unsafe {
+                            libc::kill(pid, libc::SIGKILL);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -81,6 +113,7 @@ impl ConnectionManager {
             aether_process: Arc::new(Mutex::new(None)),
             psiphon_process: Arc::new(Mutex::new(None)),
             relay_process: Arc::new(Mutex::new(None)),
+            tunrelay_process: Arc::new(Mutex::new(None)),
             job_guard,
             app_data_dir: app_data_dir.to_path_buf(),
             is_traffic_running: Arc::new(AtomicBool::new(false)),
@@ -468,7 +501,14 @@ impl ConnectionManager {
         // 1b. On Android TUN mode, trigger VpnService and wait for TUN fd
         #[cfg(target_os = "android")]
         let android_tun_fd: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
-            self.wait_for_android_tun_fd().await
+            match self.wait_for_android_tun_fd().await {
+                Some(fd) => Some(fd),
+                None => {
+                    *self.status.lock() = ConnectionStatus::Error;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
+                }
+            }
         } else {
             None
         };
@@ -488,9 +528,10 @@ impl ConnectionManager {
             .generate_config_with_relay(&node, effective_relay, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate core config: {}", e))?;
 
-        // 2b. On Android TUN mode, patch config to use VpnService fd
-        if let Some(fd) = android_tun_fd {
-            config_str = Self::patch_android_tun_config(&config_str, fd)?;
+        // 2b. On Android TUN mode, standalone sing-box cannot open /dev/net/tun
+        // (SELinux): strip the tun inbound and bridge the VpnService fd via tunrelay.
+        if android_tun_fd.is_some() {
+            config_str = Self::patch_android_relay_config(&config_str)?;
         }
 
         let config_path = self.app_data_dir.join("current_config.json");
@@ -542,6 +583,23 @@ impl ConnectionManager {
                         err_log.trim()
                     ));
                 }
+            }
+        }
+
+        // 5.2 Android TUN: start the tun2socks relay bridging the VpnService fd
+        #[cfg(target_os = "android")]
+        if let Some(fd) = android_tun_fd {
+            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = PlatformProxy::disable_proxy();
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err(e);
             }
         }
 
@@ -666,6 +724,12 @@ impl ConnectionManager {
             let _ = rchild.wait();
         }
 
+        let mut tproc_lock = self.tunrelay_process.lock();
+        if let Some(mut tchild) = tproc_lock.take() {
+            let _ = tchild.kill();
+            let _ = tchild.wait();
+        }
+
         Self::force_kill_all_cores();
 
         #[cfg(target_os = "android")]
@@ -717,7 +781,14 @@ impl ConnectionManager {
 
         #[cfg(target_os = "android")]
         let android_tun_fd_chain: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
-            self.wait_for_android_tun_fd().await
+            match self.wait_for_android_tun_fd().await {
+                Some(fd) => Some(fd),
+                None => {
+                    *self.status.lock() = ConnectionStatus::Error;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
+                }
+            }
         } else {
             None
         };
@@ -729,8 +800,8 @@ impl ConnectionManager {
             .generate_config_for_chain(&nodes, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate chain config: {}", e))?;
 
-        if let Some(fd) = android_tun_fd_chain {
-            config_str = Self::patch_android_tun_config(&config_str, fd)?;
+        if android_tun_fd_chain.is_some() {
+            config_str = Self::patch_android_relay_config(&config_str)?;
         }
 
         let config_path = self.app_data_dir.join("current_config.json");
@@ -790,6 +861,23 @@ impl ConnectionManager {
                         err_log.trim()
                     ));
                 }
+            }
+        }
+
+        #[cfg(target_os = "android")]
+        if let Some(fd) = android_tun_fd_chain {
+            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = PlatformProxy::disable_proxy();
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err(e);
             }
         }
 
@@ -1586,7 +1674,15 @@ rules:
 
         #[cfg(target_os = "android")]
         let android_tun_fd_smart: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
-            self.wait_for_android_tun_fd().await
+            match self.wait_for_android_tun_fd().await {
+                Some(fd) => Some(fd),
+                None => {
+                    *self.status.lock() = ConnectionStatus::Error;
+                    *self.connected_chain.lock() = None;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
+                }
+            }
         } else {
             None
         };
@@ -1598,8 +1694,8 @@ rules:
             .generate_config_for_urltest(&nodes, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate urltest config: {}", e))?;
 
-        if let Some(fd) = android_tun_fd_smart {
-            config_str = Self::patch_android_tun_config(&config_str, fd)?;
+        if android_tun_fd_smart.is_some() {
+            config_str = Self::patch_android_relay_config(&config_str)?;
         }
 
         let config_path = self.app_data_dir.join("current_config.json");
@@ -1638,14 +1734,36 @@ rules:
             let mut proc_lock = self.process.lock();
             if let Some(ref mut c) = *proc_lock {
                 if let Ok(Some(exit_status)) = c.try_wait() {
+                    let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
                     let _ = PlatformProxy::disable_proxy();
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     *self.connected_chain.lock() = None;
                     let _ = app.emit("core:status-changed", ConnectionStatus::Error);
                     *proc_lock = None;
-                    return Err(format!("Smart group core startup failed: {}", exit_status));
+                    return Err(format!(
+                        "Smart group core startup failed ({}):\n{}",
+                        exit_status,
+                        err_log.trim()
+                    ));
                 }
+            }
+        }
+
+        #[cfg(target_os = "android")]
+        if let Some(fd) = android_tun_fd_smart {
+            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = PlatformProxy::disable_proxy();
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err(e);
             }
         }
 
@@ -1717,7 +1835,9 @@ rules:
         log::info!("Android: writing vpn_pending signal for VpnService...");
         let _ = std::fs::write(&pending_file, "1");
 
-        for i in 0..120 {
+        // Up to 120s: the first connection also waits for the user to accept
+        // the system VPN-permission dialog before the tunnel can be built.
+        for i in 0..480 {
             if let Ok(content) = std::fs::read_to_string(&fd_file) {
                 if let Ok(fd) = content.trim().parse::<i32>() {
                     log::info!("Android: received TUN fd={} after {}ms", fd, i * 250);
@@ -1728,32 +1848,118 @@ rules:
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         let _ = std::fs::remove_file(&pending_file);
-        log::error!("Android: timed out waiting for TUN fd from VpnService (30s)");
+        log::error!("Android: timed out waiting for TUN fd from VpnService (120s)");
         None
     }
 
-    /// Patch the sing-box JSON config to use the Android VpnService TUN fd
-    /// instead of creating its own TUN interface (which requires root on Android).
-    fn patch_android_tun_config(config_str: &str, fd: i32) -> Result<String, String> {
+    /// Android TUN mode: a standalone sing-box process cannot open /dev/net/tun
+    /// (SELinux) and has no fd-based tun option. Strip the tun inbound entirely
+    /// and let the tunrelay child process bridge the VpnService fd to the
+    /// SOCKS5 mixed port. Sniffing on the mixed inbound recovers domains from
+    /// the raw-IP tun destinations so domain rules keep working.
+    #[cfg(target_os = "android")]
+    fn patch_android_relay_config(config_str: &str) -> Result<String, String> {
         let mut config: serde_json::Value = serde_json::from_str(config_str)
-            .map_err(|e| format!("Failed to parse config for Android TUN patch: {}", e))?;
+            .map_err(|e| format!("Failed to parse config for Android relay patch: {}", e))?;
 
         if let Some(inbounds) = config.get_mut("inbounds").and_then(|v| v.as_array_mut()) {
-            for inbound in inbounds.iter_mut() {
-                if inbound.get("type").and_then(|v| v.as_str()) == Some("tun") {
-                    inbound["fd"] = serde_json::json!(fd);
-                    if let Some(obj) = inbound.as_object_mut() {
-                        obj.remove("interface_name");
-                    }
-                    inbound["auto_route"] = serde_json::json!(false);
-                    inbound["strict_route"] = serde_json::json!(false);
-                    inbound["stack"] = serde_json::json!("system");
-                    log::info!("Android: patched TUN inbound with fd={}", fd);
-                    break;
+            inbounds.retain(|ib| ib.get("type").and_then(|v| v.as_str()) != Some("tun"));
+            for ib in inbounds.iter_mut() {
+                if ib.get("type").and_then(|v| v.as_str()) == Some("mixed") {
+                    ib["sniff"] = serde_json::json!(true);
+                    ib["sniff_override_destination"] = serde_json::json!(true);
                 }
             }
         }
+        log::info!("Android: stripped tun inbound, enabled sniffing on mixed inbound");
 
         serde_json::to_string(&config).map_err(|e| format!("Failed to serialize patched config: {}", e))
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn patch_android_relay_config(config_str: &str) -> Result<String, String> {
+        // Unreachable: android_tun_fd is always None off Android.
+        Ok(config_str.to_string())
+    }
+
+    /// Spawn the tunrelay helper (Android-only): a static-Go gVisor netstack
+    /// that terminates TCP/UDP on the inherited VpnService fd and forwards all
+    /// flows into sing-box's SOCKS5 mixed port.
+    #[cfg(target_os = "android")]
+    async fn start_tunrelay(&self, app: &AppHandle, tun_fd: i32, mixed_port: u16) -> Result<(), String> {
+        let relay_path = self.locate_binary(app, "tunrelay")?;
+
+        // The child inherits the tun fd across exec only if FD_CLOEXEC is clear.
+        unsafe {
+            libc::fcntl(tun_fd, libc::F_SETFD, 0);
+        }
+
+        // Wait for sing-box's mixed port to accept connections (up to 10s).
+        let mut ready = false;
+        for _ in 0..40 {
+            if std::net::TcpStream::connect(("127.0.0.1", mixed_port)).is_ok() {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        if !ready {
+            log::warn!("Android: mixed port {} not listening before relay start", mixed_port);
+        }
+
+        let log_out = std::fs::File::create(self.app_data_dir.join("tunrelay.log"))
+            .map_err(|e| format!("Failed to create tunrelay log: {}", e))?;
+        let log_err = log_out
+            .try_clone()
+            .map_err(|e| format!("Failed to clone tunrelay log handle: {}", e))?;
+
+        let mut cmd = Command::new(&relay_path);
+        cmd.arg("--fd")
+            .arg(tun_fd.to_string())
+            .arg("--socks")
+            .arg(format!("127.0.0.1:{}", mixed_port))
+            .arg("--address")
+            .arg("172.19.0.1")
+            .arg("--mtu")
+            .arg("9000")
+            .stdout(std::process::Stdio::from(log_out))
+            .stderr(std::process::Stdio::from(log_err));
+        hide_window_std(&mut cmd);
+
+        let child = cmd
+            .spawn()
+            .map_err(|e| format!("Failed to start tunrelay ({}): {}", relay_path.display(), e))?;
+
+        if let Some(ref guard) = self.job_guard {
+            let _ = guard.assign_process(&child);
+        }
+
+        // Verify it stays alive past init (bad fd / missing binary exit instantly).
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let exited = {
+            let mut lock = self.tunrelay_process.lock();
+            *lock = Some(child);
+            if let Some(ref mut c) = *lock {
+                match c.try_wait() {
+                    Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(code) = exited {
+            let tail = std::fs::read_to_string(self.app_data_dir.join("tunrelay.log"))
+                .unwrap_or_default();
+            *self.tunrelay_process.lock() = None;
+            return Err(format!(
+                "tunrelay exited on startup (code {}):\n{}",
+                code,
+                tail.trim()
+            ));
+        }
+
+        log::info!("Android: tunrelay running (pid {})", self.tunrelay_process.lock().as_ref().map(|c| c.id()).unwrap_or(0));
+        Ok(())
     }
 }

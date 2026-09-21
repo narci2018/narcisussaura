@@ -21,6 +21,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -32,17 +33,17 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Download Windows Core Binaries
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path src-tauri/binaries/rules
-          # Download sing-box for Windows
           $sbUrl = "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-windows-amd64.zip"
           Invoke-WebRequest -Uri $sbUrl -OutFile sing-box.zip
           Expand-Archive sing-box.zip -DestinationPath sb_temp
           Get-ChildItem -Path sb_temp -Filter "sing-box.exe" -Recurse | Copy-Item -Destination src-tauri/binaries/sing-box.exe -Force
-          
-          # Download mihomo for Windows
           $mhUrl = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.2/mihomo-windows-amd64-compatible-v1.19.2.zip"
           Invoke-WebRequest -Uri $mhUrl -OutFile mihomo.zip
           Expand-Archive mihomo.zip -DestinationPath mh_temp
@@ -52,6 +53,9 @@ jobs:
         run: pnpm install
 
       - name: Build Windows Application
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: pnpm tauri build
 
       - name: Upload Windows Artifacts
@@ -73,6 +77,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -84,16 +89,16 @@ jobs:
         with:
           targets: aarch64-apple-darwin
 
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Download macOS Core Binaries
         run: |
           mkdir -p src-tauri/binaries/rules
-          # Download sing-box for macOS (arm64)
           curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-darwin-arm64.tar.gz" -o sing-box.tar.gz
           tar -xzf sing-box.tar.gz
           cp sing-box-*/sing-box src-tauri/binaries/sing-box
           chmod +x src-tauri/binaries/sing-box
-          
-          # Download mihomo for macOS (arm64)
           curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.2/mihomo-darwin-arm64-v1.19.2.gz" -o mihomo.gz
           gzip -d mihomo.gz
           mv mihomo src-tauri/binaries/mihomo
@@ -103,6 +108,9 @@ jobs:
         run: pnpm install
 
       - name: Build macOS Application
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: pnpm tauri build --target aarch64-apple-darwin
 
       - name: Upload macOS Artifacts
@@ -135,6 +143,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: 'pnpm'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -146,26 +155,26 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.23'
-          cache: false
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
 
-      - name: Build sing-box for Android
-        env:
-          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrappers
+          key: gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-
+
+      - name: Download Android Core Binaries
         run: |
-          export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
-          export CGO_ENABLED=1
-          export GOOS=android
-          export GOARCH=arm64
-          git clone --depth 1 --branch v1.11.4 https://github.com/SagerNet/sing-box.git /tmp/sing-box-src
-          cd /tmp/sing-box-src
-          go build -tags "with_quic,with_utls,with_reality_server,with_acme,with_clash_api,with_wireguard,with_gvisor,with_lwip" -o sing-box ./cmd/sing-box
-          mkdir -p $GITHUB_WORKSPACE/src-tauri/binaries/rules
-          cp sing-box $GITHUB_WORKSPACE/src-tauri/binaries/sing-box
-          chmod +x $GITHUB_WORKSPACE/src-tauri/binaries/sing-box
+          mkdir -p src-tauri/binaries/rules
+          curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-android-arm64.tar.gz" -o sing-box.tar.gz
+          tar -xzf sing-box.tar.gz
+          cp sing-box-*/sing-box src-tauri/binaries/sing-box
+          chmod +x src-tauri/binaries/sing-box
 
       - name: Install Frontend Dependencies
         run: pnpm install
@@ -180,11 +189,7 @@ jobs:
         run: pnpm tauri android init --ci
 
       - name: Inject VPN Components
-        run: |
-          python3 src-tauri/mobile/android/inject_vpn.py
-          echo "--- Verifying injected files ---"
-          ls -la src-tauri/gen/android/app/src/main/java/com/narcissus/aura/ || echo "Directory not found"
-          ls -la src-tauri/gen/android/app/src/main/AndroidManifest.xml || echo "Manifest not found"
+        run: python3 src-tauri/mobile/android/inject_vpn.py
 
       - name: Build Android APK
         env:
@@ -194,22 +199,14 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
           CC_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
-          CC_aarch64-linux-android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
           CXX_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
-          CXX_aarch64-linux-android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang++
           AR_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
-          AR_aarch64-linux-android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
           CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: "sccache"
         run: |
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export PATH="$NDK_BIN:$PATH"
-
-          echo "=== DIAGNOSTICS ==="
-          echo "NDK_HOME=$ANDROID_NDK_HOME"
-          ls -la "$NDK_BIN/aarch64-linux-android24-clang" || echo "CLANG NOT FOUND"
-          rustup target list --installed
-          echo "CC_aarch64_linux_android=$CC_aarch64_linux_android"
-          echo "AR_aarch64_linux_android=$AR_aarch64_linux_android"
 
           mkdir -p /tmp/ndk-bin
           ln -sf "$NDK_BIN/aarch64-linux-android24-clang" /tmp/ndk-bin/aarch64-linux-android-clang
@@ -219,35 +216,8 @@ jobs:
 
           mkdir -p src-tauri/.cargo
           printf '[target.aarch64-linux-android]\nlinker = "%s"\n' "$NDK_BIN/aarch64-linux-android24-clang" > src-tauri/.cargo/config.toml
-          echo "cargo config:"; cat src-tauri/.cargo/config.toml
 
-          echo "=== BUILDING APK ==="
-          set +e
-          pnpm tauri android build --apk --target aarch64 2>&1 | tee /tmp/android-build.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-          set -e
-
-          if [ $BUILD_EXIT -ne 0 ]; then
-            echo "## Android build FAILED (exit $BUILD_EXIT)" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -100 /tmp/android-build.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit $BUILD_EXIT
-          fi
-          echo "## Android build succeeded" >> $GITHUB_STEP_SUMMARY
-
-      - name: Show build errors on failure
-        if: failure()
-        run: |
-          echo "===== BUILD LAST 200 LINES ====="
-          tail -200 /tmp/android-build.log 2>/dev/null || echo "NO LOG FILE"
-
-      - name: Upload Android build log on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-build-log
-          path: /tmp/android-build.log
+          pnpm tauri android build --apk --target aarch64
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4
@@ -274,4 +244,3 @@ jobs:
             macos-arm64-dmg/*.dmg
             android-apk/**/*.apk
           generate_release_notes: true
-

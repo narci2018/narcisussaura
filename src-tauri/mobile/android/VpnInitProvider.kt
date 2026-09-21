@@ -19,9 +19,9 @@ class VpnInitProvider : ContentProvider() {
         try {
             val androidId = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
             if (androidId != null) {
-                val idFile = File(ctx.dataDir, "machine_id")
+                val idFile = File(ctx.filesDir, "machine_id")
                 idFile.writeText(androidId)
-                Log.i(TAG, "Wrote stable ANDROID_ID as machine_id: $androidId")
+                Log.i(TAG, "Wrote stable ANDROID_ID as machine_id: $androidId to ${idFile.absolutePath}")
             }
 
             extractBinaries(ctx)

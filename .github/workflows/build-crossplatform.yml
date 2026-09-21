@@ -170,15 +170,26 @@ jobs:
       - name: Install Frontend Dependencies
         run: pnpm install
 
-      - name: Init and Build Android APK
+      - name: Init Android Project
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: pnpm tauri android init --ci --skip-targets-install
+
+      - name: Inject VPN Components
         run: |
-          pnpm tauri android init --ci --skip-targets-install
           python3 src-tauri/mobile/android/inject_vpn.py
-          pnpm tauri android build --apk --target aarch64
+          echo "--- Verifying injected files ---"
+          ls -la src-tauri/gen/android/app/src/main/java/com/narcissus/aura/ || echo "Directory not found"
+          ls -la src-tauri/gen/android/app/src/main/AndroidManifest.xml || echo "Manifest not found"
+
+      - name: Build Android APK
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: pnpm tauri android build --apk --target aarch64
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4

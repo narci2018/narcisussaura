@@ -1712,7 +1712,9 @@ rules:
             for inbound in inbounds.iter_mut() {
                 if inbound.get("type").and_then(|v| v.as_str()) == Some("tun") {
                     inbound["fd"] = serde_json::json!(fd);
-                    inbound.remove("interface_name");
+                    if let Some(obj) = inbound.as_object_mut() {
+                        obj.remove("interface_name");
+                    }
                     inbound["auto_route"] = serde_json::json!(false);
                     inbound["strict_route"] = serde_json::json!(false);
                     inbound["stack"] = serde_json::json!("system");

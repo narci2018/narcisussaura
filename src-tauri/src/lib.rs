@@ -32,7 +32,7 @@ async fn start_deep_inspection(nodes: Vec<UnifiedNode>, state: State<'_, AppStat
 }
 
 #[tauri::command]
-async fn get_machine_id(app: AppHandle) -> Result<String, String> {
+async fn get_machine_id(_app: AppHandle) -> Result<String, String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         use tauri::Manager;

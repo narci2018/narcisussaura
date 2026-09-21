@@ -585,7 +585,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       let lastError: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const rawBody = await api.requestAuth(mId);
+          const rawBody = await api.requestAuth(mId!);
           const data = JSON.parse(rawBody);
           console.log('[checkAuth] CF Worker response:', JSON.stringify(data));
           

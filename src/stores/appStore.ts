@@ -310,7 +310,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const isAuth = await get().checkAuth();
     if (!isAuth) {
       if (connectSeq === currentConnectSeq) {
-        set({ errorMessage: "请联系服务商授权" });
+        const authText = get().authDisplayText || '请联系服务商授权';
+        set({ errorMessage: authText });
       }
       return;
     }

@@ -56,7 +56,7 @@ class NarcissusVpnService : VpnService() {
     private var lifecycleRegistered = false
     private var watchThread: Thread? = null
 
-    private val lifecycleCallbacks = object : ActivityLifecycleCallbacks {
+    private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
             if (isRunning && vpnInterface == null) {
                 Log.i(TAG, "Activity resumed, retrying VPN establishment")

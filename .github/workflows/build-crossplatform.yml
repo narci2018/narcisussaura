@@ -189,7 +189,16 @@ jobs:
           ANDROID_HOME: /usr/local/lib/android/sdk
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-        run: pnpm tauri android build --apk --target aarch64
+        run: |
+          set -o pipefail
+          pnpm tauri android build --apk --target aarch64 2>&1 | tee /tmp/android-build.log
+
+      - name: Upload Android build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-log
+          path: /tmp/android-build.log
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4

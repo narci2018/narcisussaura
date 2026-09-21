@@ -515,10 +515,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   checkAuth: async (forceRemote = false) => {
     try {
-      // 1. Get machine ID
+      // 1. Get machine ID (retry on Android in case VpnInitProvider hasn't run yet)
       let mId = get().machineId;
       if (!mId) {
-        mId = await api.getMachineId();
+        for (let i = 0; i < 3; i++) {
+          try {
+            mId = await api.getMachineId();
+            break;
+          } catch (e) {
+            if (i < 2) {
+              await new Promise(r => setTimeout(r, 1000));
+            } else {
+              throw e;
+            }
+          }
+        }
         set({ machineId: mId });
       }
       

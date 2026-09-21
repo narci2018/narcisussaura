@@ -39,21 +39,16 @@ async fn get_machine_id(app: AppHandle) -> Result<String, String> {
         use tauri::Manager;
         let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let id_file = app_data_dir.join("machine_id");
-        for _ in 0..5 {
+        for _ in 0..10 {
             if let Ok(id) = std::fs::read_to_string(&id_file) {
                 let trimmed = id.trim().to_string();
                 if !trimmed.is_empty() {
                     return Ok(trimmed);
                 }
             }
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::thread::sleep(std::thread::Duration::from_millis(500));
         }
-        let uuid = format!(
-            "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
-            rand_u32(), rand_u16(), rand_u16(), rand_u16(), rand_u48()
-        );
-        let _ = std::fs::write(&id_file, &uuid);
-        Ok(uuid)
+        Err("machine_id not found: VpnInitProvider has not written the file yet".to_string())
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {

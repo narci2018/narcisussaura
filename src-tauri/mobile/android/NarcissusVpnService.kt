@@ -186,7 +186,7 @@ class NarcissusVpnService : VpnService() {
     private fun startPendingWatch() {
         if (watchThread?.isAlive == true) return
         watchThread = Thread({
-            val pendingFile = File(filesDir, "vpn_pending")
+            val pendingFile = File(dataDir, "vpn_pending")
             while (isRunning && !Thread.currentThread().isInterrupted) {
                 if (pendingFile.exists() && vpnInterface == null) {
                     Log.i(TAG, "Detected vpn_pending signal, establishing tunnel")
@@ -209,7 +209,7 @@ class NarcissusVpnService : VpnService() {
 
     private fun writeTunFd(fd: Int) {
         try {
-            val fdFile = File(filesDir, "tun_fd")
+            val fdFile = File(dataDir, "tun_fd")
             fdFile.writeText(fd.toString())
             Log.i(TAG, "Wrote TUN fd $fd to ${fdFile.absolutePath}")
         } catch (e: Exception) {

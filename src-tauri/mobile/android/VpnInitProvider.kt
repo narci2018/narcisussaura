@@ -8,11 +8,6 @@ import android.provider.Settings
 import android.util.Log
 import java.io.File
 
-/**
- * ContentProvider that auto-initializes before any Activity.
- * Starts NarcissusVpnService in standby mode and writes a stable
- * device ID (ANDROID_ID) so the Rust backend can use it for auth.
- */
 class VpnInitProvider : ContentProvider() {
 
     companion object {
@@ -28,12 +23,58 @@ class VpnInitProvider : ContentProvider() {
                 idFile.writeText(androidId)
                 Log.i(TAG, "Wrote stable ANDROID_ID as machine_id: $androidId")
             }
+
+            extractBinaries(ctx)
+
             Log.i(TAG, "Starting NarcissusVpnService in standby mode")
             NarcissusVpnService.startStandby(ctx)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to auto-start VpnService", e)
         }
         return true
+    }
+
+    private fun extractBinaries(ctx: android.content.Context) {
+        val binariesDir = File(ctx.dataDir, "binaries")
+        binariesDir.mkdirs()
+
+        val assetManager = ctx.assets
+        try {
+            val rootAssets = assetManager.list("") ?: emptyArray()
+            Log.i(TAG, "APK root assets: ${rootAssets.joinToString()}")
+
+            if ("binaries" in rootAssets) {
+                extractAssetDir(assetManager, "binaries", binariesDir)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to extract binaries from APK assets", e)
+        }
+    }
+
+    private fun extractAssetDir(assetManager: android.content.res.AssetManager, assetPath: String, targetDir: File) {
+        val entries = assetManager.list(assetPath) ?: return
+        for (entry in entries) {
+            val fullPath = "$assetPath/$entry"
+            val targetFile = File(targetDir, entry)
+            val subEntries = assetManager.list(fullPath)
+            if (subEntries != null && subEntries.isNotEmpty()) {
+                targetFile.mkdirs()
+                extractAssetDir(assetManager, fullPath, targetFile)
+            } else {
+                if (targetFile.exists()) continue
+                try {
+                    assetManager.open(fullPath).use { input ->
+                        targetFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    targetFile.setExecutable(true, false)
+                    Log.i(TAG, "Extracted: $fullPath -> ${targetFile.absolutePath} (${targetFile.length()} bytes)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to extract: $fullPath", e)
+                }
+            }
+        }
     }
 
     override fun query(uri: Uri, p: Array<out String>?, s: String?, a: Array<out String>?, sort: String?): Cursor? = null

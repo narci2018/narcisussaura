@@ -1274,6 +1274,12 @@ rules:
         ];
 
         let mut search_dirs = Vec::new();
+        #[cfg(target_os = "android")]
+        {
+            search_dirs.push(self.app_data_dir.join("binaries").join("rules"));
+            search_dirs.push(self.app_data_dir.join("rules"));
+            search_dirs.push(self.app_data_dir.join("binaries"));
+        }
         if let Ok(res_dir) = app.path().resource_dir() {
             search_dirs.push(res_dir.join("binaries").join("rules"));
             search_dirs.push(res_dir.join("rules"));
@@ -1307,6 +1313,12 @@ rules:
         let bin_name = core_binary_name(base_name);
         let mut candidates = Vec::new();
 
+        #[cfg(target_os = "android")]
+        if let Ok(app_data_dir) = app.path().app_data_dir() {
+            candidates.push(app_data_dir.join("binaries").join(&bin_name));
+            candidates.push(app_data_dir.join(&bin_name));
+        }
+
         if let Ok(res_dir) = app.path().resource_dir() {
             candidates.push(res_dir.join("binaries").join(&bin_name));
             candidates.push(res_dir.join(&bin_name));
@@ -1326,14 +1338,17 @@ rules:
             }
         }
 
-        let which_cmd = if cfg!(windows) { "where.exe" } else { "which" };
-        if let Ok(output) = Command::new(which_cmd).arg(base_name).output() {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(first_line) = stdout.lines().next() {
-                    let path = PathBuf::from(first_line.trim());
-                    if path.exists() {
-                        return Ok(path);
+        #[cfg(not(target_os = "android"))]
+        {
+            let which_cmd = if cfg!(windows) { "where.exe" } else { "which" };
+            if let Ok(output) = Command::new(which_cmd).arg(base_name).output() {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if let Some(first_line) = stdout.lines().next() {
+                        let path = PathBuf::from(first_line.trim());
+                        if path.exists() {
+                            return Ok(path);
+                        }
                     }
                 }
             }
@@ -1357,6 +1372,12 @@ rules:
     fn locate_server_entries(&self, app: &AppHandle) -> Result<PathBuf, String> {
         use tauri::Manager;
         let mut candidates = Vec::new();
+
+        #[cfg(target_os = "android")]
+        if let Ok(app_data_dir) = app.path().app_data_dir() {
+            candidates.push(app_data_dir.join("binaries").join("server_entries.txt"));
+            candidates.push(app_data_dir.join("server_entries.txt"));
+        }
 
         if let Ok(res_dir) = app.path().resource_dir() {
             candidates.push(res_dir.join("binaries").join("server_entries.txt"));

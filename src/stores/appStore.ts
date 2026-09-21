@@ -580,18 +580,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       }
 
-      // 3. Fallback: Request CF (with retry)
-      console.log('[checkAuth] Requesting remote auth, machine_id:', mId);
-      let lastFetchError: any = null;
+      // 3. Fallback: Request CF via Rust (more reliable than WebView fetch on Android)
+      console.log('[checkAuth] Requesting remote auth via Rust, machine_id:', mId);
+      let lastError: any = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const res = await fetch(CF_AUTH_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ machine_id: mId }),
-          });
-          
-          const data = await res.json();
+          const rawBody = await api.requestAuth(mId);
+          const data = JSON.parse(rawBody);
           console.log('[checkAuth] CF Worker response:', JSON.stringify(data));
           
           if (data && data.success && data.authorized && data.token) {
@@ -627,15 +622,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
             }
             return false;
           }
-        } catch (fetchErr: any) {
-          lastFetchError = fetchErr;
-          console.warn(`[checkAuth] Fetch attempt ${attempt + 1} failed:`, fetchErr?.message || fetchErr);
+        } catch (reqErr: any) {
+          lastError = reqErr;
+          console.warn(`[checkAuth] Auth request attempt ${attempt + 1} failed:`, reqErr?.message || reqErr);
           if (attempt < 2) {
             await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
           }
         }
       }
-      throw new Error(`CF Worker unreachable after 3 attempts: ${lastFetchError?.message || 'unknown error'}`);
+      throw new Error(`CF Worker unreachable after 3 attempts: ${lastError?.message || 'unknown error'}`);
     } catch (e: any) {
       console.error('Auth Check Failed', e);
       const errMsg = e?.message || String(e);

@@ -45,6 +45,7 @@ export const api = {
   fetchResidentialNodes: (url?: string) => invoke<UnifiedNode[]>('fetch_residential_nodes', { url: url || null }),
   
   getMachineId: () => invoke<string>('get_machine_id'),
+  requestAuth: (machineId: string) => invoke<string>('request_auth', { machineId }),
 
   getSettings: () => invoke<AppSettings>('get_settings'),
   saveSettings: (settings: AppSettings) => invoke<void>('save_settings', { newSettings: settings }),

@@ -56,6 +56,24 @@ async fn get_machine_id(app: AppHandle) -> Result<String, String> {
     }
 }
 
+#[tauri::command]
+async fn request_auth(machine_id: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    
+    let res = client
+        .post("https://auth.lkhotrich.kdns.fr/api/auth")
+        .json(&serde_json::json!({ "machine_id": machine_id }))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    
+    let body = res.text().await.map_err(|e| format!("Failed to read response: {}", e))?;
+    Ok(body)
+}
+
 #[cfg(any(target_os = "android", target_os = "ios"))]
 fn rand_u32() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -552,6 +570,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![connect_smart_group, 
             get_machine_id,
+            request_auth,
             get_connection_status,
             get_connected_node,
             connect,

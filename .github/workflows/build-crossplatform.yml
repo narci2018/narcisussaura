@@ -192,14 +192,25 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          set -x
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export PATH="$NDK_BIN:$PATH"
-          mkdir -p src-tauri/.cargo
-          printf '[target.aarch64-linux-android]\nlinker = "%s/aarch64-linux-android24-clang"\n' "$NDK_BIN" > src-tauri/.cargo/config.toml
-          echo "--- .cargo/config.toml ---"
-          cat src-tauri/.cargo/config.toml
-          echo "--- Starting cargo build ---"
+
+          echo "=== DIAGNOSTICS ==="
+          echo "NDK_HOME=$ANDROID_NDK_HOME"
+          echo "NDK_BIN=$NDK_BIN"
+          ls -la "$NDK_BIN/aarch64-linux-android24-clang" || echo "CLANG NOT FOUND"
+          which aarch64-linux-android24-clang || echo "CLANG NOT ON PATH"
+          echo "Rust targets:"
+          rustup target list --installed
+          echo "Cargo version:"
+          cargo --version
+          echo "=== END DIAGNOSTICS ==="
+
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android24-clang"
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          export CARGO_LOG=cargo::core::compiler::fingerprint=info
+
           cd src-tauri
           cargo build --release --target aarch64-linux-android -v 2>&1 | tee /tmp/cross-compile.log
           exit ${PIPESTATUS[0]}
@@ -207,8 +218,10 @@ jobs:
       - name: Show cross-compile errors on failure
         if: failure()
         run: |
-          echo "===== CROSS-COMPILE LAST 300 LINES ====="
-          tail -300 /tmp/cross-compile.log 2>/dev/null || true
+          echo "===== CROSS-COMPILE LAST 500 LINES ====="
+          tail -500 /tmp/cross-compile.log 2>/dev/null || echo "NO LOG FILE"
+          echo "===== ERROR LINES ====="
+          grep -i "error" /tmp/cross-compile.log 2>/dev/null | tail -50 || true
 
       - name: Build Android APK (Gradle)
         env:

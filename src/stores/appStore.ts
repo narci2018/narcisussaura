@@ -107,7 +107,6 @@ interface AppStore {
   testAllChains: () => Promise<void>;
   startDeepInspection: (nodes: UnifiedNode[]) => Promise<void>;
 }
-const CF_AUTH_URL = "https://auth.lkhotrich.kdns.fr/api/auth";
 const JWT_SECRET = "NARCISSUS_AURA_SUPER_SECRET_KEY_2026";
 
 async function verifyJWT(token: string) {

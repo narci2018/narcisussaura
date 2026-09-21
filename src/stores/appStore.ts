@@ -565,13 +565,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
 
       // 3. Fallback: Request CF
+      console.log('[checkAuth] Requesting remote auth, machine_id:', mId);
       const res = await fetch(CF_AUTH_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ machine_id: mId })
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+        body: JSON.stringify({ machine_id: mId }),
+        cache: 'no-store',
       });
       
       const data = await res.json();
+      console.log('[checkAuth] CF Worker response:', JSON.stringify(data));
       
       if (data && data.success && data.authorized && data.token) {
         localStorage.setItem('vpn_auth_token', data.token);
@@ -593,10 +596,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
         return true;
       } else {
+        console.warn('[checkAuth] Auth failed, response:', JSON.stringify(data));
         localStorage.removeItem('vpn_auth_token');
+        const failMsg = data?.display_text || '认证失败';
         set({
           isAuthorized: false,
-          authDisplayText: data?.display_text || '认证失败',
+          authDisplayText: failMsg,
           residentialSubUrl: null,
         });
         if (get().activeTab === 'residential') {

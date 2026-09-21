@@ -39,11 +39,14 @@ async fn get_machine_id(app: AppHandle) -> Result<String, String> {
         use tauri::Manager;
         let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let id_file = app_data_dir.join("machine_id");
-        if let Ok(id) = std::fs::read_to_string(&id_file) {
-            let trimmed = id.trim().to_string();
-            if !trimmed.is_empty() {
-                return Ok(trimmed);
+        for _ in 0..5 {
+            if let Ok(id) = std::fs::read_to_string(&id_file) {
+                let trimmed = id.trim().to_string();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed);
+                }
             }
+            std::thread::sleep(std::time::Duration::from_millis(300));
         }
         let uuid = format!(
             "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",

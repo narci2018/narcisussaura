@@ -117,30 +117,38 @@ def inject_vpn_components():
             gradle_content = f.read()
 
         if "narcissus.keystore" not in gradle_content:
-            signing_block = """    signingConfigs {
-        create("release") {
-            storeFile = file("narcissus.keystore")
-            storePassword = "narcissus2026"
-            keyAlias = "narcissus"
-            keyPassword = "narcissus2026"
-        }
-    }
-
-    buildTypes {"""
-            if "    buildTypes {" in gradle_content:
-                gradle_content = gradle_content.replace("    buildTypes {", signing_block, 1)
+            import re
+            m = re.search(r"^([ \t]*)buildTypes \{", gradle_content, re.MULTILINE)
+            if not m:
+                raise RuntimeError("buildTypes block not found in build.gradle.kts; cannot inject signing config")
+            indent = m.group(1)
+            signing_block = (
+                f"{indent}signingConfigs {{\n"
+                f"{indent}    create(\"release\") {{\n"
+                f"{indent}        storeFile = file(\"narcissus.keystore\")\n"
+                f"{indent}        storePassword = \"narcissus2026\"\n"
+                f"{indent}        keyAlias = \"narcissus\"\n"
+                f"{indent}        keyPassword = \"narcissus2026\"\n"
+                f"{indent}    }}\n"
+                f"{indent}}}\n\n"
+                f"{m.group(0)}"
+            )
+            gradle_content = gradle_content[:m.start()] + signing_block + gradle_content[m.end():]
 
             # Point release build type at our signing config (replace any debug reference)
             gradle_content = gradle_content.replace(
                 'signingConfig = signingConfigs.getByName("debug")',
                 'signingConfig = signingConfigs.getByName("release")'
             )
-            target_str = 'getByName("release") {'
-            if target_str in gradle_content and "signingConfig = signingConfigs.getByName(\"release\")" not in gradle_content:
-                gradle_content = gradle_content.replace(
-                    target_str,
-                    target_str + '\n            signingConfig = signingConfigs.getByName("release")'
-                )
+            m2 = re.search(r"getByName\(\"release\"\) \{", gradle_content)
+            if not m2:
+                raise RuntimeError("release buildType not found in build.gradle.kts")
+            gradle_content = gradle_content[:m2.end()] + \
+                '\n            signingConfig = signingConfigs.getByName("release")' + \
+                gradle_content[m2.end():]
+
+            if "narcissus.keystore" not in gradle_content or 'signingConfigs.getByName("release")' not in gradle_content:
+                raise RuntimeError("signing injection verification failed in build.gradle.kts")
 
             with open(gradle_path, "w", encoding="utf-8") as f:
                 f.write(gradle_content)

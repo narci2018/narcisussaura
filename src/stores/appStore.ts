@@ -612,7 +612,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         const failMsg = data?.display_text || '认证失败';
         set({
           isAuthorized: false,
-          authDisplayText: failMsg,
+          authDisplayText: `${failMsg} (ID: ${mId || 'unknown'})`,
           residentialSubUrl: null,
         });
         if (get().activeTab === 'residential') {

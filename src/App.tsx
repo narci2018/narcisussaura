@@ -64,7 +64,7 @@ export const App: React.FC = () => {
   // ─── Simple Mode ─────────────────────────────────────────────────────────────
   if (mode === 'simple') {
     return (
-      <div className="flex flex-col h-screen w-screen bg-[#090a0f] text-gray-100 overflow-hidden select-none">
+      <div className="flex flex-col h-screen w-screen bg-[#090a0f] text-gray-100 overflow-hidden select-none pt-[var(--sat)] pb-[var(--sab)]">
         {/* Keep TitleBar for window dragging */}
         <TitleBar />
         <div className="flex-1 overflow-hidden">
@@ -76,7 +76,7 @@ export const App: React.FC = () => {
 
   // ─── Expert Mode ─────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#090a0f] text-gray-100 overflow-hidden select-none relative">
+    <div className="flex flex-col h-screen w-screen bg-[#090a0f] text-gray-100 overflow-hidden select-none relative pt-[var(--sat)] pb-[var(--sab)]">
       {/* Frameless Draggable TitleBar */}
       <TitleBar onSwitchToSimple={switchToSimple} />
 

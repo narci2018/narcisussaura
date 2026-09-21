@@ -32,15 +32,48 @@ async fn start_deep_inspection(nodes: Vec<UnifiedNode>, state: State<'_, AppStat
 }
 
 #[tauri::command]
-async fn get_machine_id() -> Result<String, String> {
+async fn get_machine_id(app: AppHandle) -> Result<String, String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        Ok("mobile-client".to_string())
+        use tauri::Manager;
+        let app_data_dir = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let id_file = app_data_dir.join("machine_id");
+        if let Ok(id) = std::fs::read_to_string(&id_file) {
+            let trimmed = id.trim().to_string();
+            if !trimmed.is_empty() {
+                return Ok(trimmed);
+            }
+        }
+        let uuid = format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+            rand_u32(), rand_u16(), rand_u16(), rand_u16(), rand_u48()
+        );
+        let _ = std::fs::write(&id_file, &uuid);
+        Ok(uuid)
     }
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         machine_uid::get().map_err(|e| e.to_string())
     }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn rand_u32() -> u32 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    (t.subsec_nanos() ^ (t.as_secs() as u32).wrapping_mul(2654435761)) as u32
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn rand_u16() -> u16 {
+    (rand_u32() & 0xFFFF) as u16
+}
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn rand_u48() -> u64 {
+    let hi = rand_u32() as u64;
+    let lo = rand_u32() as u64;
+    ((hi << 16) | lo) & 0xFFFFFFFFFFFF
 }
 
 #[tauri::command]
@@ -362,7 +395,7 @@ async fn toggle_maximize(window: Window) -> Result<bool, String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = window;
-        Ok(true)
+        Ok(false)
     }
 }
 
@@ -375,7 +408,7 @@ async fn is_window_maximized(window: Window) -> Result<bool, String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
         let _ = window;
-        Ok(true)
+        Ok(false)
     }
 }
 

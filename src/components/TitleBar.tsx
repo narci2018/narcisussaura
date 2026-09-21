@@ -13,9 +13,15 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
   const { status, connectedNode, settings, saveSettings, disconnect } = useAppStore();
   const [isMaximized, setIsMaximized] = useState(false);
   const [appVersion, setAppVersion] = useState('');
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    api.isWindowMaximized().then(setIsMaximized).catch(() => {});
+    const ua = navigator.userAgent.toLowerCase();
+    const mobile = ua.includes('android') || ua.includes('iphone') || ua.includes('ipad');
+    setIsMobile(mobile);
+    if (!mobile) {
+      api.isWindowMaximized().then(setIsMaximized).catch(() => {});
+    }
     getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion('v0.2.4'));
   }, []);
 
@@ -43,12 +49,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
 
   return (
     <div
-      data-tauri-drag-region
-      onDoubleClick={handleToggleMaximize}
+      {...(!isMobile && { 'data-tauri-drag-region': true })}
+      onDoubleClick={isMobile ? undefined : handleToggleMaximize}
       className="h-10 bg-[#090a0f] border-b border-[#1c1f2b] flex items-center justify-between px-3 select-none z-50 text-xs font-medium text-gray-400 cursor-default"
     >
       {/* Left: Brand & Status pill */}
-      <div className="flex items-center gap-2.5 pointer-events-none" data-tauri-drag-region>
+      <div className="flex items-center gap-2.5 pointer-events-none" {...(!isMobile && { 'data-tauri-drag-region': true })}>
         <div className="w-5 h-5 rounded-md bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/20">
           <Shield className="w-3.5 h-3.5" />
         </div>
@@ -83,7 +89,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
         )}
       </div>
 
-      {/* Right: Mode switch + Window Controls */}
+      {/* Right: Mode switch + Window Controls (hidden on mobile) */}
       <div className="flex items-center gap-1 no-drag">
         {onSwitchToSimple && (
           <button
@@ -102,27 +108,31 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
         >
           {settings.theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
         </button>
-        <button
-          onClick={handleMinimize}
-          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"
-          title="Minimize"
-        >
-          <Minus className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={handleToggleMaximize}
-          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"
-          title={isMaximized ? 'Restore' : 'Maximize'}
-        >
-          {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
-        </button>
-        <button
-          onClick={handleClose}
-          className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-500/80 hover:text-white text-gray-400 transition-colors"
-          title="Close"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        {!isMobile && (
+          <>
+            <button
+              onClick={handleMinimize}
+              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"
+              title="Minimize"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={handleToggleMaximize}
+              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-gray-800/60 text-gray-400 hover:text-gray-200 transition-colors"
+              title={isMaximized ? 'Restore' : 'Maximize'}
+            >
+              {isMaximized ? <Copy className="w-3 h-3" /> : <Square className="w-3 h-3" />}
+            </button>
+            <button
+              onClick={handleClose}
+              className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-red-500/80 hover:text-white text-gray-400 transition-colors"
+              title="Close"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

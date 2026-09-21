@@ -146,14 +146,25 @@ jobs:
         with:
           targets: aarch64-linux-android
 
-      - name: Download Android Core Binaries
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build sing-box for Android
+        env:
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          mkdir -p src-tauri/binaries/rules
-          # Download sing-box for linux/android arm64
-          curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-arm64.tar.gz" -o sing-box.tar.gz
-          tar -xzf sing-box.tar.gz
-          cp sing-box-*/sing-box src-tauri/binaries/sing-box
-          chmod +x src-tauri/binaries/sing-box
+          export CC=$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          export CGO_ENABLED=1
+          export GOOS=android
+          export GOARCH=arm64
+          git clone --depth 1 --branch v1.11.4 https://github.com/SagerNet/sing-box.git /tmp/sing-box-src
+          cd /tmp/sing-box-src
+          go build -tags "with_quic,with_utls,with_reality_server,with_acme,with_clash_api,with_wireguard,with_gvisor,with_lwip" -o sing-box ./cmd/sing-box
+          mkdir -p $GITHUB_WORKSPACE/src-tauri/binaries/rules
+          cp sing-box $GITHUB_WORKSPACE/src-tauri/binaries/sing-box
+          chmod +x $GITHUB_WORKSPACE/src-tauri/binaries/sing-box
 
       - name: Install Frontend Dependencies
         run: pnpm install

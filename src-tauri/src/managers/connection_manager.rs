@@ -37,13 +37,17 @@ impl ConnectionManager {
                 let _ = cmd.output();
             }
         }
-        #[cfg(not(windows))]
+        #[cfg(all(unix, not(target_os = "android")))]
         {
             for bin in &binaries {
                 let _ = Command::new("pkill")
                     .args(&["-9", "-f", bin])
                     .output();
             }
+        }
+        #[cfg(target_os = "android")]
+        {
+            let _ = binaries;
         }
     }
 
@@ -461,6 +465,16 @@ impl ConnectionManager {
         // 1. Locate sing-box binary
         let binary_path = self.locate_sing_box(&app)?;
 
+        // 1b. On Android TUN mode, trigger VpnService and wait for TUN fd
+        #[cfg(target_os = "android")]
+        let android_tun_fd: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
+            self.wait_for_android_tun_fd().await
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "android"))]
+        let android_tun_fd: Option<i32> = None;
+
         // 2. Generate configuration
         let adapter = SingBoxAdapter::new();
         let effective_relay = if node.protocol == crate::models::ProtocolType::Psiphon
@@ -470,9 +484,14 @@ impl ConnectionManager {
         } else {
             relay_node.as_ref()
         };
-        let config_str = adapter
+        let mut config_str = adapter
             .generate_config_with_relay(&node, effective_relay, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate core config: {}", e))?;
+
+        // 2b. On Android TUN mode, patch config to use VpnService fd
+        if let Some(fd) = android_tun_fd {
+            config_str = Self::patch_android_tun_config(&config_str, fd)?;
+        }
 
         let config_path = self.app_data_dir.join("current_config.json");
         std::fs::write(&config_path, config_str)
@@ -649,6 +668,12 @@ impl ConnectionManager {
 
         Self::force_kill_all_cores();
 
+        #[cfg(target_os = "android")]
+        {
+            let _ = std::fs::remove_file(self.app_data_dir.join("tun_fd"));
+            let _ = std::fs::remove_file(self.app_data_dir.join("vpn_pending"));
+        }
+
         // Always restore Windows System Proxy
         let _ = PlatformProxy::disable_proxy();
 
@@ -689,10 +714,24 @@ impl ConnectionManager {
         let _ = app.emit("core:status-changed", ConnectionStatus::Connecting);
 
         let binary_path = self.locate_sing_box(&app)?;
+
+        #[cfg(target_os = "android")]
+        let android_tun_fd_chain: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
+            self.wait_for_android_tun_fd().await
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "android"))]
+        let android_tun_fd_chain: Option<i32> = None;
+
         let adapter = SingBoxAdapter::new();
-        let config_str = adapter
+        let mut config_str = adapter
             .generate_config_for_chain(&nodes, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate chain config: {}", e))?;
+
+        if let Some(fd) = android_tun_fd_chain {
+            config_str = Self::patch_android_tun_config(&config_str, fd)?;
+        }
 
         let config_path = self.app_data_dir.join("current_config.json");
         std::fs::write(&config_path, config_str)
@@ -1514,10 +1553,24 @@ rules:
         let _ = app.emit("core:status-changed", ConnectionStatus::Connecting);
 
         let binary_path = self.locate_sing_box(&app)?;
+
+        #[cfg(target_os = "android")]
+        let android_tun_fd_smart: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
+            self.wait_for_android_tun_fd().await
+        } else {
+            None
+        };
+        #[cfg(not(target_os = "android"))]
+        let android_tun_fd_smart: Option<i32> = None;
+
         let adapter = SingBoxAdapter::new();
-        let config_str = adapter
+        let mut config_str = adapter
             .generate_config_for_urltest(&nodes, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate urltest config: {}", e))?;
+
+        if let Some(fd) = android_tun_fd_smart {
+            config_str = Self::patch_android_tun_config(&config_str, fd)?;
+        }
 
         let config_path = self.app_data_dir.join("current_config.json");
         std::fs::write(&config_path, config_str).map_err(|e| format!("Failed to write core config file: {}", e))?;
@@ -1621,5 +1674,54 @@ rules:
 
         Ok(())
 
+    }
+
+    /// On Android, trigger VpnService and wait for the TUN fd file to appear.
+    /// Returns the fd number on success, or None on non-Android / proxy-only mode.
+    #[cfg(target_os = "android")]
+    async fn wait_for_android_tun_fd(&self) -> Option<i32> {
+        let fd_file = self.app_data_dir.join("tun_fd");
+        let pending_file = self.app_data_dir.join("vpn_pending");
+        let _ = std::fs::remove_file(&fd_file);
+
+        log::info!("Android: writing vpn_pending signal for VpnService...");
+        let _ = std::fs::write(&pending_file, "1");
+
+        for i in 0..120 {
+            if let Ok(content) = std::fs::read_to_string(&fd_file) {
+                if let Ok(fd) = content.trim().parse::<i32>() {
+                    log::info!("Android: received TUN fd={} after {}ms", fd, i * 250);
+                    let _ = std::fs::remove_file(&fd_file);
+                    return Some(fd);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        let _ = std::fs::remove_file(&pending_file);
+        log::error!("Android: timed out waiting for TUN fd from VpnService (30s)");
+        None
+    }
+
+    /// Patch the sing-box JSON config to use the Android VpnService TUN fd
+    /// instead of creating its own TUN interface (which requires root on Android).
+    fn patch_android_tun_config(config_str: &str, fd: i32) -> Result<String, String> {
+        let mut config: serde_json::Value = serde_json::from_str(config_str)
+            .map_err(|e| format!("Failed to parse config for Android TUN patch: {}", e))?;
+
+        if let Some(inbounds) = config.get_mut("inbounds").and_then(|v| v.as_array_mut()) {
+            for inbound in inbounds.iter_mut() {
+                if inbound.get("type").and_then(|v| v.as_str()) == Some("tun") {
+                    inbound["fd"] = serde_json::json!(fd);
+                    inbound.remove("interface_name");
+                    inbound["auto_route"] = serde_json::json!(false);
+                    inbound["strict_route"] = serde_json::json!(false);
+                    inbound["stack"] = serde_json::json!("system");
+                    log::info!("Android: patched TUN inbound with fd={}", fd);
+                    break;
+                }
+            }
+        }
+
+        serde_json::to_string(&config).map_err(|e| format!("Failed to serialize patched config: {}", e))
     }
 }

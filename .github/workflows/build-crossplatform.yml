@@ -186,7 +186,25 @@ jobs:
           ls -la src-tauri/gen/android/app/src/main/java/com/narcissus/aura/ || echo "Directory not found"
           ls -la src-tauri/gen/android/app/src/main/AndroidManifest.xml || echo "Manifest not found"
 
-      - name: Build Android APK
+      - name: Rust cross-compile for Android (aarch64)
+        env:
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+        run: |
+          mkdir -p src-tauri/.cargo
+          cat > src-tauri/.cargo/config.toml << 'TOML'
+          [target.aarch64-linux-android]
+          linker = "aarch64-linux-android24-clang"
+          TOML
+          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          cd src-tauri
+          set -o pipefail
+          cargo build --release --target aarch64-linux-android -v 2>&1 | tail -80
+
+      - name: Build Android APK (Gradle)
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
@@ -194,14 +212,15 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          set -o pipefail
           pnpm tauri android build --apk --target aarch64 2>&1 | tee /tmp/android-build.log
 
       - name: Show build errors on failure
         if: failure()
         run: |
-          echo "===== LAST 150 LINES OF BUILD LOG ====="
-          tail -150 /tmp/android-build.log
+          echo "===== BUILD LOG ERRORS ====="
+          grep -i -A 3 "error" /tmp/android-build.log 2>/dev/null | tail -80 || true
+          echo "===== LAST 50 LINES ====="
+          tail -50 /tmp/android-build.log 2>/dev/null || true
 
       - name: Upload Android build log on failure
         if: failure()

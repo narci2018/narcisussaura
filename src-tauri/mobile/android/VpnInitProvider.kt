@@ -17,11 +17,17 @@ class VpnInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val ctx = context ?: return true
         try {
-            val androidId = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
-            if (androidId != null) {
-                val idFile = File(ctx.dataDir, "machine_id")
-                idFile.writeText(androidId)
-                Log.i(TAG, "Wrote stable ANDROID_ID as machine_id: $androidId to ${idFile.absolutePath}")
+            val idFile = File(ctx.dataDir, "machine_id")
+            // Use stable UUID: if file exists, keep it; otherwise generate new one
+            if (!idFile.exists() || idFile.readText().trim().isEmpty()) {
+                val stableId = java.util.UUID.nameUUIDFromBytes(
+                    (Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
+                        ?: "unknown").toByteArray()
+                ).toString().replace("-", "").take(16)
+                idFile.writeText(stableId)
+                Log.i(TAG, "Generated stable machine_id: $stableId -> ${idFile.absolutePath}")
+            } else {
+                Log.i(TAG, "machine_id already exists: ${idFile.readText().trim()}")
             }
 
             extractBinaries(ctx)

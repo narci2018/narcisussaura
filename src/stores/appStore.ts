@@ -580,51 +580,62 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
       }
 
-      // 3. Fallback: Request CF
+      // 3. Fallback: Request CF (with retry)
       console.log('[checkAuth] Requesting remote auth, machine_id:', mId);
-      const res = await fetch(CF_AUTH_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
-        body: JSON.stringify({ machine_id: mId }),
-        cache: 'no-store',
-      });
-      
-      const data = await res.json();
-      console.log('[checkAuth] CF Worker response:', JSON.stringify(data));
-      
-      if (data && data.success && data.authorized && data.token) {
-        localStorage.setItem('vpn_auth_token', data.token);
-        const payload = await verifyJWT(data.token);
-        const resUrl = payload?.residential_sub_url;
-        const effectiveResUrl = (typeof resUrl === 'string' && resUrl.trim().length > 0) ? resUrl.trim() : null;
+      let lastFetchError: any = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await fetch(CF_AUTH_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ machine_id: mId }),
+          });
+          
+          const data = await res.json();
+          console.log('[checkAuth] CF Worker response:', JSON.stringify(data));
+          
+          if (data && data.success && data.authorized && data.token) {
+            localStorage.setItem('vpn_auth_token', data.token);
+            const payload = await verifyJWT(data.token);
+            const resUrl = payload?.residential_sub_url;
+            const effectiveResUrl = (typeof resUrl === 'string' && resUrl.trim().length > 0) ? resUrl.trim() : null;
 
-        set({
-          isAuthorized: true,
-          authDisplayText: data.display_text || null,
-          residentialSubUrl: effectiveResUrl,
-        });
-        if (get().activeTab === 'residential' && !effectiveResUrl) {
-          set({ activeTab: 'dashboard' });
+            set({
+              isAuthorized: true,
+              authDisplayText: data.display_text || null,
+              residentialSubUrl: effectiveResUrl,
+            });
+            if (get().activeTab === 'residential' && !effectiveResUrl) {
+              set({ activeTab: 'dashboard' });
+            }
+            if (payload) get().applyCustomSubscription(payload.custom_sub_url || '');
+            if (effectiveResUrl) {
+              get().loadResidentialNodes().catch(console.error);
+            }
+            return true;
+          } else {
+            console.warn('[checkAuth] Auth failed, response:', JSON.stringify(data));
+            localStorage.removeItem('vpn_auth_token');
+            const failMsg = data?.display_text || '认证失败';
+            set({
+              isAuthorized: false,
+              authDisplayText: `${failMsg} (ID: ${mId || 'unknown'})`,
+              residentialSubUrl: null,
+            });
+            if (get().activeTab === 'residential') {
+              set({ activeTab: 'dashboard' });
+            }
+            return false;
+          }
+        } catch (fetchErr: any) {
+          lastFetchError = fetchErr;
+          console.warn(`[checkAuth] Fetch attempt ${attempt + 1} failed:`, fetchErr?.message || fetchErr);
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+          }
         }
-        if (payload) get().applyCustomSubscription(payload.custom_sub_url || '');
-        if (effectiveResUrl) {
-          get().loadResidentialNodes().catch(console.error);
-        }
-        return true;
-      } else {
-        console.warn('[checkAuth] Auth failed, response:', JSON.stringify(data));
-        localStorage.removeItem('vpn_auth_token');
-        const failMsg = data?.display_text || '认证失败';
-        set({
-          isAuthorized: false,
-          authDisplayText: `${failMsg} (ID: ${mId || 'unknown'})`,
-          residentialSubUrl: null,
-        });
-        if (get().activeTab === 'residential') {
-          set({ activeTab: 'dashboard' });
-        }
-        return false;
       }
+      throw new Error(`CF Worker unreachable after 3 attempts: ${lastFetchError?.message || 'unknown error'}`);
     } catch (e: any) {
       console.error('Auth Check Failed', e);
       const errMsg = e?.message || String(e);

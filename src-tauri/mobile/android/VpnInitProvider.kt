@@ -4,12 +4,14 @@ import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
+import android.provider.Settings
 import android.util.Log
+import java.io.File
 
 /**
  * ContentProvider that auto-initializes before any Activity.
- * Starts NarcissusVpnService in standby mode so it's ready
- * when the Rust backend signals via vpn_pending file.
+ * Starts NarcissusVpnService in standby mode and writes a stable
+ * device ID (ANDROID_ID) so the Rust backend can use it for auth.
  */
 class VpnInitProvider : ContentProvider() {
 
@@ -20,6 +22,12 @@ class VpnInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val ctx = context ?: return true
         try {
+            val androidId = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ANDROID_ID)
+            if (androidId != null) {
+                val idFile = File(ctx.filesDir, "machine_id")
+                idFile.writeText(androidId)
+                Log.i(TAG, "Wrote stable ANDROID_ID as machine_id: $androidId")
+            }
             Log.i(TAG, "Starting NarcissusVpnService in standby mode")
             NarcissusVpnService.startStandby(ctx)
         } catch (e: Exception) {

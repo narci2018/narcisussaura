@@ -336,10 +336,11 @@ export default {
           userData = { authorized: false, status: "pending", display_text: "", last_seen: Date.now() };
           await env.AUTH_DB.put(machineId, JSON.stringify(userData));
         } else {
-          userData.last_seen = Date.now();
-          if (!userData.authorized || !userData.expires_at) {
-             await env.AUTH_DB.put(machineId, JSON.stringify(userData));
-          }
+          // NEVER write back the auth record here. KV is eventually consistent:
+          // a stale edge reading an old "pending" copy and writing it back would
+          // silently destroy a fresh admin approval (lost update).
+          // Track last_seen in a separate key instead.
+          await env.AUTH_DB.put("seen:" + machineId, String(Date.now()));
         }
 
         if (!userData.authorized) {
@@ -410,12 +411,15 @@ export default {
           const listInfo = await env.AUTH_DB.list();
           const devices = [];
           for (const key of listInfo.keys) {
+            if (key.name.startsWith("seen:")) continue;
             const val = await env.AUTH_DB.get(key.name, "json");
             if (val) {
               const resUrl = (val.residential_sub_url !== undefined && val.residential_sub_url !== null)
                 ? val.residential_sub_url
                 : defaultResUrl;
-              devices.push({ machine_id: key.name, ...val, residential_sub_url: resUrl });
+              const seenRaw = await env.AUTH_DB.get("seen:" + key.name);
+              const seenTs = Number(seenRaw) || 0;
+              devices.push({ machine_id: key.name, ...val, last_seen: Math.max(val.last_seen || 0, seenTs), residential_sub_url: resUrl });
             }
           }
           return Response.json({ success: true, data: devices }, { headers: corsHeaders });
@@ -453,6 +457,7 @@ export default {
         if (url.pathname === "/api/admin/delete" && request.method === "POST") {
           const body = await request.json();
           await env.AUTH_DB.delete(body.machine_id);
+          await env.AUTH_DB.delete("seen:" + body.machine_id);
           return Response.json({ success: true }, { headers: corsHeaders });
         }
       } catch (e) {

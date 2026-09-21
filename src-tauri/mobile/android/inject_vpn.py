@@ -102,21 +102,49 @@ def inject_vpn_components():
                 f.write(activity_content)
             print("[Android Inject] Patched MainActivity.kt for system bar inset handling")
 
-    # 4. Patch build.gradle.kts for release signing
+    # 4. Patch build.gradle.kts for release signing with STABLE keystore
+    #    (debug keystore is regenerated per CI runner -> ANDROID_ID changes ->
+    #     machine_id changes every build. A fixed keystore keeps both stable.)
+    keystore_src = os.path.join(base_dir, "narcissus.keystore")
+    keystore_dst = os.path.join(android_app_dir, "narcissus.keystore")
+    if os.path.exists(keystore_src):
+        shutil.copy2(keystore_src, keystore_dst)
+        print(f"[Android Inject] Copied stable keystore to {keystore_dst}")
+
     gradle_path = os.path.join(android_app_dir, "build.gradle.kts")
     if os.path.exists(gradle_path):
         with open(gradle_path, "r", encoding="utf-8") as f:
             gradle_content = f.read()
-        if 'signingConfig = signingConfigs.getByName("debug")' not in gradle_content:
+
+        if "narcissus.keystore" not in gradle_content:
+            signing_block = """    signingConfigs {
+        create("release") {
+            storeFile = file("narcissus.keystore")
+            storePassword = "narcissus2026"
+            keyAlias = "narcissus"
+            keyPassword = "narcissus2026"
+        }
+    }
+
+    buildTypes {"""
+            if "    buildTypes {" in gradle_content:
+                gradle_content = gradle_content.replace("    buildTypes {", signing_block, 1)
+
+            # Point release build type at our signing config (replace any debug reference)
+            gradle_content = gradle_content.replace(
+                'signingConfig = signingConfigs.getByName("debug")',
+                'signingConfig = signingConfigs.getByName("release")'
+            )
             target_str = 'getByName("release") {'
-            if target_str in gradle_content:
+            if target_str in gradle_content and "signingConfig = signingConfigs.getByName(\"release\")" not in gradle_content:
                 gradle_content = gradle_content.replace(
                     target_str,
-                    target_str + '\n            signingConfig = signingConfigs.getByName("debug")'
+                    target_str + '\n            signingConfig = signingConfigs.getByName("release")'
                 )
-                with open(gradle_path, "w", encoding="utf-8") as f:
-                    f.write(gradle_content)
-                print("[Android Inject] Configured release signing in build.gradle.kts")
+
+            with open(gradle_path, "w", encoding="utf-8") as f:
+                f.write(gradle_content)
+            print("[Android Inject] Configured stable release signing in build.gradle.kts")
 
 if __name__ == "__main__":
     inject_vpn_components()

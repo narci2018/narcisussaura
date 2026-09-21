@@ -258,13 +258,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       });
 
       // Immediately verify cached token on startup so UI states (like Residential tab) populate instantly
-      await get().checkAuth(false).catch(console.error);
+      const authOk = await get().checkAuth(false).catch((e) => {
+        console.error('[init] checkAuth failed:', e);
+        return false;
+      });
 
-      // Always auto refresh Default subscription on app startup (background)
-      get().autoRefreshDefault().catch(console.error);
-
-      // Perform a background auth refresh to fetch a new 7-day token silently
-      get().checkAuth(true).catch(console.error);
+      // Only auto refresh subscription if auth succeeded
+      if (authOk) {
+        get().autoRefreshDefault().catch(console.error);
+      }
 
       // Listen for background state events
       api.onStatusChanged((newStatus) => {
@@ -509,6 +511,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       await get().testAllNodes();
       // test all nodes speed in background
       await get().testAllSpeeds();
+      // Refresh auth token in background after subscription operations complete
+      await get().checkAuth(true).catch(console.error);
     } catch (e) {
       console.error('Failed to auto refresh default sub', e);
     }
@@ -621,10 +625,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
         }
         return false;
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('Auth Check Failed', e);
-      // Fallback: If CF is down but we have a token, trust it temporarily?
-      // Better to return current state if network is completely down.
+      const errMsg = e?.message || String(e);
+      const mId = get().machineId;
+      set({
+        authDisplayText: `认证异常: ${errMsg} (ID: ${mId || 'pending'})`,
+      });
       return get().isAuthorized;
     }
   },
@@ -633,7 +640,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // Auth Check
     const isAuth = await get().checkAuth();
     if (!isAuth) {
-      set({ errorMessage: "请联系服务商授权" });
+      set({ errorMessage: get().authDisplayText || "认证失败" });
       return;
     }
     
@@ -895,7 +902,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const isAuth = await get().checkAuth();
     if (!isAuth) {
       if (connectSeq === currentConnectSeq) {
-        set({ errorMessage: "请联系服务商授权" });
+        set({ errorMessage: get().authDisplayText || "认证失败" });
       }
       return;
     }

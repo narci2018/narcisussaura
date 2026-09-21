@@ -195,25 +195,55 @@ jobs:
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           export PATH="$NDK_BIN:$PATH"
 
+          CLANG="$NDK_BIN/aarch64-linux-android24-clang"
+          CLANGPP="$NDK_BIN/aarch64-linux-android24-clang++"
+          AR="$NDK_BIN/llvm-ar"
+
           echo "=== DIAGNOSTICS ==="
           echo "NDK_HOME=$ANDROID_NDK_HOME"
-          echo "NDK_BIN=$NDK_BIN"
-          ls -la "$NDK_BIN/aarch64-linux-android24-clang" || echo "CLANG NOT FOUND"
-          which aarch64-linux-android24-clang || echo "CLANG NOT ON PATH"
-          echo "Rust targets:"
+          echo "CLANG=$CLANG"
+          ls -la "$CLANG" || echo "CLANG NOT FOUND"
           rustup target list --installed
-          echo "Cargo version:"
-          cargo --version
-          echo "=== END DIAGNOSTICS ==="
+          echo "=== ENV VARS ==="
 
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android24-clang"
-          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android24-clang"
-          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
-          export CARGO_LOG=cargo::core::compiler::fingerprint=info
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CLANG"
+          export CC_aarch64_linux_android="$CLANG"
+          export CC_aarch64-linux-android="$CLANG"
+          export CXX_aarch64_linux_android="$CLANGPP"
+          export CXX_aarch64-linux-android="$CLANGPP"
+          export AR_aarch64_linux_android="$AR"
+          export AR_aarch64-linux-android="$AR"
+          export CC="$CLANG"
+          export CXX="$CLANGPP"
+          export CFLAGS_aarch64_linux_android="--target=aarch64-linux-android24"
+          export TARGET_CFLAGS="--target=aarch64-linux-android24"
+
+          echo "CC_aarch64_linux_android=$CC_aarch64_linux_android"
+          echo "CXX_aarch64_linux_android=$CXX_aarch64_linux_android"
+          echo "AR_aarch64_linux_android=$AR_aarch64_linux_android"
+          echo "CC=$CC"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER"
+          echo "=== BUILDING ==="
+
+          mkdir -p src-tauri/.cargo
+          printf '[target.aarch64-linux-android]\nlinker = "%s"\n' "$CLANG" > src-tauri/.cargo/config.toml
+          echo "Created .cargo/config.toml:"
+          cat src-tauri/.cargo/config.toml
 
           cd src-tauri
-          cargo build --release --target aarch64-linux-android -v 2>&1 | tee /tmp/cross-compile.log
-          exit ${PIPESTATUS[0]}
+          set +e
+          cargo build --release --target aarch64-linux-android 2>&1 | tee /tmp/cross-compile.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo "## Cross-compile FAILED (exit $EXIT_CODE)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -i "error" /tmp/cross-compile.log | tail -30 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit $EXIT_CODE
+          fi
+          echo "## Cross-compile succeeded" >> $GITHUB_STEP_SUMMARY
 
       - name: Show cross-compile errors on failure
         if: failure()
@@ -231,13 +261,25 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export PATH="$NDK_BIN:$PATH"
+          export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android24-clang"
+          export CXX_aarch64_linux_android="$NDK_BIN/aarch64-linux-android24-clang++"
+          export AR_aarch64_linux_android="$NDK_BIN/llvm-ar"
+          export CC="$NDK_BIN/aarch64-linux-android24-clang"
+          export CXX="$NDK_BIN/aarch64-linux-android24-clang++"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android24-clang"
+
           pnpm tauri android build --apk --target aarch64 2>&1 | tee /tmp/android-build.log
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
             echo ""
-            echo "===== GRADLE BUILD FAILED - LAST 300 LINES ====="
-            tail -300 /tmp/android-build.log
+            echo "## Gradle build FAILED (exit $BUILD_EXIT)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            grep -i "error" /tmp/android-build.log | tail -30 >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "===== GRADLE BUILD FAILED - LAST 200 LINES ====="
+            tail -200 /tmp/android-build.log
           fi
           exit $BUILD_EXIT
 

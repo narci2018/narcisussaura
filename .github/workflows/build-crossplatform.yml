@@ -186,6 +186,30 @@ jobs:
           ls -la src-tauri/gen/android/app/src/main/java/com/narcissus/aura/ || echo "Directory not found"
           ls -la src-tauri/gen/android/app/src/main/AndroidManifest.xml || echo "Manifest not found"
 
+      - name: Rust cross-compile for Android (aarch64)
+        env:
+          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          set -x
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export PATH="$NDK_BIN:$PATH"
+          mkdir -p src-tauri/.cargo
+          printf '[target.aarch64-linux-android]\nlinker = "%s/aarch64-linux-android24-clang"\n' "$NDK_BIN" > src-tauri/.cargo/config.toml
+          echo "--- .cargo/config.toml ---"
+          cat src-tauri/.cargo/config.toml
+          echo "--- Starting cargo build ---"
+          cd src-tauri
+          cargo build --release --target aarch64-linux-android -v 2>&1 | tee /tmp/cross-compile.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Show cross-compile errors on failure
+        if: failure()
+        run: |
+          echo "===== CROSS-COMPILE LAST 300 LINES ====="
+          tail -300 /tmp/cross-compile.log 2>/dev/null || true
+
       - name: Build Android APK (Gradle)
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
@@ -193,29 +217,31 @@ jobs:
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android24-clang
-          CC_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
-          AR_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
         run: |
           export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           pnpm tauri android build --apk --target aarch64 2>&1 | tee /tmp/android-build.log
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
             echo ""
-            echo "===== BUILD FAILED - LAST 200 LINES ====="
-            tail -200 /tmp/android-build.log
-            echo "===== ERROR LINES ====="
-            grep -i -B 2 -A 5 "error\[" /tmp/android-build.log 2>/dev/null | head -100 || true
-            grep -i -B 2 -A 5 "^error:" /tmp/android-build.log 2>/dev/null | head -100 || true
+            echo "===== GRADLE BUILD FAILED - LAST 300 LINES ====="
+            tail -300 /tmp/android-build.log
           fi
           exit $BUILD_EXIT
 
-      - name: Upload Android build log on failure
+      - name: Show Gradle errors on failure
+        if: failure()
+        run: |
+          echo "===== GRADLE LAST 300 LINES ====="
+          tail -300 /tmp/android-build.log 2>/dev/null || true
+
+      - name: Upload Android build logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: android-build-log
-          path: /tmp/android-build.log
+          path: |
+            /tmp/cross-compile.log
+            /tmp/android-build.log
 
       - name: Upload Android Artifacts
         uses: actions/upload-artifact@v4

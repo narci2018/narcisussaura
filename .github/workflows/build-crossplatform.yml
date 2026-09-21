@@ -186,24 +186,6 @@ jobs:
           ls -la src-tauri/gen/android/app/src/main/java/com/narcissus/aura/ || echo "Directory not found"
           ls -la src-tauri/gen/android/app/src/main/AndroidManifest.xml || echo "Manifest not found"
 
-      - name: Rust cross-compile for Android (aarch64)
-        env:
-          NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-          ANDROID_HOME: /usr/local/lib/android/sdk
-          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-        run: |
-          mkdir -p src-tauri/.cargo
-          cat > src-tauri/.cargo/config.toml << 'TOML'
-          [target.aarch64-linux-android]
-          linker = "aarch64-linux-android24-clang"
-          TOML
-          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
-          cd src-tauri
-          set -o pipefail
-          cargo build --release --target aarch64-linux-android -v 2>&1 | tail -80
-
       - name: Build Android APK (Gradle)
         env:
           ANDROID_HOME: /usr/local/lib/android/sdk
@@ -211,16 +193,22 @@ jobs:
           NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER: aarch64-linux-android24-clang
+          CC_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang
+          AR_aarch64_linux_android: ${{ steps.setup-ndk.outputs.ndk-path }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
         run: |
+          export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
           pnpm tauri android build --apk --target aarch64 2>&1 | tee /tmp/android-build.log
-
-      - name: Show build errors on failure
-        if: failure()
-        run: |
-          echo "===== BUILD LOG ERRORS ====="
-          grep -i -A 3 "error" /tmp/android-build.log 2>/dev/null | tail -80 || true
-          echo "===== LAST 50 LINES ====="
-          tail -50 /tmp/android-build.log 2>/dev/null || true
+          BUILD_EXIT=${PIPESTATUS[0]}
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo ""
+            echo "===== BUILD FAILED - LAST 200 LINES ====="
+            tail -200 /tmp/android-build.log
+            echo "===== ERROR LINES ====="
+            grep -i -B 2 -A 5 "error\[" /tmp/android-build.log 2>/dev/null | head -100 || true
+            grep -i -B 2 -A 5 "^error:" /tmp/android-build.log 2>/dev/null | head -100 || true
+          fi
+          exit $BUILD_EXIT
 
       - name: Upload Android build log on failure
         if: failure()

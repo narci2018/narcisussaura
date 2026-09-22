@@ -43,6 +43,7 @@ interface AppStore {
   testingSpeedIds: string[];
   testingChainIds: string[];
   errorMessage: string | null;
+  tunnelStage: string | null;
   inspectProgress: { current: number; total: number; status: string } | null;
   inspectReport: InspectReport | null;
   closeInspectReport: () => void;
@@ -149,6 +150,20 @@ async function verifyJWT(token: string) {
 
 let currentConnectSeq = 0;
 
+// Android tunnel handshake stages reported by VpnService (vpn_status file →
+// core:vpn-stage event). Surfacing these lets the user see exactly where a
+// stuck connection halted even if they terminate before the 120s timeout.
+function translateVpnStage(raw: string): string {
+  if (raw === 'service_starting') return '正在启动隧道服务...';
+  if (raw === 'consent_required') return '请在系统弹窗中点击「允许」以授权 VPN 连接';
+  if (raw === 'establishing') return '正在建立 VPN 隧道...';
+  if (raw.startsWith('established')) return '隧道已建立，正在启动代理核心...';
+  if (raw.startsWith('establish_failed')) return '系统拒绝创建 VPN 隧道，请重试或在系统设置中检查 VPN 权限';
+  if (raw.startsWith('service_start_failed')) return `隧道服务启动失败：${raw.substring('service_start_failed:'.length)}`;
+  if (raw === 'standby') return '隧道服务待机中...';
+  return raw;
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   status: 'disconnected',
   connectedNode: null,
@@ -192,6 +207,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   testingSpeedIds: [],
   testingChainIds: [],
   errorMessage: null,
+  tunnelStage: null,
   inspectProgress: null,
   inspectReport: null,
   
@@ -270,6 +286,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // Listen for background state events
       api.onStatusChanged((newStatus) => {
         set({ status: newStatus });
+        if (newStatus !== 'connecting') {
+          set({ tunnelStage: null });
+        }
         if (newStatus === 'disconnected') {
           set({
             connectedNode: null,
@@ -288,6 +307,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       api.onTrafficTick((stats) => {
         set({ traffic: stats });
       });
+
+      api.onVpnStage((stage) => {
+        set({ tunnelStage: translateVpnStage(stage) });
+      }).catch(() => {});
     } catch (e: any) {
       console.error('Init failed:', e);
       set({ errorMessage: String(e) });
@@ -328,7 +351,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     const connectingNode = state.nodes.find((n) => n.id === targetId) || null;
     const isResidential = connectingNode?.group === 'Residential';
-    set({ status: 'connecting', selectedNodeId: targetId, connectedNode: connectingNode, connectedChainId: null, errorMessage: null });
+    set({ status: 'connecting', selectedNodeId: targetId, connectedNode: connectingNode, connectedChainId: null, errorMessage: null, tunnelStage: null });
 
     let relayParam: string | null = null;
     if (relayIdOverride !== undefined) {
@@ -875,7 +898,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    set({ status: 'connecting', connectedChainId: chainId, errorMessage: null });
+    set({ status: 'connecting', connectedChainId: chainId, errorMessage: null, tunnelStage: null });
     try {
       await api.connectChain(chainId);
       if (connectSeq !== currentConnectSeq) return;
@@ -912,7 +935,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       return;
     }
 
-    set({ status: 'connecting', connectedChainId: 'smart-group', errorMessage: null });
+    set({ status: 'connecting', connectedChainId: 'smart-group', errorMessage: null, tunnelStage: null });
     try {
       await api.connectSmartGroup(nodeIds);
       if (connectSeq !== currentConnectSeq) return;

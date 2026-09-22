@@ -62,4 +62,8 @@ export const api = {
   onTrafficTick: (callback: (stats: TrafficStats) => void): Promise<UnlistenFn> => {
     return listen<TrafficStats>('core:traffic-tick', (event) => callback(event.payload));
   },
+
+  onVpnStage: (callback: (stage: string) => void): Promise<UnlistenFn> => {
+    return listen<string>('core:vpn-stage', (event) => callback(event.payload));
+  },
 };

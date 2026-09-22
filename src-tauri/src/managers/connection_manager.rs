@@ -501,7 +501,7 @@ impl ConnectionManager {
         // 1b. Android always tunnels through VpnService (system proxy is a no-op
         // there), so trigger it and wait for the TUN fd regardless of proxy_mode.
         #[cfg(target_os = "android")]
-        let android_tun_fd: Option<i32> = match self.wait_for_android_tun_fd(current_gen).await {
+        let android_tun_fd: Option<i32> = match self.wait_for_android_tun_fd(current_gen, &app).await {
             Some(fd) => Some(fd),
             None => {
                 if self.connect_generation.load(Ordering::SeqCst) != current_gen {
@@ -783,7 +783,7 @@ impl ConnectionManager {
         let binary_path = self.locate_sing_box(&app)?;
 
         #[cfg(target_os = "android")]
-        let android_tun_fd_chain: Option<i32> = match self.wait_for_android_tun_fd(current_gen).await {
+        let android_tun_fd_chain: Option<i32> = match self.wait_for_android_tun_fd(current_gen, &app).await {
             Some(fd) => Some(fd),
             None => {
                 if self.connect_generation.load(Ordering::SeqCst) != current_gen {
@@ -1675,7 +1675,7 @@ rules:
         let binary_path = self.locate_sing_box(&app)?;
 
         #[cfg(target_os = "android")]
-        let android_tun_fd_smart: Option<i32> = match self.wait_for_android_tun_fd(current_gen).await {
+        let android_tun_fd_smart: Option<i32> = match self.wait_for_android_tun_fd(current_gen, &app).await {
             Some(fd) => Some(fd),
             None => {
                 if self.connect_generation.load(Ordering::SeqCst) != current_gen {
@@ -1828,16 +1828,21 @@ rules:
     /// On Android, trigger VpnService and wait for the TUN fd file to appear.
     /// Returns the fd number on success, or None on non-Android / proxy-only mode.
     #[cfg(target_os = "android")]
-    async fn wait_for_android_tun_fd(&self, my_gen: u64) -> Option<i32> {
+    async fn wait_for_android_tun_fd(&self, my_gen: u64, app: &AppHandle) -> Option<i32> {
         let fd_file = self.app_data_dir.join("tun_fd");
         let pending_file = self.app_data_dir.join("vpn_pending");
+        let status_file = self.app_data_dir.join("vpn_status");
         let _ = std::fs::remove_file(&fd_file);
+        // Drop the previous session's stage report so diagnostics can never
+        // show a stale stage from an earlier connect attempt.
+        let _ = std::fs::remove_file(&status_file);
 
         log::info!("Android: writing vpn_pending signal for VpnService...");
         let _ = std::fs::write(&pending_file, "1");
 
         // Up to 120s: the first connection also waits for the user to accept
         // the system VPN-permission dialog before the tunnel can be built.
+        let mut last_stage = String::new();
         for i in 0..480 {
             // Abandon promptly if the user hit terminate (disconnect bumps the
             // generation) or a newer connect superseded this one; otherwise the
@@ -1852,6 +1857,20 @@ rules:
                     log::info!("Android: received TUN fd={} after {}ms", fd, i * 250);
                     let _ = std::fs::remove_file(&fd_file);
                     return Some(fd);
+                }
+            }
+            // Surface the tunnel service's current stage to the UI every ~5s
+            // while we wait. Without this an early terminate shows nothing at
+            // all, and a stuck handshake is undiagnosable from the phone.
+            if i % 20 == 4 {
+                let stage = match std::fs::read_to_string(&status_file) {
+                    Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+                    _ => "service_starting".to_string(),
+                };
+                if stage != last_stage {
+                    last_stage = stage.clone();
+                    log::info!("Android: vpn tunnel stage -> {}", stage);
+                    let _ = app.emit("core:vpn-stage", stage);
                 }
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;

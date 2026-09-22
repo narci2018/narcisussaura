@@ -39,6 +39,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     nodes,
     connect,
     disconnect,
+    tunnelStage,
     errorMessage,
     setErrorMessage,
     authDisplayText,
@@ -242,6 +243,17 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
               </>
             )}
           </div>
+          {isConnecting && tunnelStage && (
+            <p
+              className={`text-[11px] leading-relaxed break-all px-4 ${
+                tunnelStage.includes('失败') || tunnelStage.includes('拒绝') || tunnelStage.includes('授权')
+                  ? 'text-amber-300'
+                  : 'text-blue-200/70'
+              }`}
+            >
+              {tunnelStage}
+            </p>
+          )}
           {(displayCountry || displayNodeName) && (
             <p className="text-xs text-gray-500">
               {displayCountry && <span>{displayCountry}</span>}

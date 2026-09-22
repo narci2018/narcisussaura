@@ -1,7 +1,6 @@
 package com.narcissus.aura
 
 import android.app.Activity
-import android.app.Application
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -23,7 +22,6 @@ class NarcissusVpnService : VpnService() {
         const val TAG = "NarcissusVpnService"
         const val ACTION_CONNECT = "com.narcissus.aura.VPN_CONNECT"
         const val ACTION_DISCONNECT = "com.narcissus.aura.VPN_DISCONNECT"
-        const val ACTION_STANDBY = "com.narcissus.aura.VPN_STANDBY"
         const val CHANNEL_ID = "narcissus_vpn_channel"
         const val NOTIFICATION_ID = 1001
 
@@ -35,20 +33,29 @@ class NarcissusVpnService : VpnService() {
         var isTunReady = false
             private set
 
-        fun startVpn(context: Context) {
-            val intent = Intent(context, NarcissusVpnService::class.java).apply {
-                action = ACTION_CONNECT
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+        // Reference to the app's visible Activity, maintained by the global
+        // lifecycle callbacks registered in VpnInitProvider. The VPN-consent
+        // Intent MUST be launched from it, not from the Service: a background
+        // service starting an activity is blocked (or rendered as a translucent
+        // blank dialog) by Android 10+ background-activity-start restrictions
+        // on many OEM ROMs.
+        @Volatile
+        var currentActivity: Activity? = null
+
+        @Volatile
+        private var instance: NarcissusVpnService? = null
+
+        fun notifyActivityResumed() {
+            val svc = instance ?: return
+            if (svc.tunnelRequested && svc.vpnInterface == null) {
+                Log.i(TAG, "Activity resumed, retrying VPN establishment")
+                svc.tryEstablishTunnel()
             }
         }
 
-        fun startStandby(context: Context) {
+        fun startVpn(context: Context) {
             val intent = Intent(context, NarcissusVpnService::class.java).apply {
-                action = ACTION_STANDBY
+                action = ACTION_CONNECT
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -67,16 +74,8 @@ class NarcissusVpnService : VpnService() {
     }
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var lifecycleRegistered = false
-    private var watchThread: Thread? = null
     @Volatile
     private var tunnelRequested = false
-    // Reference to the app's visible Activity. The VPN-consent Intent MUST be
-    // launched from it, not from the Service: a background service starting an
-    // activity is blocked (or rendered as a translucent blank dialog) by
-    // Android 10+ background-activity-start restrictions on many OEM ROMs.
-    @Volatile
-    private var currentActivity: Activity? = null
     // The system VPN-consent Intent, retained so the foreground notification can
     // offer it as a tappable fallback (notification taps are exempt from
     // background-activity-start restrictions on every OEM ROM).
@@ -84,31 +83,10 @@ class NarcissusVpnService : VpnService() {
     private var pendingConsentIntent: Intent? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
-        override fun onActivityResumed(activity: Activity) {
-            currentActivity = activity
-            if (tunnelRequested && vpnInterface == null) {
-                Log.i(TAG, "Activity resumed, retrying VPN establishment")
-                tryEstablishTunnel()
-            }
-        }
-        override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) {}
-        override fun onActivityStarted(activity: Activity) {}
-        override fun onActivityPaused(activity: Activity) {}
-        override fun onActivityStopped(activity: Activity) {
-            if (currentActivity === activity) currentActivity = null
-        }
-        override fun onActivitySaveInstanceState(activity: Activity, outState: android.os.Bundle) {}
-        override fun onActivityDestroyed(activity: Activity) {
-            if (currentActivity === activity) currentActivity = null
-        }
-    }
-
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        application.registerActivityLifecycleCallbacks(lifecycleCallbacks)
-        lifecycleRegistered = true
+        instance = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -122,29 +100,20 @@ class NarcissusVpnService : VpnService() {
                     Log.w(TAG, "startForeground failed (notification permission?): ${e.message}")
                 }
                 tryEstablishTunnel()
-                startPendingWatch()
             }
             ACTION_DISCONNECT -> {
                 shutdown()
             }
-            ACTION_STANDBY -> {
-                isRunning = true
-                try {
-                    startForeground(NOTIFICATION_ID, buildNotification("待机中", "Narcissus Aura VPN 服务就绪"))
-                } catch (e: Exception) {
-                    Log.w(TAG, "startForeground failed (notification permission?): ${e.message}")
-                }
-                startPendingWatch()
-            }
             else -> {
-                // No action specified (e.g. restart from ContentProvider)
+                // Started without an action (e.g. OEM restart): just hold the
+                // foreground slot. Tunnel requests arrive via ACTION_CONNECT
+                // from the process-level watchdog in VpnInitProvider.
                 isRunning = true
                 try {
                     startForeground(NOTIFICATION_ID, buildNotification("待机中", "Narcissus Aura VPN 服务就绪"))
                 } catch (e: Exception) {
                     Log.w(TAG, "startForeground failed (notification permission?): ${e.message}")
                 }
-                startPendingWatch()
             }
         }
         return START_NOT_STICKY
@@ -267,51 +236,6 @@ class NarcissusVpnService : VpnService() {
         }
     }
 
-    /**
-     * Background thread that watches for the vpn_pending signal file from Rust.
-     * When Rust is ready to connect (in TUN mode), it writes vpn_pending.
-     * This thread detects it and triggers tunnel establishment.
-     */
-    private fun startPendingWatch() {
-        if (watchThread?.isAlive == true) return
-        watchThread = Thread({
-            val pendingFile = File(dataDir, "vpn_pending")
-            val stopFile = File(dataDir, "vpn_stop")
-            while (isRunning && !Thread.currentThread().isInterrupted) {
-                // Rust writes vpn_stop when the user disconnects. Close the tunnel
-                // but keep the service alive so a later connect can re-hand it over.
-                if (stopFile.exists()) {
-                    try { stopFile.delete() } catch (_: Exception) {}
-                    if (vpnInterface != null) {
-                        Log.i(TAG, "Detected vpn_stop signal, closing tunnel")
-                        cleanupVpnInterface()
-                        writeVpnStatus("standby")
-                        updateNotification("待机中", "Narcissus Aura VPN 服务就绪")
-                    }
-                    try {
-                        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                            .cancel(NOTIFICATION_ID + 1)
-                    } catch (_: Exception) {}
-                    pendingConsentIntent = null
-                }
-                if (pendingFile.exists()) {
-                    try { pendingFile.delete() } catch (_: Exception) {}
-                    tunnelRequested = true
-                    // doEstablish() reuses a live tunnel's fd or builds a new one,
-                    // marshalled onto the main thread internally.
-                    tryEstablishTunnel()
-                }
-                try {
-                    Thread.sleep(500)
-                } catch (_: InterruptedException) {
-                    break
-                }
-            }
-        }, "vpn-pending-watch")
-        watchThread!!.isDaemon = true
-        watchThread!!.start()
-    }
-
     private fun writeTunFd(fd: Int) {
         try {
             val fdFile = File(dataDir, "tun_fd")
@@ -326,15 +250,14 @@ class NarcissusVpnService : VpnService() {
         isRunning = false
         isTunReady = false
         tunnelRequested = false
-        watchThread?.interrupt()
-        watchThread = null
         cleanupVpnInterface()
-        if (lifecycleRegistered) {
-            try {
-                application.unregisterActivityLifecycleCallbacks(lifecycleCallbacks)
-            } catch (_: Exception) {}
-            lifecycleRegistered = false
-        }
+        pendingConsentIntent = null
+        try {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .cancel(NOTIFICATION_ID + 1)
+        } catch (_: Exception) {}
+        writeVpnStatus("standby")
+        instance = null
         try { stopForeground(true) } catch (_: Exception) {}
         stopSelf()
     }
@@ -352,13 +275,8 @@ class NarcissusVpnService : VpnService() {
     override fun onDestroy() {
         isRunning = false
         isTunReady = false
-        watchThread?.interrupt()
+        instance = null
         cleanupVpnInterface()
-        if (lifecycleRegistered) {
-            try {
-                application.unregisterActivityLifecycleCallbacks(lifecycleCallbacks)
-            } catch (_: Exception) {}
-        }
         try { stopForeground(true) } catch (_: Exception) {}
         stopSelf()
         super.onDestroy()

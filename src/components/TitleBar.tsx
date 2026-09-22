@@ -3,6 +3,9 @@ import { Minus, Square, Copy, X, Shield, Smartphone, Sun, Moon } from 'lucide-re
 import { getVersion } from '@tauri-apps/api/app';
 import { api } from '../services/api';
 import { useAppStore } from '../stores/appStore';
+// Build-time version: package.json is tagged together with the release, so it
+// is a truthful fallback when the runtime getVersion() IPC is unavailable.
+import pkg from '../../package.json';
 
 interface TitleBarProps {
   /** If provided, shows a "小白模式" back button in expert mode */
@@ -22,7 +25,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
     if (!mobile) {
       api.isWindowMaximized().then(setIsMaximized).catch(() => {});
     }
-    getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion('v0.2.4'));
+    getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion(`v${pkg.version}`));
   }, []);
 
   const handleMinimize = () => {

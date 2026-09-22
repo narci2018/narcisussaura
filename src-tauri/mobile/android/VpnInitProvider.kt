@@ -23,6 +23,28 @@ class VpnInitProvider : ContentProvider() {
     override fun onCreate(): Boolean {
         val ctx = context ?: return true
         try {
+            // Persist any uncaught JVM exception (main thread or our watchdog)
+            // to crash_log so the Rust side can surface the real stack in the
+            // UI on the next launch — our only crash channel without adb.
+            val crashFile = File(ctx.dataDir, "crash_log")
+            val prevHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { t, e ->
+                try {
+                    val sw = java.io.StringWriter()
+                    e.printStackTrace(java.io.PrintWriter(sw))
+                    crashFile.writeText("线程 ${t.name}:\n$sw")
+                } catch (_: Exception) {}
+                prevHandler?.uncaughtException(t, e)
+            }
+
+            // Drop tunnel handshake files left behind by a previous (possibly
+            // crashed) session: a stale vpn_pending would otherwise make the
+            // watchdog start the VPN service and pop the consent dialog at
+            // every app launch, and a stale vpn_status poisons diagnostics.
+            for (stale in listOf("vpn_pending", "vpn_stop", "tun_fd", "vpn_status")) {
+                try { File(ctx.dataDir, stale).delete() } catch (_: Exception) {}
+            }
+
             // Expose nativeLibraryDir (the only reliably executable dir; dataDir is
             // noexec for targetSdk>=29) so the Rust side can locate lib<core>.so.
             File(ctx.dataDir, "native_lib_dir").writeText(ctx.applicationInfo.nativeLibraryDir)

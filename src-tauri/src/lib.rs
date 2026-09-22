@@ -32,6 +32,35 @@ async fn start_deep_inspection(nodes: Vec<UnifiedNode>, state: State<'_, AppStat
 }
 
 #[tauri::command]
+async fn get_crash_report(app: AppHandle) -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        use tauri::Manager;
+        let dir = app.path().app_data_dir().ok()?;
+        let mut parts: Vec<String> = Vec::new();
+        for name in ["crash_log", "panic_log"] {
+            let f = dir.join(name);
+            if let Ok(s) = std::fs::read_to_string(&f) {
+                if !s.trim().is_empty() {
+                    parts.push(format!("[{}] {}", name, s.trim()));
+                }
+                let _ = std::fs::remove_file(&f);
+            }
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("\n"))
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        None
+    }
+}
+
+#[tauri::command]
 #[allow(unused_variables)]
 async fn get_machine_id(app: AppHandle) -> Result<String, String> {
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -473,6 +502,17 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
             let _ = std::fs::create_dir_all(&app_data_dir);
 
+            // Android has no adb access for us, so a Rust panic must leave a
+            // readable trace behind: write it to panic_log, surfaced in the UI
+            // on the next launch via get_crash_report.
+            #[cfg(target_os = "android")]
+            {
+                let panic_dir = app_data_dir.clone();
+                std::panic::set_hook(Box::new(move |info| {
+                    let _ = std::fs::write(panic_dir.join("panic_log"), format!("{info}"));
+                }));
+            }
+
             if let Some(parent) = app_data_dir.parent() {
                 let old_dir = parent.join("com.auravpn.client");
                 if old_dir.exists() {
@@ -570,6 +610,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![connect_smart_group, 
             get_machine_id,
+            get_crash_report,
             request_auth,
             get_connection_status,
             get_connected_node,
@@ -708,9 +749,12 @@ async fn connect_smart_group(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    let total = node_ids.len();
     let mut nodes = Vec::new();
+    let mut found = 0usize;
     for id in node_ids {
         if let Some(node) = state.node_manager.get_by_id(&id) {
+            found += 1;
             // Smart group strictly accepts regular subscription nodes only (Vless, Vmess, Trojan, Shadowsocks, Hysteria2)
             // Advanced proxy modes (Residential, VPNGate, Psiphon, MegaV, WARP, LocalProxy) are excluded
             let is_special = match node.protocol {
@@ -735,9 +779,17 @@ async fn connect_smart_group(
             }
         }
     }
-    
+
     if nodes.is_empty() {
-        return Err("当前没有可用的常规订阅节点供智能最优选路连接".to_string());
+        // Distinguish "backend lost the node list" from "frontend sent stale ids"
+        // from "all filtered as special" — each has a different root cause, and
+        // the user has no way to inspect internals without this breakdown.
+        return Err(format!(
+            "当前没有可用的常规订阅节点供智能最优选路连接（前端传入{}个ID；后端节点库找到{}个；被特殊模式排除{}个）",
+            total,
+            found,
+            found.saturating_sub(nodes.len())
+        ));
     }
     
     let settings = state.settings.read().clone();

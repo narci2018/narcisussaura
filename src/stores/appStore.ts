@@ -44,6 +44,8 @@ interface AppStore {
   testingChainIds: string[];
   errorMessage: string | null;
   tunnelStage: string | null;
+  crashReport: string | null;
+  dismissCrashReport: () => void;
   inspectProgress: { current: number; total: number; status: string } | null;
   inspectReport: InspectReport | null;
   closeInspectReport: () => void;
@@ -208,6 +210,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   testingChainIds: [],
   errorMessage: null,
   tunnelStage: null,
+  crashReport: null,
   inspectProgress: null,
   inspectReport: null,
   
@@ -311,6 +314,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
       api.onVpnStage((stage) => {
         set({ tunnelStage: translateVpnStage(stage) });
       }).catch(() => {});
+
+      // Surface a captured crash from the previous run (Android only; the
+      // backend deletes the log after reading so it shows exactly once).
+      api.getCrashReport().then((report) => {
+        if (report) {
+          console.error('Previous run crashed:\n', report);
+          set({ crashReport: report });
+        }
+      }).catch(() => {});
     } catch (e: any) {
       console.error('Init failed:', e);
       set({ errorMessage: String(e) });
@@ -326,6 +338,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSortMode: (sortMode) => set({ sortMode, sortBySpeed: sortMode === 'speed' }),
   setSelectedNodeId: (selectedNodeId) => set({ selectedNodeId }),
   setErrorMessage: (errorMessage) => set({ errorMessage }),
+  dismissCrashReport: () => set({ crashReport: null }),
   closeInspectReport: () => set({ inspectReport: null }),
 
   connect: async (overrideId, relayIdOverride) => {

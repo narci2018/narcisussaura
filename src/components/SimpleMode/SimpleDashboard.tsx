@@ -40,6 +40,8 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     connect,
     disconnect,
     tunnelStage,
+    crashReport,
+    dismissCrashReport,
     errorMessage,
     setErrorMessage,
     authDisplayText,
@@ -147,6 +149,20 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
           <span>专家模式</span>
         </button>
       </div>
+
+      {/* Crash report from previous run (persists until dismissed) */}
+      {crashReport && (
+        <div className="mx-4 mb-2 p-3 rounded-2xl bg-[#1c1216] border border-red-500/50 text-red-300 text-xs flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-red-300 mb-0.5">上次运行异常退出（崩溃日志，请截图反馈）</p>
+            <p className="font-mono text-[10px] leading-relaxed break-all whitespace-pre-wrap text-red-200 max-h-48 overflow-y-auto">{crashReport}</p>
+          </div>
+          <button onClick={dismissCrashReport} className="shrink-0 text-gray-500 hover:text-gray-300">
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Error banner */}
       {errorMessage && (

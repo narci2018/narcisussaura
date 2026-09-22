@@ -66,4 +66,6 @@ export const api = {
   onVpnStage: (callback: (stage: string) => void): Promise<UnlistenFn> => {
     return listen<string>('core:vpn-stage', (event) => callback(event.payload));
   },
+
+  getCrashReport: () => invoke<string | null>('get_crash_report'),
 };

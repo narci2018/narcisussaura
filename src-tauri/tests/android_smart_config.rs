@@ -108,6 +108,20 @@ fn android_smart_group_config_is_valid_json_structure() {
     for ob in selector["outbounds"].as_array().unwrap() {
         assert!(tags.contains(&ob.as_str().unwrap()), "selector references missing tag {ob}");
     }
+    // Probe hosts must resolve via dns-direct: if their resolution rode the
+    // pinned member's tunnel, a node that RSTs DNS would make every member
+    // fail the probe regardless of its real health.
+    let dns_rules = v["dns"]["rules"].as_array().unwrap();
+    let probe_rule = dns_rules
+        .iter()
+        .find(|r| r["domain"].as_array().map(|d| d.iter().any(|x| x == "cp.cloudflare.com")).unwrap_or(false))
+        .expect("probe domains must resolve outside the tunnel");
+    assert_eq!(probe_rule["server"], "dns-direct");
+    // dns-remote must be DoH on 443, not DoT 853: 443-only nodes RST 853.
+    let dns_servers = v["dns"]["servers"].as_array().unwrap();
+    let remote = dns_servers.iter().find(|s| s["tag"] == "dns-remote").unwrap();
+    assert_eq!(remote["type"], "https");
+    assert_eq!(remote["path"], "/dns-query");
     write_checked(&patched, "android_smart_config.json");
 
     // Default (SystemProxy) settings path too — what the phone actually uses.

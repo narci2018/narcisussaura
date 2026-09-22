@@ -1621,7 +1621,7 @@ rules:
         let proxy = reqwest::Proxy::all(format!("http://127.0.0.1:{}", mixed_port)).ok()?;
         let probe = reqwest::Client::builder()
             .proxy(proxy)
-            .timeout(std::time::Duration::from_secs(4))
+            .timeout(std::time::Duration::from_secs(3))
             .build()
             .ok()?;
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(75);
@@ -1646,15 +1646,24 @@ rules:
                 "https://cp.cloudflare.com/generate_204",
                 "https://www.google.com/generate_204",
             ] {
-                if cancelled() {
-                    return None;
-                }
-                if let Ok(resp) = probe.get(url).send().await {
-                    let code = resp.status().as_u16();
-                    if code == 204 || code == 200 || code == 302 {
-                        working = true;
-                        break;
+                // Accept 204 only: a full CONNECT + TLS + HTTP round trip proves
+                // the node carries real traffic, while a 302 can come back from a
+                // captive portal or a node that relays just the first handshake.
+                // The first stream through a freshly pinned node often fails its
+                // TLS handshake, so one retry before condemning the member.
+                for _ in 0..2 {
+                    if cancelled() {
+                        return None;
                     }
+                    if let Ok(resp) = probe.get(url).send().await {
+                        if resp.status().as_u16() == 204 {
+                            working = true;
+                            break;
+                        }
+                    }
+                }
+                if working {
+                    break;
                 }
             }
             if working {

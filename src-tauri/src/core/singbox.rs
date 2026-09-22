@@ -693,6 +693,16 @@ impl SingBoxAdapter {
 
         // Assemble DNS rules for split resolution
         let mut dns_rules = Vec::new();
+        // The connectivity-probe hosts must resolve OUTSIDE the tunnel:
+        // dns-remote's DoH itself detours through the currently selected member,
+        // so a dead/pathological node would RST the DNS query and every probe
+        // would fail with "lookup failed" — misjudging healthy nodes as dead
+        // (reproduced offline with a dead node pinned). Direct resolution
+        // decouples the probe outcome from the node under test.
+        dns_rules.push(json!({
+            "domain": ["cp.cloudflare.com", "www.google.com", "one.one.one.one", "ip-api.com"],
+            "server": "dns-direct"
+        }));
         if !block_dns_tags.is_empty() {
             dns_rules.push(json!({
                 "rule_set": block_dns_tags,

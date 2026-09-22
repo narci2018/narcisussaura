@@ -509,7 +509,7 @@ impl ConnectionManager {
                 }
                 *self.status.lock() = ConnectionStatus::Error;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
+                return Err(format!("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}", self.android_vpn_diag()));
             }
         };
         #[cfg(not(target_os = "android"))]
@@ -791,7 +791,7 @@ impl ConnectionManager {
                 }
                 *self.status.lock() = ConnectionStatus::Error;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
+                return Err(format!("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}", self.android_vpn_diag()));
             }
         };
         #[cfg(not(target_os = "android"))]
@@ -1684,7 +1684,7 @@ rules:
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_chain.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
+                return Err(format!("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}", self.android_vpn_diag()));
             }
         };
         #[cfg(not(target_os = "android"))]
@@ -1857,8 +1857,20 @@ rules:
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         let _ = std::fs::remove_file(&pending_file);
-        log::error!("Android: timed out waiting for TUN fd from VpnService (120s)");
+        let diag = self.android_vpn_diag();
+        log::error!("Android: timed out waiting for TUN fd from VpnService (120s). {}", diag);
         None
+    }
+
+    /// Read the VpnService's self-reported stage (written to vpn_status by the
+    /// Kotlin side) so a stuck tunnel surfaces an actionable reason in-app
+    /// instead of a generic timeout.
+    #[cfg(target_os = "android")]
+    fn android_vpn_diag(&self) -> String {
+        match std::fs::read_to_string(self.app_data_dir.join("vpn_status")) {
+            Ok(s) if !s.trim().is_empty() => format!("（隧道服务状态: {}）", s.trim()),
+            _ => "（隧道服务无响应：VpnService 可能已被系统冻结，请在系统设置中允许本应用无限制/自启动后台运行后重试）".to_string(),
+        }
     }
 
     /// Android TUN mode: a standalone sing-box process cannot open /dev/net/tun

@@ -10,6 +10,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.File
@@ -75,6 +77,12 @@ class NarcissusVpnService : VpnService() {
     // Android 10+ background-activity-start restrictions on many OEM ROMs.
     @Volatile
     private var currentActivity: Activity? = null
+    // The system VPN-consent Intent, retained so the foreground notification can
+    // offer it as a tappable fallback (notification taps are exempt from
+    // background-activity-start restrictions on every OEM ROM).
+    @Volatile
+    private var pendingConsentIntent: Intent? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
@@ -143,35 +151,53 @@ class NarcissusVpnService : VpnService() {
     }
 
     /**
-     * Attempt to establish the VPN tunnel immediately.
-     * If user consent is required (prepare() returns Intent), launches the consent dialog.
+     * Attempt to establish the VPN tunnel. Always marshalled onto the main
+     * thread: the consent dialog must be started from a UI context, and calling
+     * Activity.startActivity from the background watch thread is unreliable.
      */
     private fun tryEstablishTunnel() {
-        if (vpnInterface != null) return
+        mainHandler.post { doEstablish() }
+    }
+
+    private fun doEstablish() {
+        // Reuse fast path: a live tunnel already exists (e.g. reconnect), just
+        // hand its fd back to Rust which is polling for it.
+        val existing = vpnInterface
+        if (existing != null) {
+            isTunReady = true
+            writeTunFd(existing.fd)
+            writeVpnStatus("established:${existing.fd}")
+            return
+        }
 
         try {
             val prepareIntent = prepare(this)
             if (prepareIntent != null) {
+                pendingConsentIntent = prepareIntent
+                writeVpnStatus("consent_required")
                 val act = currentActivity
                 if (act != null && !act.isFinishing) {
-                    // Launch consent from the visible Activity: it is exempt from
-                    // background-activity-start limits, so the dialog renders
-                    // correctly. onActivityResumed re-triggers this path once the
+                    // Launch consent from the visible Activity on the main thread:
+                    // exempt from background-activity-start limits, so the dialog
+                    // renders correctly. onActivityResumed re-triggers once the
                     // user allows or denies.
-                    Log.i(TAG, "VPN consent required, launching dialog from Activity")
+                    Log.i(TAG, "VPN consent required, launching dialog from Activity (main thread)")
                     try {
                         act.startActivity(prepareIntent)
                         return
                     } catch (e: Exception) {
-                        Log.w(TAG, "Activity launch failed, falling back to service: ${e.message}")
+                        Log.w(TAG, "Activity launch failed, using notification fallback: ${e.message}")
                     }
+                } else {
+                    Log.i(TAG, "No foreground Activity, using notification fallback")
                 }
-                Log.i(TAG, "VPN consent required, no foreground Activity, launching from service")
-                prepareIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(prepareIntent)
+                // Fallback: surface the consent as a tappable notification. A tap is
+                // user-initiated, so it bypasses BAL on every ROM.
+                showConsentNotification()
                 return
             }
 
+            writeVpnStatus("establishing")
             val builder = Builder()
                 .setSession("Narcissus Aura")
                 .setMtu(9000)
@@ -192,14 +218,52 @@ class NarcissusVpnService : VpnService() {
             if (vpnInterface != null) {
                 val fd = vpnInterface!!.fd
                 isTunReady = true
+                pendingConsentIntent = null
                 writeTunFd(fd)
+                writeVpnStatus("established:$fd")
                 updateNotification("正在运行", "Narcissus Aura VPN 已连接")
                 Log.i(TAG, "VPN TUN established: fd=$fd")
             } else {
+                writeVpnStatus("establish_failed:null")
                 Log.e(TAG, "builder.establish() returned null")
             }
         } catch (e: Exception) {
+            writeVpnStatus("error:${e.javaClass.simpleName}:${e.message}")
             Log.e(TAG, "Failed to establish VPN TUN", e)
+        }
+    }
+
+    private fun writeVpnStatus(status: String) {
+        try {
+            File(dataDir, "vpn_status").writeText(status)
+            Log.i(TAG, "vpn_status -> $status")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to write vpn_status", e)
+        }
+    }
+
+    private fun showConsentNotification() {
+        val consent = pendingConsentIntent ?: return
+        try {
+            val pi = PendingIntent.getActivity(
+                this, 100,
+                Intent(consent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                else PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val notification = Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("需要允许 VPN 连接")
+                .setContentText("Narcissus Aura 正在等待你的 VPN 权限授权，点击此处完成")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentIntent(pi)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .build()
+            manager.notify(NOTIFICATION_ID + 1, notification)
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to show consent notification", e)
         }
     }
 
@@ -221,25 +285,21 @@ class NarcissusVpnService : VpnService() {
                     if (vpnInterface != null) {
                         Log.i(TAG, "Detected vpn_stop signal, closing tunnel")
                         cleanupVpnInterface()
+                        writeVpnStatus("standby")
                         updateNotification("待机中", "Narcissus Aura VPN 服务就绪")
                     }
+                    try {
+                        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                            .cancel(NOTIFICATION_ID + 1)
+                    } catch (_: Exception) {}
+                    pendingConsentIntent = null
                 }
                 if (pendingFile.exists()) {
                     try { pendingFile.delete() } catch (_: Exception) {}
                     tunnelRequested = true
-                    val existing = vpnInterface
-                    if (existing != null) {
-                        // Reconnect fast path: Rust consumed and deleted the previous
-                        // tun_fd, so hand the already-open fd back immediately instead
-                        // of waiting for a fresh establishment (which would never fire
-                        // because the interface is non-null).
-                        Log.i(TAG, "Detected vpn_pending with live tunnel, re-handing fd=${existing.fd}")
-                        isTunReady = true
-                        writeTunFd(existing.fd)
-                    } else {
-                        Log.i(TAG, "Detected vpn_pending signal, establishing tunnel")
-                        tryEstablishTunnel()
-                    }
+                    // doEstablish() reuses a live tunnel's fd or builds a new one,
+                    // marshalled onto the main thread internally.
+                    tryEstablishTunnel()
                 }
                 try {
                     Thread.sleep(500)

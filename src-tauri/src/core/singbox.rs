@@ -693,7 +693,9 @@ impl SingBoxAdapter {
         }
 
         let mut route_obj = json!({
-            "auto_detect_interface": true,
+            // Android: netlink is SELinux-banned for app uids; true makes sing-box
+            // fatal at startup (route/network.go). The VpnService holds the tunnel.
+            "auto_detect_interface": !cfg!(target_os = "android"),
             "default_domain_resolver": "dns-direct",
             "rules": rules
         });

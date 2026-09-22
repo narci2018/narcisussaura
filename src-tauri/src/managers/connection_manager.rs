@@ -498,19 +498,16 @@ impl ConnectionManager {
         // 1. Locate sing-box binary
         let binary_path = self.locate_sing_box(&app)?;
 
-        // 1b. On Android TUN mode, trigger VpnService and wait for TUN fd
+        // 1b. Android always tunnels through VpnService (system proxy is a no-op
+        // there), so trigger it and wait for the TUN fd regardless of proxy_mode.
         #[cfg(target_os = "android")]
-        let android_tun_fd: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
-            match self.wait_for_android_tun_fd().await {
-                Some(fd) => Some(fd),
-                None => {
-                    *self.status.lock() = ConnectionStatus::Error;
-                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                    return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
-                }
+        let android_tun_fd: Option<i32> = match self.wait_for_android_tun_fd().await {
+            Some(fd) => Some(fd),
+            None => {
+                *self.status.lock() = ConnectionStatus::Error;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
             }
-        } else {
-            None
         };
         #[cfg(not(target_os = "android"))]
         let android_tun_fd: Option<i32> = None;
@@ -780,17 +777,13 @@ impl ConnectionManager {
         let binary_path = self.locate_sing_box(&app)?;
 
         #[cfg(target_os = "android")]
-        let android_tun_fd_chain: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
-            match self.wait_for_android_tun_fd().await {
-                Some(fd) => Some(fd),
-                None => {
-                    *self.status.lock() = ConnectionStatus::Error;
-                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                    return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
-                }
+        let android_tun_fd_chain: Option<i32> = match self.wait_for_android_tun_fd().await {
+            Some(fd) => Some(fd),
+            None => {
+                *self.status.lock() = ConnectionStatus::Error;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
             }
-        } else {
-            None
         };
         #[cfg(not(target_os = "android"))]
         let android_tun_fd_chain: Option<i32> = None;
@@ -1673,18 +1666,14 @@ rules:
         let binary_path = self.locate_sing_box(&app)?;
 
         #[cfg(target_os = "android")]
-        let android_tun_fd_smart: Option<i32> = if settings.proxy_mode == ProxyMode::TunMode {
-            match self.wait_for_android_tun_fd().await {
-                Some(fd) => Some(fd),
-                None => {
-                    *self.status.lock() = ConnectionStatus::Error;
-                    *self.connected_chain.lock() = None;
-                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                    return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
-                }
+        let android_tun_fd_smart: Option<i32> = match self.wait_for_android_tun_fd().await {
+            Some(fd) => Some(fd),
+            None => {
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试".to_string());
             }
-        } else {
-            None
         };
         #[cfg(not(target_os = "android"))]
         let android_tun_fd_smart: Option<i32> = None;

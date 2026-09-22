@@ -41,7 +41,7 @@ class VpnInitProvider : ContentProvider() {
             // crashed) session: a stale vpn_pending would otherwise make the
             // watchdog start the VPN service and pop the consent dialog at
             // every app launch, and a stale vpn_status poisons diagnostics.
-            for (stale in listOf("vpn_pending", "vpn_stop", "tun_fd", "vpn_status")) {
+            for (stale in listOf("vpn_pending", "vpn_stop", "tun_fd", "vpn_status", "vpn_consent")) {
                 try { File(ctx.dataDir, stale).delete() } catch (_: Exception) {}
             }
 
@@ -141,9 +141,17 @@ class VpnInitProvider : ContentProvider() {
             ""
         }
         val act = NarcissusVpnService.currentActivity
-        val needsConsent = act != null &&
-            NarcissusVpnService.tunnelPending() &&
-            status.startsWith("consent")
+        // Primary gate is the FILE marker Rust writes for the whole duration of
+        // the tunnel wait: MIUI kills background services, and a condition that
+        // required the live service (tunnelPending) hid the button exactly on
+        // the devices that need it most (v0.2.85 field report). The
+        // service-state check stays as a secondary trigger.
+        val markerUp = try {
+            File(appCtx.dataDir, "vpn_consent").exists()
+        } catch (_: Exception) {
+            false
+        }
+        val needsConsent = act != null && markerUp && !status.startsWith("established")
         if (!needsConsent) {
             removeConsentOverlay()
             return
@@ -158,8 +166,15 @@ class VpnInitProvider : ContentProvider() {
             setOnClickListener {
                 val a = NarcissusVpnService.currentActivity ?: return@setOnClickListener
                 try {
+                    // Revive the (possibly MIUI-killed) service first: the
+                    // watchdog picks the signal up within 400ms and a restarted
+                    // service establishes the tunnel immediately when consent
+                    // is already granted.
+                    File(appCtx.dataDir, "vpn_pending").writeText("1")
                     val prep = android.net.VpnService.prepare(a)
                     if (prep != null) {
+                        // Input-bound launch: MIUI's background-dialog policy
+                        // cannot drop this.
                         a.startActivity(prep)
                     } else {
                         // Consent already granted (e.g. "always allow"): just

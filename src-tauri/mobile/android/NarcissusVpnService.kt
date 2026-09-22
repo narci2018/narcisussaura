@@ -67,6 +67,17 @@ class NarcissusVpnService : VpnService() {
             return svc.tunnelRequested && svc.vpnInterface == null
         }
 
+        // Process-scope companion so a MIUI service kill + watchdog revival
+        // (same process) cannot re-arm the auto dialog and storm the user:
+        // the drop-prone auto launch happens at most once per app process.
+        @Volatile
+        var consentAutoAttempted = false
+            private set
+
+        fun markConsentAutoAttempted() {
+            consentAutoAttempted = true
+        }
+
         fun startVpn(context: Context) {
             val intent = Intent(context, NarcissusVpnService::class.java).apply {
                 action = ACTION_CONNECT
@@ -108,13 +119,6 @@ class NarcissusVpnService : VpnService() {
     // a resume-triggered re-entry can detect a user denial instead of looping.
     @Volatile
     private var consentDialogShown = false
-    // The AUTO consent launch (a startActivity not bound to user input) is
-    // silently dropped by MIUI's background-dialog policy: it resumes the
-    // activity instantly with a cancel, which reads back as a denial. That
-    // attempt must therefore happen exactly once per connect; afterwards the
-    // input-bound native orange button is the reliable consent path.
-    @Volatile
-    private var consentAutoAttempted = false
     // The system VPN-consent Intent, retained so the foreground notification can
     // offer it as a tappable fallback (notification taps are exempt from
     // background-activity-start restrictions on every OEM ROM).
@@ -157,11 +161,15 @@ class NarcissusVpnService : VpnService() {
         when (intent?.action) {
             ACTION_CONNECT -> {
                 isRunning = true
+                // A watchdog re-signal (Rust re-writes vpn_pending every ~4s so
+                // a MIUI-killed service comes back) re-enters here with
+                // tunnelRequested already true. Only a genuinely fresh attempt
+                // clears the dialog bookkeeping; the auto-dialog allowance is
+                // process-scope (companion) so revivals can never storm it.
+                if (!tunnelRequested) {
+                    consentDialogShown = false
+                }
                 tunnelRequested = true
-                // A fresh connect attempt earns a fresh dialog allowance (the
-                // native overlay button stays available meanwhile).
-                consentDialogShown = false
-                consentAutoAttempted = false
                 if (!resolveForegroundPromise("正在连接", "Narcissus Aura VPN 正在建立连接...")) {
                     // We hold a startForegroundService() promise we could not keep:
                     // stopSelf() already ran before the 5s deadline. The Rust side
@@ -225,7 +233,7 @@ class NarcissusVpnService : VpnService() {
                     writeVpnStatus("consent_denied")
                     return
                 }
-                consentAutoAttempted = true
+                markConsentAutoAttempted()
                 pendingConsentIntent = prepareIntent
                 writeVpnStatus("consent_required")
                 val act = currentActivity

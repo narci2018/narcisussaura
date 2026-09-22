@@ -2087,11 +2087,26 @@ rules:
 
     /// On Android, trigger VpnService and wait for the TUN fd file to appear.
     /// Returns the fd number on success, or None on non-Android / proxy-only mode.
+    ///
+    /// The whole handshake is FILE-DRIVEN on purpose. The v0.2.85 field report
+    /// (status frozen at consent_dialog_opened, no orange button, no progress)
+    /// showed MIUI can silently drop the auto consent dialog AND kill the
+    /// VpnService afterwards, which broke every in-process signal the button
+    /// used to depend on. So:
+    /// - `vpn_consent` marker: while it exists the Kotlin overlay poller shows
+    ///   the input-bound orange consent button unconditionally (service death
+    ///   cannot hide it);
+    /// - `vpn_pending` is re-signalled every ~4s: if the service is killed
+    ///   mid-handshake the app-process watchdog starts it again, and a
+    ///   re-started service that finds consent already granted establishes
+    ///   the tunnel immediately.
     #[cfg(target_os = "android")]
     async fn wait_for_android_tun_fd(&self, my_gen: u64, app: &AppHandle) -> Option<i32> {
         let fd_file = self.app_data_dir.join("tun_fd");
         let pending_file = self.app_data_dir.join("vpn_pending");
         let status_file = self.app_data_dir.join("vpn_status");
+        let consent_marker = self.app_data_dir.join("vpn_consent");
+        let stop_file = self.app_data_dir.join("vpn_stop");
         let _ = std::fs::remove_file(&fd_file);
         // Drop the previous session's stage report so diagnostics can never
         // show a stale stage from an earlier connect attempt.
@@ -2099,6 +2114,9 @@ rules:
 
         log::info!("Android: writing vpn_pending signal for VpnService...");
         let _ = std::fs::write(&pending_file, "1");
+        // Show the native consent button from t=0, regardless of what the
+        // service or the system dialog do next.
+        let _ = std::fs::write(&consent_marker, "1");
 
         // Up to 120s: the first connection also waits for the user to accept
         // the system VPN-permission dialog before the tunnel can be built.
@@ -2109,6 +2127,7 @@ rules:
             // UI is frozen on "Connecting" for the full 120s and cannot be stopped.
             if self.connect_generation.load(Ordering::SeqCst) != my_gen {
                 let _ = std::fs::remove_file(&pending_file);
+                let _ = std::fs::remove_file(&consent_marker);
                 log::info!("Android: tun fd wait cancelled (generation changed)");
                 return None;
             }
@@ -2116,8 +2135,19 @@ rules:
                 if let Ok(fd) = content.trim().parse::<i32>() {
                     log::info!("Android: received TUN fd={} after {}ms", fd, i * 250);
                     let _ = std::fs::remove_file(&fd_file);
+                    let _ = std::fs::remove_file(&consent_marker);
+                    // The periodic re-signal may have raced the fd write; drop
+                    // it so the watchdog does not restart a handshake that is
+                    // already complete.
+                    let _ = std::fs::remove_file(&pending_file);
                     return Some(fd);
                 }
+            }
+            // Self-heal the service side: MIUI kills background services freely.
+            // Re-signalling makes the watchdog start it again; the service
+            // treats a re-entry as the same attempt (no consent-dialog storm).
+            if i % 16 == 8 {
+                let _ = std::fs::write(&pending_file, "1");
             }
             // Surface the tunnel service's current stage to the UI every ~5s
             // while we wait. Without this an early terminate shows nothing at
@@ -2141,10 +2171,11 @@ rules:
                     || stage.starts_with("service_start_failed")
                 {
                     let _ = std::fs::remove_file(&pending_file);
+                    let _ = std::fs::remove_file(&consent_marker);
                     // Tell the service to drop tunnelRequested; otherwise it
                     // re-raises the consent flow on every activity resume and
                     // the native consent button lingers on a dead attempt.
-                    let _ = std::fs::write(self.app_data_dir.join("vpn_stop"), "1");
+                    let _ = std::fs::write(&stop_file, "1");
                     log::error!("Android: VpnService reported fatal stage {}, abandoning", stage);
                     let _ = app.emit("core:vpn-stage", stage.clone());
                     return None;
@@ -2158,7 +2189,8 @@ rules:
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         let _ = std::fs::remove_file(&pending_file);
-        let _ = std::fs::write(self.app_data_dir.join("vpn_stop"), "1");
+        let _ = std::fs::remove_file(&consent_marker);
+        let _ = std::fs::write(&stop_file, "1");
         let diag = self.android_vpn_diag();
         log::error!("Android: timed out waiting for TUN fd from VpnService (120s). {}", diag);
         None

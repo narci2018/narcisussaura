@@ -42,11 +42,22 @@ def inject_vpn_components():
                 content = content.replace("<application", f"{perm_block}\n\n    <application", 1)
 
         # Add VpnService inside <application>
+        # SUPPORTS_ALWAYS_ON is NOT optional: MIUI's Settings → VPN app list
+        # (and AOSP's always-on picker) only surface VpnService declarations
+        # carrying this metadata. Without it our app never appears in the
+        # system VPN page (v0.2.88 field report), which is the one consent
+        # entry point MIUI cannot swallow — the dialog there is raised BY
+        # Settings itself. android:label feeds the consent dialog title.
         service_entry = """        <service
             android:name=".NarcissusVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
+            android:enabled="true"
             android:exported="false"
+            android:label="Narcissus Aura"
             android:foregroundServiceType="specialUse">
+            <meta-data
+                android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+                android:value="true" />
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="VPN proxy connection and traffic routing" />

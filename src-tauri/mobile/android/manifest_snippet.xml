@@ -19,8 +19,16 @@
         <service
             android:name=".NarcissusVpnService"
             android:permission="android.permission.BIND_VPN_SERVICE"
+            android:enabled="true"
             android:exported="false"
+            android:label="Narcissus Aura"
             android:foregroundServiceType="specialUse">
+            <!-- REQUIRED for the app to appear in Settings -> VPN (MIUI lists
+                 only VpnService declarations with this metadata); that page is
+                 the consent entry point MIUI cannot swallow. -->
+            <meta-data
+                android:name="android.net.VpnService.SUPPORTS_ALWAYS_ON"
+                android:value="true" />
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="VPN proxy connection and traffic routing" />

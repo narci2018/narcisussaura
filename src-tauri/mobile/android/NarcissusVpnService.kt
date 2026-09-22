@@ -242,7 +242,11 @@ class NarcissusVpnService : VpnService() {
                     // normal app-initiated cross-package launch.
                     Log.i(TAG, "VPN consent required, launching dialog from Activity (main thread)")
                     try {
-                        act.startActivity(Intent(prepareIntent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        // Exactly the v2rayNG pattern: plain startActivity from
+                        // the resumed Activity, NO NEW_TASK. MIUI treats a
+                        // NEW_TASK consent launch differently (it never
+                        // surfaces), while the plain in-task launch renders.
+                        act.startActivity(Intent(prepareIntent))
                         consentDialogShown = true
                         writeVpnStatus("consent_dialog_opened")
                         return

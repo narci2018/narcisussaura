@@ -1858,6 +1858,11 @@ rules:
     /// SOCKS5 mixed port. Sniff/resolve rule actions (sing-box 1.13+ replacement
     /// for the removed inbound `sniff` fields) recover domains from the raw-IP
     /// tun destinations so domain rules keep working.
+    ///
+    /// `auto_detect_interface` must also be off: it forces sing-box to open a
+    /// netlink socket at startup, which Android SELinux bans for app uids and
+    /// turns into a fatal "create network monitor" error. With it false, sing-box
+    /// tolerates the missing monitor and starts normally (route/network.go).
     #[cfg(target_os = "android")]
     fn patch_android_relay_config(config_str: &str) -> Result<String, String> {
         let mut config: serde_json::Value = serde_json::from_str(config_str)
@@ -1866,21 +1871,23 @@ rules:
         if let Some(inbounds) = config.get_mut("inbounds").and_then(|v| v.as_array_mut()) {
             inbounds.retain(|ib| ib.get("type").and_then(|v| v.as_str()) != Some("tun"));
         }
-        if let Some(rules) = config
-            .get_mut("route")
-            .and_then(|r| r.get_mut("rules"))
-            .and_then(|v| v.as_array_mut())
-        {
-            rules.insert(
-                0,
-                serde_json::json!({"action": "resolve"}),
+        if let Some(route) = config.get_mut("route").and_then(|v| v.as_object_mut()) {
+            route.insert(
+                "auto_detect_interface".to_string(),
+                serde_json::json!(false),
             );
-            rules.insert(
-                0,
-                serde_json::json!({"action": "sniff", "protocol": ["tls", "http", "quic"]}),
-            );
+            if let Some(rules) = route.get_mut("rules").and_then(|v| v.as_array_mut()) {
+                rules.insert(
+                    0,
+                    serde_json::json!({"action": "resolve"}),
+                );
+                rules.insert(
+                    0,
+                    serde_json::json!({"action": "sniff", "protocol": ["tls", "http", "quic"]}),
+                );
+            }
         }
-        log::info!("Android: stripped tun inbound, added sniff/resolve route rules");
+        log::info!("Android: stripped tun inbound, disabled auto_detect_interface, added sniff/resolve rules");
 
         serde_json::to_string(&config).map_err(|e| format!("Failed to serialize patched config: {}", e))
     }

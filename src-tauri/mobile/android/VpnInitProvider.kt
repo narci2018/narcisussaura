@@ -15,9 +15,24 @@ class VpnInitProvider : ContentProvider() {
 
     companion object {
         private const val TAG = "VpnInitProvider"
+        private const val CONSENT_REQUEST_CODE = 0x5650
 
         @Volatile
         var watchdogStarted = false
+
+        // Consent state, owned by the watchdog (v2rayNG ordering: the dialog
+        // is launched from the foreground Activity BEFORE the service starts,
+        // via startActivityForResult — the only consent path that has ever
+        // worked on stock Android and MIUI in the field; every service-side
+        // launch attempt (v0.2.84-89) was silently swallowed by MIUI).
+        @Volatile
+        var consentAttempts = 0
+
+        @Volatile
+        var awaitingConsentResume = false
+
+        @Volatile
+        var consentDialogReturned = false
     }
 
     override fun onCreate(): Boolean {
@@ -74,17 +89,24 @@ class VpnInitProvider : ContentProvider() {
             // so startForegroundService is always allowed).
             startVpnWatchdog(ctx.applicationContext)
 
-            // Track the visible Activity process-wide: the service's one
-            // consent-dialog allowance launches from it, and its dismissal
-            // resumes the Activity, which re-triggers tunnel establishment.
-            // (The watchdog also refreshes "connect hangs with zero UI
-            // feedback" by consuming Rust's vpn_pending signal.)
+            // Track the visible Activity process-wide, and fast-path the
+            // consent round trip: when the user returns from the system
+            // VPN-consent dialog, immediately re-signal vpn_pending so the
+            // watchdog builds the tunnel within 400ms instead of waiting for
+            // Rust's next 4s re-signal.
             (ctx.applicationContext as? Application)?.registerActivityLifecycleCallbacks(
                 object : Application.ActivityLifecycleCallbacks {
                     override fun onActivityResumed(activity: Activity) {
                         NarcissusVpnService.currentActivity = activity
                         NarcissusVpnService.notifyActivityResumed()
                         requestNotificationPermissionOnce(activity)
+                        if (awaitingConsentResume) {
+                            awaitingConsentResume = false
+                            consentDialogReturned = true
+                            try {
+                                File(ctx.dataDir, "vpn_pending").writeText("again")
+                            } catch (_: Exception) {}
+                        }
                     }
                     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
                     override fun onActivityStarted(activity: Activity) {}
@@ -103,13 +125,12 @@ class VpnInitProvider : ContentProvider() {
                 }
             )
 
-            // Consent is raised by the SETTINGS app, never from our own
-            // process: v0.2.85-87 field reports proved MIUI swallows every
-            // app-initiated VpnConfirm launch — auto, input-bound native
-            // button, all of it. The UI instead walks the user through
-            // 系统设置 → VPN → Narcissus Aura, where the dialog is
-            // system-raised and unavoidable. Rust's 4s re-signal then builds
-            // the tunnel the moment consent exists, no extra tap needed.
+            // Consent ownership lives entirely in the watchdog below now:
+            // exactly the v2rayNG sequence — foreground Activity launches the
+            // SETTINGS-raised VpnConfirm via startActivityForResult, and the
+            // VpnService is only started once prepare() returns null. The
+            // service never launches the dialog itself; its sole waiting path
+            // is the tappable consent notification + Settings guidance.
         } catch (e: Exception) {
             Log.e(TAG, "Failed to init provider", e)
         }
@@ -162,16 +183,88 @@ class VpnInitProvider : ContentProvider() {
                         }
                     }
                     if (pending.exists()) {
+                        val content = try { pending.readText() } catch (_: Exception) { "new" }
                         try { pending.delete() } catch (_: Exception) {}
-                        try {
-                            NarcissusVpnService.startVpn(appCtx)
+                        // "new" = a fresh user tap on 连接 (Rust's first signal);
+                        // "again" = the 4s self-heal re-signal / consent return.
+                        // A fresh tap re-arms the dialog allowance.
+                        if (content != "again") {
+                            consentAttempts = 0
+                            consentDialogReturned = false
+                            awaitingConsentResume = false
+                        }
+                        val prep = try {
+                            android.net.VpnService.prepare(appCtx)
                         } catch (e: Exception) {
-                            Log.e(TAG, "startVpn failed", e)
+                            Log.w(TAG, "prepare() failed, letting the service re-check: ${e.message}")
+                            null
+                        }
+                        if (prep == null) {
+                            // Consented (or re-check deferred to the service):
+                            // the only path that starts the tunnel service.
                             try {
-                                status.writeText(
-                                    "service_start_failed:${e.javaClass.simpleName}:${e.message}"
-                                )
-                            } catch (_: Exception) {}
+                                NarcissusVpnService.startVpn(appCtx)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "startVpn failed", e)
+                                try {
+                                    status.writeText(
+                                        "service_start_failed:${e.javaClass.simpleName}:${e.message}"
+                                    )
+                                } catch (_: Exception) {}
+                            }
+                        } else {
+                            val act = NarcissusVpnService.currentActivity
+                            when {
+                                act == null || act.isFinishing -> {
+                                    // Either our consent dialog is on screen
+                                    // (Activity stopped) or the app is
+                                    // backgrounded: do NOT start the service
+                                    // without consent; the next re-signal
+                                    // re-evaluates within ~4s.
+                                    Log.i(TAG, "Consent missing, no foreground Activity; waiting")
+                                }
+                                !consentDialogReturned && consentAttempts < 2 -> {
+                                    // EXACT v2rayNG pattern: foreground
+                                    // Activity, launch-for-result, before any
+                                    // service exists. One silent-drop retry
+                                    // covers MIUI swallowing the first launch.
+                                    consentAttempts++
+                                    awaitingConsentResume = true
+                                    try { status.writeText("consent_required") } catch (_: Exception) {}
+                                    act.runOnUiThread {
+                                        try {
+                                            act.startActivityForResult(prep, CONSENT_REQUEST_CODE)
+                                            Log.i(TAG, "Consent dialog launched via startActivityForResult (attempt $consentAttempts)")
+                                        } catch (e: Exception) {
+                                            Log.w(TAG, "Consent launch threw: ${e.message}")
+                                            awaitingConsentResume = false
+                                            consentDialogReturned = true
+                                            try {
+                                                status.writeText("consent_activity_failed:${e.javaClass.simpleName}")
+                                            } catch (_: Exception) {}
+                                            // Hand over to the service's
+                                            // waiting path: consent
+                                            // notification + Settings guidance.
+                                            try {
+                                                NarcissusVpnService.startVpn(appCtx)
+                                            } catch (_: Exception) {}
+                                        }
+                                    }
+                                }
+                                else -> {
+                                    // Dialog was shown and dismissed without
+                                    // granting, or both attempts got silently
+                                    // dropped: start the service so it posts
+                                    // the tappable consent notification and
+                                    // the Settings-guidance stage while Rust
+                                    // keeps re-signalling for auto-continue.
+                                    try {
+                                        NarcissusVpnService.startVpn(appCtx)
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "startVpn (waiting) failed", e)
+                                    }
+                                }
+                            }
                         }
                     }
                 } catch (e: Exception) {

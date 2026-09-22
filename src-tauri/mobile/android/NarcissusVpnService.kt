@@ -34,11 +34,10 @@ class NarcissusVpnService : VpnService() {
             private set
 
         // Reference to the app's visible Activity, maintained by the global
-        // lifecycle callbacks registered in VpnInitProvider. The VPN-consent
-        // Intent MUST be launched from it, not from the Service: a background
-        // service starting an activity is blocked (or rendered as a translucent
-        // blank dialog) by Android 10+ background-activity-start restrictions
-        // on many OEM ROMs.
+        // lifecycle callbacks registered in VpnInitProvider. The watchdog in
+        // VpnInitProvider launches the VPN-consent dialog from it BEFORE the
+        // service is ever started (the only sequence that works on stock
+        // Android and MIUI); the service itself never launches activities.
         @Volatile
         var currentActivity: Activity? = null
 
@@ -58,17 +57,6 @@ class NarcissusVpnService : VpnService() {
                 Log.i(TAG, "Activity resumed, retrying VPN establishment")
                 svc.tryEstablishTunnel()
             }
-        }
-
-        // Process-scope companion so a MIUI service kill + watchdog revival
-        // (same process) cannot re-arm the auto dialog and storm the user:
-        // the drop-prone auto launch happens at most once per app process.
-        @Volatile
-        var consentAutoAttempted = false
-            private set
-
-        fun markConsentAutoAttempted() {
-            consentAutoAttempted = true
         }
 
         fun startVpn(context: Context) {
@@ -108,10 +96,6 @@ class NarcissusVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     @Volatile
     private var tunnelRequested = false
-    // True between "we raised the system consent dialog" and its dismissal, so
-    // a resume-triggered re-entry can detect a user denial instead of looping.
-    @Volatile
-    private var consentDialogShown = false
     // The system VPN-consent Intent, retained so the foreground notification can
     // offer it as a tappable fallback (notification taps are exempt from
     // background-activity-start restrictions on every OEM ROM).
@@ -161,10 +145,8 @@ class NarcissusVpnService : VpnService() {
                 // A watchdog re-signal (Rust re-writes vpn_pending every ~4s so
                 // a MIUI-killed service comes back) re-enters here with
                 // tunnelRequested already true. Only a genuinely fresh attempt
-                // clears the dialog bookkeeping; the auto-dialog allowance is
-                // process-scope (companion) so revivals can never storm it.
+                // re-arms the consent notification.
                 if (!tunnelRequested) {
-                    consentDialogShown = false
                     consentNotifyPosted = false
                 }
                 tunnelRequested = true
@@ -193,8 +175,9 @@ class NarcissusVpnService : VpnService() {
 
     /**
      * Attempt to establish the VPN tunnel. Always marshalled onto the main
-     * thread: the consent dialog must be started from a UI context, and calling
-     * Activity.startActivity from the background watch thread is unreliable.
+     * thread: Builder.establish() and the notification bookkeeping are
+     * cheapest and least surprising there, and re-entry from
+     * notifyActivityResumed arrives on the Activity's thread.
      */
     private fun tryEstablishTunnel() {
         mainHandler.post { doEstablish() }
@@ -214,56 +197,17 @@ class NarcissusVpnService : VpnService() {
         try {
             val prepareIntent = prepare(this)
             if (prepareIntent != null) {
-                if (consentDialogShown) {
-                    // The dialog we raised already came and went but consent is
-                    // still missing: the user denied (or MIUI instantly dropped
-                    // it). Re-launching on every resume would trap them in an
-                    // inescapable prompt loop.
-                    consentDialogShown = false
-                    enterWaitingConsent(prepareIntent)
-                    return
-                }
-                if (consentAutoAttempted) {
-                    // The single auto attempt is spent; stay in the consent
-                    // waiting state so the native button remains available.
-                    // Rust keeps the connect alive meanwhile.
-                    enterWaitingConsent(prepareIntent)
-                    return
-                }
-                markConsentAutoAttempted()
-                pendingConsentIntent = prepareIntent
-                writeVpnStatus("consent_required")
-                val act = currentActivity
-                if (act != null && !act.isFinishing) {
-                    // Launch consent from the visible Activity on the main thread:
-                    // exempt from background-activity-start limits, so the dialog
-                    // renders correctly. onActivityResumed re-triggers once the
-                    // user allows or denies. NEW_TASK makes MIUI treat it as a
-                    // normal app-initiated cross-package launch.
-                    Log.i(TAG, "VPN consent required, launching dialog from Activity (main thread)")
-                    try {
-                        // Exactly the v2rayNG pattern: plain startActivity from
-                        // the resumed Activity, NO NEW_TASK. MIUI treats a
-                        // NEW_TASK consent launch differently (it never
-                        // surfaces), while the plain in-task launch renders.
-                        act.startActivity(Intent(prepareIntent))
-                        consentDialogShown = true
-                        writeVpnStatus("consent_dialog_opened")
-                        return
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Activity launch failed, using notification fallback: ${e.message}")
-                        writeVpnStatus("consent_activity_failed:${e.javaClass.simpleName}")
-                    }
-                } else {
-                    Log.i(TAG, "No foreground Activity, using notification fallback")
-                    writeVpnStatus("consent_no_activity")
-                }
-                // Fallback: surface the consent as a tappable notification. A tap is
-                // user-initiated, so it bypasses BAL on every ROM.
-                showConsentNotification()
+                // The watchdog in VpnInitProvider owns dialog launching
+                // (v2rayNG ordering: foreground Activity +
+                // startActivityForResult, before the service exists).
+                // Reaching here means consent is still missing: wait via the
+                // tappable consent notification + Settings guidance. Rust
+                // keeps re-signalling vpn_pending, and the
+                // notifyActivityResumed path builds the tunnel the moment
+                // consent exists — no further tap in this app needed.
+                enterWaitingConsent(prepareIntent)
                 return
             }
-            consentDialogShown = false
 
             writeVpnStatus("establishing")
             val builder = Builder()
@@ -280,6 +224,11 @@ class NarcissusVpnService : VpnService() {
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to exclude own package: ${e.message}")
                 }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                // v2rayNG does this too: MIUI otherwise flags the tunnel as a
+                // metered network and can throttle/deprioritise it.
+                builder.setMetered(false)
             }
 
             vpnInterface = builder.establish()
@@ -307,14 +256,15 @@ class NarcissusVpnService : VpnService() {
     }
 
     /**
-     * Consent is still missing after the single auto attempt. The user-facing
-     * entry points now are: (a) 系统设置 → VPN → Narcissus Aura, where the
-     * SETTINGS app raises the consent dialog itself (MIUI cannot swallow a
-     * system-raised dialog; every app-raised launch has failed in the field),
-     * and (b) the tappable consent notification posted here. Rust keeps
-     * re-signalling vpn_pending every ~4s, so the instant consent exists the
-     * next re-entry takes the prepare()==null path and builds the tunnel
-     * without any further user action inside this app.
+     * Consent is missing when the service runs. The watchdog already made the
+     * v2rayNG-style launch attempts (foreground Activity +
+     * startActivityForResult) BEFORE starting us, so this is the waiting
+     * state: a tappable consent notification (tap = user-initiated, exempt
+     * from background-activity-start rules on every ROM) plus the
+     * 系统设置 → VPN → Narcissus Aura guidance stage, where SETTINGS itself
+     * raises the dialog. Rust keeps re-signalling vpn_pending, so the moment
+     * consent exists the next re-entry takes the prepare()==null path and
+     * builds the tunnel without any further user action inside this app.
      */
     private fun enterWaitingConsent(prepareIntent: Intent) {
         pendingConsentIntent = prepareIntent
@@ -384,7 +334,6 @@ class NarcissusVpnService : VpnService() {
         isRunning = false
         isTunReady = false
         tunnelRequested = false
-        consentDialogShown = false
         cleanupVpnInterface()
         pendingConsentIntent = null
         consentNotifyPosted = false

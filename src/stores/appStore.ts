@@ -166,8 +166,9 @@ function translateVpnStage(raw: string): string {
     '在「可使用的 VPN 应用」中点击「Narcissus Aura」，弹出授权页时点「允许」（建议勾选「不再询问」），' +
     '再回到本应用——隧道会自动继续建立，无需再点任何东西';
   if (raw === 'service_starting') return '正在启动隧道服务...';
-  if (raw === 'consent_required') return '正在请求系统 VPN 授权…若 2~3 秒后没有变化：' + settingsConsent;
-  if (raw === 'consent_dialog_opened') return settingsConsent;
+  if (raw === 'consent_required')
+    return '正在弹出系统 VPN 授权窗口，请在弹窗中点击「允许」，隧道会自动继续建立，无需再点连接；若 3 秒后没有弹窗：' + settingsConsent;
+  if (raw === 'consent_dialog_opened') return '系统授权弹窗已打开，请在弹窗中点击「允许」';
   if (raw.startsWith('consent_activity_failed')) return settingsConsent;
   if (raw === 'consent_no_activity') return settingsConsent;
   if (raw === 'consent_notify_posted') return settingsConsent + '；也可点击通知栏「需要允许 VPN 连接」那条通知完成授权';

@@ -2090,18 +2090,15 @@ rules:
     ///
     /// The whole handshake is FILE-DRIVEN on purpose: MIUI can kill the
     /// VpnService mid-handshake, so no in-process signal is trustworthy.
-    /// - `vpn_pending` is re-signalled every ~4s: if the service is killed
-    ///   mid-handshake the app-process watchdog starts it again, and a
-    ///   re-started service that finds consent already granted establishes
-    ///   the tunnel immediately.
-    ///
-    /// Consent is NO LONGER chased inside our own process (v0.2.86/87 field
-    /// reports: MIUI swallows our consent dialog launches regardless of
-    /// origin, native overlay buttons included). Instead the UI guides the
-    /// user to 系统设置 → VPN, where SETTINGS itself raises the consent
-    /// dialog — a system-initiated dialog MIUI cannot swallow. The 4s
-    /// re-signal then establishes the tunnel automatically right after the
-    /// user allows, without ever leaving "Connecting".
+    /// - `vpn_pending` carries "new" for the first signal and "again" for the
+    ///   ~4s re-signals. The app-process watchdog in VpnInitProvider owns the
+    ///   consent dialog itself, in the exact v2rayNG order: foreground
+    ///   Activity + startActivityForResult(prepare()) FIRST, and the
+    ///   VpnService is only started once consent exists. The service-side
+    ///   fallback is the tappable consent notification + Settings guidance;
+    ///   it never launches the dialog itself. Every re-signal that finds
+    ///   consent granted establishes the tunnel immediately, so the user
+    ///   never has to tap 连接 twice after allowing.
     #[cfg(target_os = "android")]
     async fn wait_for_android_tun_fd(&self, my_gen: u64, app: &AppHandle) -> Option<i32> {
         let fd_file = self.app_data_dir.join("tun_fd");
@@ -2114,7 +2111,10 @@ rules:
         let _ = std::fs::remove_file(&status_file);
 
         log::info!("Android: writing vpn_pending signal for VpnService...");
-        let _ = std::fs::write(&pending_file, "1");
+        // "new" tells the Kotlin watchdog this is a fresh user tap: it re-arms
+        // the v2rayNG-style consent dialog launch. The 4s re-signals below use
+        // "again" so the watchdog never storms the dialog behind our back.
+        let _ = std::fs::write(&pending_file, "new");
 
         // Up to 180s: consent now happens in the system Settings app, which
         // means the user leaves our app, navigates pages, taps 允许, and comes
@@ -2148,7 +2148,7 @@ rules:
             // prepare() returns null and the tunnel is built without any
             // further tap from the user.
             if i % 16 == 8 {
-                let _ = std::fs::write(&pending_file, "1");
+                let _ = std::fs::write(&pending_file, "again");
             }
             // Surface the tunnel service's current stage to the UI every ~2s
             // while we wait. Without this an early terminate shows nothing at

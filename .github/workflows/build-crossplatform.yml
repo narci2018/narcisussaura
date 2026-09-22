@@ -264,8 +264,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            windows-installer/*.exe
-            windows-installer/*.msi
+            windows-installer/**/*.exe
+            windows-installer/**/*.msi
             macos-arm64-dmg/*.dmg
             android-apk/**/*.apk
           generate_release_notes: true

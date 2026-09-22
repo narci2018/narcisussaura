@@ -45,6 +45,13 @@ class NarcissusVpnService : VpnService() {
         @Volatile
         private var instance: NarcissusVpnService? = null
 
+        // Set only when we were forced to fall back to startForegroundService()
+        // (i.e. the OS handed us a foreground-service promise we MUST honour).
+        // startService() paths never set it, so a failing startForeground() there
+        // can never trigger ForegroundServiceDidNotStartInTimeException.
+        @Volatile
+        private var fgsPromisePending = false
+
         fun notifyActivityResumed() {
             val svc = instance ?: return
             if (svc.tunnelRequested && svc.vpnInterface == null) {
@@ -57,10 +64,24 @@ class NarcissusVpnService : VpnService() {
             val intent = Intent(context, NarcissusVpnService::class.java).apply {
                 action = ACTION_CONNECT
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
+            // Prefer plain startService: the user just tapped connect, so the app
+            // is in the foreground and this is always allowed — and crucially it
+            // creates NO foreground-service promise. v0.2.77 crashed with
+            // ForegroundServiceDidNotStartInTimeException because startForeground
+            // failed on MIUI (notifications blocked) while the promise from
+            // startForegroundService was still pending; the system killed the
+            // process 5s later.
+            try {
                 context.startService(intent)
+            } catch (e: IllegalStateException) {
+                Log.w(TAG, "startService rejected, falling back to FGS: ${e.message}")
+                fgsPromisePending = true
+                try {
+                    context.startForegroundService(intent)
+                } catch (e2: Exception) {
+                    fgsPromisePending = false
+                    throw e2
+                }
             }
         }
 
@@ -89,15 +110,42 @@ class NarcissusVpnService : VpnService() {
         instance = this
     }
 
+    /**
+     * Calls startForeground() and NEVER lets the exception escape. Returns false
+     * only when we held a startForegroundService() promise we could not keep —
+     * the only case that would end in ForegroundServiceDidNotStartInTimeException,
+     * so we stopSelf() before the 5s OS deadline (stopping a service cancels the
+     * pending-promise timeout). When the service was started with plain
+     * startService() a notification failure is cosmetic: the caller may proceed.
+     */
+    private fun resolveForegroundPromise(title: String, content: String): Boolean {
+        val heldPromise = fgsPromisePending
+        fgsPromisePending = false
+        val ok = try {
+            startForeground(NOTIFICATION_ID, buildNotification(title, content))
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "startForeground failed: ${t.javaClass.simpleName}: ${t.message}")
+            false
+        }
+        if (!ok && heldPromise) {
+            stopSelf()
+            return false
+        }
+        return true
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CONNECT -> {
                 isRunning = true
                 tunnelRequested = true
-                try {
-                    startForeground(NOTIFICATION_ID, buildNotification("正在连接", "Narcissus Aura VPN 正在建立连接..."))
-                } catch (e: Exception) {
-                    Log.w(TAG, "startForeground failed (notification permission?): ${e.message}")
+                if (!resolveForegroundPromise("正在连接", "Narcissus Aura VPN 正在建立连接...")) {
+                    // We hold a startForegroundService() promise we could not keep:
+                    // stopSelf() already ran before the 5s deadline. The Rust side
+                    // surfaces this stage in the UI.
+                    writeVpnStatus("fgs_start_failed:notification_blocked")
+                    return START_NOT_STICKY
                 }
                 tryEstablishTunnel()
             }
@@ -109,11 +157,7 @@ class NarcissusVpnService : VpnService() {
                 // foreground slot. Tunnel requests arrive via ACTION_CONNECT
                 // from the process-level watchdog in VpnInitProvider.
                 isRunning = true
-                try {
-                    startForeground(NOTIFICATION_ID, buildNotification("待机中", "Narcissus Aura VPN 服务就绪"))
-                } catch (e: Exception) {
-                    Log.w(TAG, "startForeground failed (notification permission?): ${e.message}")
-                }
+                resolveForegroundPromise("待机中", "Narcissus Aura VPN 服务就绪")
             }
         }
         return START_NOT_STICKY
@@ -283,16 +327,20 @@ class NarcissusVpnService : VpnService() {
     }
 
     private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Narcissus VPN Service",
-                NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Narcissus Aura 代理隧道连接状态"
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    "Narcissus VPN Service",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Narcissus Aura 代理隧道连接状态"
+                }
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                manager.createNotificationChannel(channel)
             }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+        } catch (t: Throwable) {
+            Log.e(TAG, "createNotificationChannel failed: ${t.message}")
         }
     }
 
@@ -303,13 +351,10 @@ class NarcissusVpnService : VpnService() {
         } catch (_: Exception) {}
     }
 
+    // Must never throw: this runs inside the startForeground() call that has a
+    // pending FGS promise on some ROMs, and an exception here previously led to
+    // a swallowed failure and a 5s process kill.
     private fun buildNotification(title: String, content: String): Notification {
-        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, launchIntent,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
-        )
-
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -317,12 +362,25 @@ class NarcissusVpnService : VpnService() {
             Notification.Builder(this)
         }
 
-        return builder
+        builder
             .setContentTitle(title)
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentIntent(pendingIntent)
             .setOngoing(true)
-            .build()
+
+        try {
+            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+            if (launchIntent != null) {
+                val pendingIntent = PendingIntent.getActivity(
+                    this, 0, launchIntent,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+                )
+                builder.setContentIntent(pendingIntent)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Notification contentIntent unavailable: ${t.message}")
+        }
+
+        return builder.build()
     }
 }

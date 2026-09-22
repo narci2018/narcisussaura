@@ -336,6 +336,24 @@ impl SubscriptionManager {
         })
     }
 
+    /// Subscription refreshes must not churn node ids: the frontend holds a
+    /// node-id snapshot, and connect_smart_group resolves ids against the
+    /// backend library. Random uuids per parse made every refresh break that
+    /// mapping ("passed N ids; found 0"). Hash the routing-relevant fields
+    /// only — name is excluded because speed tests rename nodes in place.
+    fn assign_stable_ids(mut nodes: Vec<UnifiedNode>) -> Vec<UnifiedNode> {
+        use std::hash::{Hash, Hasher};
+        for node in &mut nodes {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            format!("{:?}", node.protocol).hash(&mut hasher);
+            node.address.hash(&mut hasher);
+            node.port.hash(&mut hasher);
+            node.config.to_string().hash(&mut hasher);
+            node.id = format!("{:016x}", hasher.finish());
+        }
+        nodes
+    }
+
     fn parse_subscription_body(&self, body: &str, group_name: &str) -> Result<Vec<UnifiedNode>> {
         let body = body.trim();
         if body.is_empty() {
@@ -345,7 +363,7 @@ impl SubscriptionManager {
         // 1. Try Clash YAML
         if let Ok(nodes) = self.parse_clash_yaml(body, group_name) {
             if !nodes.is_empty() {
-                return Ok(nodes);
+                return Ok(Self::assign_stable_ids(nodes));
             }
         }
 
@@ -356,7 +374,7 @@ impl SubscriptionManager {
             if let Ok(decoded_str) = String::from_utf8(decoded) {
                 let nodes = self.parse_links_text(&decoded_str, group_name);
                 if !nodes.is_empty() {
-                    return Ok(nodes);
+                    return Ok(Self::assign_stable_ids(nodes));
                 }
             }
         }
@@ -364,7 +382,7 @@ impl SubscriptionManager {
         // 3. Try plaintext multi-line share links
         let nodes = self.parse_links_text(body, group_name);
         if !nodes.is_empty() {
-            return Ok(nodes);
+            return Ok(Self::assign_stable_ids(nodes));
         }
 
         bail!("Could not detect recognized subscription format (Clash YAML or Base64 links)")

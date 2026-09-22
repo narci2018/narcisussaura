@@ -85,6 +85,7 @@ class VpnInitProvider : ContentProvider() {
                     override fun onActivityResumed(activity: Activity) {
                         NarcissusVpnService.currentActivity = activity
                         NarcissusVpnService.notifyActivityResumed()
+                        requestNotificationPermissionOnce(activity)
                     }
                     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
                     override fun onActivityStarted(activity: Activity) {}
@@ -106,6 +107,25 @@ class VpnInitProvider : ContentProvider() {
             Log.e(TAG, "Failed to init provider", e)
         }
         return true
+    }
+
+    @Volatile
+    private var notifPermRequested = false
+
+    /**
+     * MIUI/ColorOS startForeground() throws when the notification channel is
+     * blocked, which previously killed the app via
+     * ForegroundServiceDidNotStartInTimeException. Ask for POST_NOTIFICATIONS
+     * once, from the first resumed Activity, so the foreground notification
+     * can be posted. The raw permission string avoids compile-SDK coupling.
+     */
+    private fun requestNotificationPermissionOnce(activity: Activity) {
+        if (notifPermRequested) return
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        notifPermRequested = true
+        try {
+            activity.requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 0)
+        } catch (_: Exception) {}
     }
 
     private fun startVpnWatchdog(appCtx: android.content.Context) {

@@ -162,6 +162,7 @@ function translateVpnStage(raw: string): string {
   if (raw.startsWith('established')) return '隧道已建立，正在启动代理核心...';
   if (raw.startsWith('establish_failed')) return '系统拒绝创建 VPN 隧道，请重试或在系统设置中检查 VPN 权限';
   if (raw.startsWith('service_start_failed')) return `隧道服务启动失败：${raw.substring('service_start_failed:'.length)}`;
+  if (raw.startsWith('fgs_start_failed')) return '系统阻止了前台通知，隧道服务无法启动。请在系统设置 → 通知中允许「Narcissus Aura」显示通知后重试';
   if (raw === 'standby') return '隧道服务待机中...';
   return raw;
 }

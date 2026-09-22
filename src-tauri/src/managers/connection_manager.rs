@@ -1867,6 +1867,15 @@ rules:
                     Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
                     _ => "service_starting".to_string(),
                 };
+                // Fatal stages: the service already gave up (FGS promise could
+                // not be kept, or it was never allowed to start). No fd will
+                // ever arrive, so return within ~5s instead of the full 120s.
+                if stage.starts_with("fgs_start_failed") || stage.starts_with("service_start_failed") {
+                    let _ = std::fs::remove_file(&pending_file);
+                    log::error!("Android: VpnService reported fatal stage {}, abandoning", stage);
+                    let _ = app.emit("core:vpn-stage", stage.clone());
+                    return None;
+                }
                 if stage != last_stage {
                     last_stage = stage.clone();
                     log::info!("Android: vpn tunnel stage -> {}", stage);

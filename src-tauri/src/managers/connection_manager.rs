@@ -1397,14 +1397,25 @@ rules:
 
         for rule in &rule_files {
             let dst = rules_dst.join(rule);
-            if !dst.exists() || std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0) == 0 {
-                for dir in &search_dirs {
-                    let src = dir.join(rule);
-                    if src.exists() {
-                        let _ = std::fs::copy(&src, &dst);
-                        break;
-                    }
-                }
+            let Some(src) = search_dirs.iter().map(|d| d.join(rule)).find(|p| p.exists()) else {
+                continue;
+            };
+            let src_len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+            if src_len == 0 || src == dst {
+                continue;
+            }
+            // Self-heal: a copy interrupted by MIUI leaves a truncated .srs
+            // behind, and sing-box fatal-crashes on a corrupt rule_set — a
+            // size mismatch vs the bundled source means we must re-copy.
+            let dst_len = std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
+            if dst_len == src_len {
+                continue;
+            }
+            // Atomic deploy: temp file + rename, so a kill mid-copy can never
+            // leave the live rule file truncated again.
+            let tmp = rules_dst.join(format!("{}.tmp", rule));
+            if std::fs::copy(&src, &tmp).is_ok() {
+                let _ = std::fs::rename(&tmp, &dst);
             }
         }
     }
@@ -1945,20 +1956,32 @@ rules:
                     return Err("Connection cancelled by user".to_string());
                 }
 
-                let core_tail = {
-                    let s = std::fs::read_to_string(&log_file_path).unwrap_or_default();
-                    let s = s.trim();
+                // If the core's mixed port never accepted connections, the probe
+                // never even started — every node is untested, so reporting
+                // "all N nodes failed" is a lie. Surface it as a core startup
+                // failure instead, with the log HEADER where Go crash traces
+                // and sing-box fatal messages actually print.
+                let core_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                let port_dead = probe_diag.iter().any(|d| d.contains("未监听"));
+                let err_msg = if port_dead {
+                    format!(
+                        "代理核心启动后崩溃（端口 {} 未监听，尚未测试任何节点）。核心日志: {}",
+                        settings.mixed_port,
+                        Self::panic_excerpt(&core_log)
+                    )
+                } else {
+                    let s = core_log.trim();
                     // Byte-slicing can panic mid-UTF8-char; take the tail by char.
-                    s.chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect::<String>()
+                    let core_tail = s.chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect::<String>();
+                    format!(
+                        "外网连通性校验失败: 全部 {} 个候选节点均无法建立有效数据通道。探测明细: {}{}｜核心日志: {}",
+                        members.len(),
+                        probe_diag.iter().take(8).cloned().collect::<Vec<_>>().join("; "),
+                        if probe_diag.len() > 8 { " …" } else { "" },
+                        core_tail
+                    )
                 };
-                let probe_err = format!(
-                    "全部 {} 个候选节点均无法建立有效数据通道。探测明细: {}{}｜核心日志: {}",
-                    members.len(),
-                    probe_diag.iter().take(8).cloned().collect::<Vec<_>>().join("; "),
-                    if probe_diag.len() > 8 { " …" } else { "" },
-                    core_tail
-                );
-                log::warn!("Internet connectivity verification failed for smart group: {}", probe_err);
+                log::warn!("Smart group connect failed: {}", err_msg);
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
@@ -1969,7 +1992,7 @@ rules:
                 *self.connected_node.lock() = None;
                 *self.connected_chain.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(format!("外网连通性校验失败: {}", probe_err));
+                return Err(err_msg);
             }
         }
 
@@ -2071,18 +2094,22 @@ rules:
         Ok(())
     }
 
-    /// Pull the Go panic report (message + stack) out of a captured core log.
-    /// The function names after "[signal SIGSEGV" are the entire point: without
-    /// them a field crash on the phone is undiagnosable from here.
-    #[cfg(target_os = "android")]
+    /// Pull the real failure header out of a captured core log. Go crashes on
+    /// a fatal signal print "fatal error: ... [signal SIGSEGV ...]" (NOT
+    /// "panic:"), and sing-box's own startup failures print "FATAL" — the
+    /// useful part is always the HEADER plus the top stack frames, while the
+    /// tail is just the cobra dispatch frames. Previously searching only
+    /// "panic:" and falling back to the log TAIL made every Android core
+    /// crash report undiagnosable.
     fn panic_excerpt(log: &str) -> String {
-        match log.find("panic:") {
-            Some(i) => log[i..].chars().take(1400).collect::<String>(),
-            None => {
-                let t: Vec<char> = log.trim().chars().rev().take(600).collect();
-                t.into_iter().rev().collect()
+        for marker in ["fatal error:", "[signal ", "panic:", "FATAL", "Error:"] {
+            if let Some(i) = log.find(marker) {
+                return log[i..].chars().take(1400).collect::<String>();
             }
         }
+        // No known marker: sing-box prints fatal problems early, so the head
+        // of the log is far more likely to hold the reason than the tail.
+        log.trim().chars().take(1000).collect::<String>()
     }
 
     /// On Android, trigger VpnService and wait for the TUN fd file to appear.

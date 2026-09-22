@@ -193,16 +193,20 @@ class NarcissusVpnService : VpnService() {
                     // Launch consent from the visible Activity on the main thread:
                     // exempt from background-activity-start limits, so the dialog
                     // renders correctly. onActivityResumed re-triggers once the
-                    // user allows or denies.
+                    // user allows or denies. NEW_TASK makes MIUI treat it as a
+                    // normal app-initiated cross-package launch.
                     Log.i(TAG, "VPN consent required, launching dialog from Activity (main thread)")
                     try {
-                        act.startActivity(prepareIntent)
+                        act.startActivity(Intent(prepareIntent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        writeVpnStatus("consent_dialog_opened")
                         return
                     } catch (e: Exception) {
                         Log.w(TAG, "Activity launch failed, using notification fallback: ${e.message}")
+                        writeVpnStatus("consent_activity_failed:${e.javaClass.simpleName}")
                     }
                 } else {
                     Log.i(TAG, "No foreground Activity, using notification fallback")
+                    writeVpnStatus("consent_no_activity")
                 }
                 // Fallback: surface the consent as a tappable notification. A tap is
                 // user-initiated, so it bypasses BAL on every ROM.
@@ -258,6 +262,13 @@ class NarcissusVpnService : VpnService() {
     private fun showConsentNotification() {
         val consent = pendingConsentIntent ?: return
         try {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !manager.areNotificationsEnabled()) {
+                // notify() would silently no-op: tell the UI so the user can
+                // enable notifications instead of waiting for a dialog forever.
+                writeVpnStatus("consent_notify_blocked")
+                return
+            }
             val pi = PendingIntent.getActivity(
                 this, 100,
                 Intent(consent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
@@ -265,7 +276,6 @@ class NarcissusVpnService : VpnService() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 else PendingIntent.FLAG_UPDATE_CURRENT
             )
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val notification = Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle("需要允许 VPN 连接")
                 .setContentText("Narcissus Aura 正在等待你的 VPN 权限授权，点击此处完成")
@@ -275,8 +285,10 @@ class NarcissusVpnService : VpnService() {
                 .setAutoCancel(false)
                 .build()
             manager.notify(NOTIFICATION_ID + 1, notification)
+            writeVpnStatus("consent_notify_posted")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to show consent notification", e)
+            writeVpnStatus("consent_notify_failed:${e.javaClass.simpleName}")
         }
     }
 

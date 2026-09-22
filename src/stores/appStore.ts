@@ -157,7 +157,13 @@ let currentConnectSeq = 0;
 // stuck connection halted even if they terminate before the 120s timeout.
 function translateVpnStage(raw: string): string {
   if (raw === 'service_starting') return '正在启动隧道服务...';
-  if (raw === 'consent_required') return '请在系统弹窗中点击「允许」以授权 VPN 连接';
+  if (raw === 'consent_required') return '正在打开系统 VPN 授权弹窗...';
+  if (raw === 'consent_dialog_opened') return '系统授权弹窗已打开，请在弹窗中点击「允许」';
+  if (raw.startsWith('consent_activity_failed')) return '授权弹窗打开失败，改用通知栏入口';
+  if (raw === 'consent_no_activity') return '未检测到前台界面，改用通知栏入口';
+  if (raw === 'consent_notify_posted') return '请下拉通知栏，点击「需要允许 VPN 连接」完成授权';
+  if (raw === 'consent_notify_blocked') return '通知权限被拒，无法弹出授权入口：请先到系统设置 → 通知 中允许「Narcissus Aura」显示通知，再重新连接';
+  if (raw.startsWith('consent_notify_failed')) return '授权通知创建失败，请在系统设置中允许本应用显示通知后重试';
   if (raw === 'establishing') return '正在建立 VPN 隧道...';
   if (raw.startsWith('established')) return '隧道已建立，正在启动代理核心...';
   if (raw.startsWith('establish_failed')) return '系统拒绝创建 VPN 隧道，请重试或在系统设置中检查 VPN 权限';

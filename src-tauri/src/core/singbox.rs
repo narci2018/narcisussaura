@@ -379,18 +379,19 @@ impl SingBoxAdapter {
         ];
 
         if settings.proxy_mode == ProxyMode::TunMode {
-            let mut tun_inbound = json!({
+            let mut tun_addresses = vec![json!("172.19.0.1/30")];
+            if settings.enable_ipv6 {
+                tun_addresses.push(json!("fdfe:dcba:9876::1/126"));
+            }
+            let tun_inbound = json!({
                 "type": "tun",
                 "tag": "tun-in",
                 "interface_name": "AuraWintun",
-                "inet4_address": "172.19.0.1/30",
+                "address": tun_addresses,
                 "auto_route": true,
                 "strict_route": true,
                 "stack": "system"
             });
-            if settings.enable_ipv6 {
-                tun_inbound["inet6_address"] = json!("fdfe:dcba:9876::1/126");
-            }
             inbounds.push(tun_inbound);
         }
 

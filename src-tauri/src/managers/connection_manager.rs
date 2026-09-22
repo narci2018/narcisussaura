@@ -1855,8 +1855,9 @@ rules:
     /// Android TUN mode: a standalone sing-box process cannot open /dev/net/tun
     /// (SELinux) and has no fd-based tun option. Strip the tun inbound entirely
     /// and let the tunrelay child process bridge the VpnService fd to the
-    /// SOCKS5 mixed port. Sniffing on the mixed inbound recovers domains from
-    /// the raw-IP tun destinations so domain rules keep working.
+    /// SOCKS5 mixed port. Sniff/resolve rule actions (sing-box 1.13+ replacement
+    /// for the removed inbound `sniff` fields) recover domains from the raw-IP
+    /// tun destinations so domain rules keep working.
     #[cfg(target_os = "android")]
     fn patch_android_relay_config(config_str: &str) -> Result<String, String> {
         let mut config: serde_json::Value = serde_json::from_str(config_str)
@@ -1864,14 +1865,22 @@ rules:
 
         if let Some(inbounds) = config.get_mut("inbounds").and_then(|v| v.as_array_mut()) {
             inbounds.retain(|ib| ib.get("type").and_then(|v| v.as_str()) != Some("tun"));
-            for ib in inbounds.iter_mut() {
-                if ib.get("type").and_then(|v| v.as_str()) == Some("mixed") {
-                    ib["sniff"] = serde_json::json!(true);
-                    ib["sniff_override_destination"] = serde_json::json!(true);
-                }
-            }
         }
-        log::info!("Android: stripped tun inbound, enabled sniffing on mixed inbound");
+        if let Some(rules) = config
+            .get_mut("route")
+            .and_then(|r| r.get_mut("rules"))
+            .and_then(|v| v.as_array_mut())
+        {
+            rules.insert(
+                0,
+                serde_json::json!({"action": "resolve"}),
+            );
+            rules.insert(
+                0,
+                serde_json::json!({"action": "sniff", "protocol": ["tls", "http", "quic"]}),
+            );
+        }
+        log::info!("Android: stripped tun inbound, added sniff/resolve route rules");
 
         serde_json::to_string(&config).map_err(|e| format!("Failed to serialize patched config: {}", e))
     }

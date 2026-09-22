@@ -1591,8 +1591,9 @@ rules:
 
     /// Pin smart-group selector members one by one via the Clash API and probe
     /// real HTTPS traffic through each. Returns the index (into `nodes`) of the
-    /// first member that actually carries traffic, or None if none works within
-    /// the time budget.
+    /// first member that actually carries traffic (or None when every member
+    /// fails / the budget expires), plus per-member diagnostics so the failure
+    /// reason is visible in-app — the phone gives us no logs otherwise.
     async fn probe_smart_members(
         nodes: &[UnifiedNode],
         members: &[usize],
@@ -1600,45 +1601,58 @@ rules:
         clash_port: u16,
         current_gen: u64,
         connect_gen: &Arc<AtomicU64>,
-    ) -> Option<usize> {
+    ) -> (Option<usize>, Vec<String>) {
+        let mut diag: Vec<String> = Vec::new();
         let cancelled = || connect_gen.load(Ordering::SeqCst) != current_gen;
 
         // Wait for the core's mixed port to actually accept connections.
+        let mut port_up = false;
         for _ in 0..24 {
             if cancelled() {
-                return None;
+                return (None, diag);
             }
             if tokio::net::TcpStream::connect(("127.0.0.1", mixed_port)).await.is_ok() {
+                port_up = true;
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
+        if !port_up {
+            diag.push(format!("核心端口{}在6s内未监听（核心未启动或已崩溃）", mixed_port));
+            return (None, diag);
+        }
 
-        let api = reqwest::Client::builder()
+        let Some(api) = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(4))
             .build()
-            .ok()?;
-        let proxy = reqwest::Proxy::all(format!("http://127.0.0.1:{}", mixed_port)).ok()?;
-        let probe = reqwest::Client::builder()
-            .proxy(proxy)
+            .ok() else { diag.push("api client build failed".into()); return (None, diag); };
+        let Some(probe) = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{}", mixed_port)).unwrap())
             .timeout(std::time::Duration::from_secs(3))
             .build()
-            .ok()?;
+            .ok() else { diag.push("probe client build failed".into()); return (None, diag); };
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(75);
 
         for (k, &node_idx) in members.iter().enumerate() {
-            if cancelled() || tokio::time::Instant::now() >= deadline {
-                return None;
+            if cancelled() {
+                return (None, diag);
             }
+            if tokio::time::Instant::now() >= deadline {
+                diag.push(format!("探测超时截断于node-{}", k));
+                return (None, diag);
+            }
+            let mut notes: Vec<String> = Vec::new();
             if members.len() > 1 {
                 let tag = format!("node-{}", k);
-                if let Err(e) = api
+                match api
                     .put(format!("http://127.0.0.1:{}/proxies/smart-select", clash_port))
                     .json(&serde_json::json!({ "name": tag }))
                     .send()
                     .await
                 {
-                    log::warn!("smart-select pin {} failed: {}", tag, e);
+                    Ok(r) if r.status().is_success() || r.status().as_u16() == 204 => {}
+                    Ok(r) => notes.push(format!("pin=HTTP{}", r.status().as_u16())),
+                    Err(e) => notes.push(format!("pin失败({})", e)),
                 }
             }
             let mut working = false;
@@ -1651,16 +1665,32 @@ rules:
                 // captive portal or a node that relays just the first handshake.
                 // The first stream through a freshly pinned node often fails its
                 // TLS handshake, so one retry before condemning the member.
+                let mut last_note = String::new();
                 for _ in 0..2 {
                     if cancelled() {
-                        return None;
+                        return (None, diag);
                     }
-                    if let Ok(resp) = probe.get(url).send().await {
-                        if resp.status().as_u16() == 204 {
-                            working = true;
-                            break;
+                    match probe.get(url).send().await {
+                        Ok(resp) => {
+                            let code = resp.status().as_u16();
+                            if code == 204 {
+                                working = true;
+                                break;
+                            }
+                            last_note = format!("HTTP{}", code);
+                        }
+                        Err(e) => {
+                            last_note = if e.is_timeout() {
+                                "超时".to_string()
+                            } else {
+                                format!("{}", e)
+                            };
                         }
                     }
+                }
+                let host = url.split('/').nth(2).unwrap_or("?");
+                if !working {
+                    notes.push(format!("{}={}", host, last_note));
                 }
                 if working {
                     break;
@@ -1672,15 +1702,16 @@ rules:
                     k,
                     nodes[node_idx].name
                 );
-                return Some(node_idx);
+                return (Some(node_idx), diag);
             }
+            diag.push(format!("node-{}[{}]:{}", k, nodes[node_idx].name, notes.join(",")));
             log::info!(
                 "smart-select: member {} ({}) failed probe, trying next",
                 k,
                 nodes[node_idx].name
             );
         }
-        None
+        (None, diag)
     }
 
     fn start_traffic_monitor(&self, app: AppHandle, clash_port: u16) {
@@ -1777,37 +1808,30 @@ rules:
 
         let binary_path = self.locate_sing_box(&app)?;
 
-        #[cfg(target_os = "android")]
-        let android_tun_fd_smart: Option<i32> = match self.wait_for_android_tun_fd(current_gen, &app).await {
-            Some(fd) => Some(fd),
-            None => {
-                if self.connect_generation.load(Ordering::SeqCst) != current_gen {
-                    return Err("Connection cancelled by user".to_string());
-                }
-                *self.status.lock() = ConnectionStatus::Error;
-                *self.connected_chain.lock() = None;
-                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(format!("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}", self.android_vpn_diag()));
-            }
-        };
-        #[cfg(not(target_os = "android"))]
-        let android_tun_fd_smart: Option<i32> = None;
-
         let adapter = SingBoxAdapter::new();
-        let (mut config_str, members) = adapter
+        let (config_str, members) = adapter
             .generate_config_for_urltest(&nodes, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate smart group config: {}", e))?;
 
-        if android_tun_fd_smart.is_some() {
-            config_str = Self::patch_android_relay_config(&config_str)?;
-        }
+        // On Android always run in relay mode and patch the config up front,
+        // but DO NOT build the VpnService tunnel yet: with a live tunnel any
+        // ROM that mishandles addDisallowedApplication folds sing-box's own
+        // node connections back into the tunnel, and every probe would fail.
+        // The tunnel is established only after a winning node is found.
+        #[cfg(target_os = "android")]
+        let config_str = Self::patch_android_relay_config(&config_str)?;
 
         let config_path = self.app_data_dir.join("current_config.json");
         std::fs::write(&config_path, config_str).map_err(|e| format!("Failed to write core config file: {}", e))?;
 
         let log_file_path = self.app_data_dir.join("singbox.log");
-        let log_out = std::fs::File::create(&log_file_path).unwrap();
-        let log_err = log_out.try_clone().unwrap();
+        let log_out = std::fs::File::create(&log_file_path)
+            .map_err(|e| format!("Failed to create core log file: {}", e))?;
+        let log_err = log_out.try_clone()
+            .map_err(|e| format!("Failed to clone core log handle: {}", e))?;
+        // Truncate so a previous session's failure tail can never be mistaken
+        // for this attempt's when it is quoted inside error messages.
+        let _ = log_out.set_len(0);
 
         let mut cmd = Command::new(&binary_path);
         cmd.arg("run").arg("-c").arg(&config_path)
@@ -1854,37 +1878,24 @@ rules:
             }
         }
 
-        #[cfg(target_os = "android")]
-        if let Some(fd) = android_tun_fd_smart {
-            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
-                if let Some(mut c) = self.process.lock().take() {
-                    let _ = c.kill();
-                    let _ = c.wait();
-                }
-                Self::force_kill_all_cores();
-                let _ = PlatformProxy::disable_proxy();
-                *self.status.lock() = ConnectionStatus::Error;
-                *self.connected_node.lock() = None;
-                *self.connected_chain.lock() = None;
-                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(e);
-            }
-        }
-
         // Sequential real-traffic verification: pin each selector member through
         // the Clash API and probe HTTPS until one node actually carries traffic.
         // A plain group-level probe is not enough — free nodes routinely pass
         // latency checks yet RST every real stream, and the group would keep
-        // selecting them.
+        // selecting them. The tunnel bridge (tunrelay) is deliberately started
+        // only AFTER a winner is found: while the VpnService is live, any ROM
+        // quirk in addDisallowedApplication would fold sing-box's own outbound
+        // back into the tunnel and make every member look dead.
         log::info!("Smart group: probing {} candidate members...", members.len());
-        match Self::probe_smart_members(
+        let (winner, probe_diag) = Self::probe_smart_members(
             &nodes,
             &members,
             settings.mixed_port,
             settings.clash_api_port,
             current_gen,
             &self.connect_generation,
-        ).await {
+        ).await;
+        match winner {
             Some(winner_idx) => {
                 *self.connected_node.lock() = Some(nodes[winner_idx].clone());
             }
@@ -1900,7 +1911,19 @@ rules:
                     return Err("Connection cancelled by user".to_string());
                 }
 
-                let probe_err = format!("全部 {} 个候选节点均无法建立有效数据通道（节点已失效或被限速）", members.len());
+                let core_tail = {
+                    let s = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                    let s = s.trim();
+                    // Byte-slicing can panic mid-UTF8-char; take the tail by char.
+                    s.chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect::<String>()
+                };
+                let probe_err = format!(
+                    "全部 {} 个候选节点均无法建立有效数据通道。探测明细: {}{}｜核心日志: {}",
+                    members.len(),
+                    probe_diag.iter().take(8).cloned().collect::<Vec<_>>().join("; "),
+                    if probe_diag.len() > 8 { " …" } else { "" },
+                    core_tail
+                );
                 log::warn!("Internet connectivity verification failed for smart group: {}", probe_err);
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
@@ -1913,6 +1936,50 @@ rules:
                 *self.connected_chain.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
                 return Err(format!("外网连通性校验失败: {}", probe_err));
+            }
+        }
+
+        // A traffic-carrying node is confirmed — only NOW hand the device's
+        // traffic over: raise the VpnService tunnel (this is where the system
+        // consent dialog appears) and bridge it into the core's mixed port.
+        // Keeping the tunnel down during the probe makes the probe truthful on
+        // every ROM, regardless of how the platform handles vpn uid exclusion.
+        #[cfg(target_os = "android")]
+        {
+            let tun_fd = match self.wait_for_android_tun_fd(current_gen, &app).await {
+                Some(fd) => fd,
+                None => {
+                    if let Some(mut c) = self.process.lock().take() {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
+                    Self::force_kill_all_cores();
+                    let _ = PlatformProxy::disable_proxy();
+                    if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+                        return Err("Connection cancelled by user".to_string());
+                    }
+                    *self.status.lock() = ConnectionStatus::Error;
+                    *self.connected_node.lock() = None;
+                    *self.connected_chain.lock() = None;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    return Err(format!(
+                        "VPN隧道建立失败：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}",
+                        self.android_vpn_diag()
+                    ));
+                }
+            };
+            if let Err(e) = self.start_tunrelay(&app, tun_fd, settings.mixed_port).await {
+                if let Some(mut c) = self.process.lock().take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
+                }
+                Self::force_kill_all_cores();
+                let _ = PlatformProxy::disable_proxy();
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err(e);
             }
         }
 

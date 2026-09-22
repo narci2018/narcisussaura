@@ -174,7 +174,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-red-300 mb-0.5">连接失败</p>
-            <p className="font-mono text-[11px] leading-relaxed break-all text-red-200">{errorMessage}</p>
+            <p className="font-mono text-[11px] leading-relaxed break-all text-red-200 max-h-40 overflow-y-auto">{errorMessage}</p>
           </div>
           <button onClick={() => setErrorMessage(null)} className="shrink-0 text-gray-500 hover:text-gray-300">
             ✕

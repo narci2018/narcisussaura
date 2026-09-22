@@ -9,6 +9,17 @@ use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
+/// Outcome of a core spawn attempt that is checked against the startup window.
+enum CoreStartup {
+    /// Generation advanced (user cancelled) during the startup window.
+    Cancelled,
+    /// Could not even create the log file / spawn the process.
+    Fatal(String),
+    /// The process exited inside the startup window; carries the exit status
+    /// and the full captured log (includes the Go panic report if any).
+    EarlyExit(std::process::ExitStatus, String),
+}
+
 pub struct ConnectionManager {
     status: Arc<Mutex<ConnectionStatus>>,
     connected_node: Arc<Mutex<Option<UnifiedNode>>>,
@@ -1825,50 +1836,38 @@ rules:
         std::fs::write(&config_path, config_str).map_err(|e| format!("Failed to write core config file: {}", e))?;
 
         let log_file_path = self.app_data_dir.join("singbox.log");
-        let log_out = std::fs::File::create(&log_file_path)
-            .map_err(|e| format!("Failed to create core log file: {}", e))?;
-        let log_err = log_out.try_clone()
-            .map_err(|e| format!("Failed to clone core log handle: {}", e))?;
-        // Truncate so a previous session's failure tail can never be mistaken
-        // for this attempt's when it is quoted inside error messages.
-        let _ = log_out.set_len(0);
 
-        let mut cmd = Command::new(&binary_path);
-        cmd.arg("run").arg("-c").arg(&config_path)
-            .stdout(std::process::Stdio::from(log_out))
-            .stderr(std::process::Stdio::from(log_err));
-        hide_window_std(&mut cmd);
-
-        let child = cmd.spawn().map_err(|e| format!("Failed to start sing-box process ({}): {}", binary_path.display(), e))?;
-
-        if let Some(ref guard) = self.job_guard {
-            let _ = guard.assign_process(&child);
-        }
-
-        *self.process.lock() = Some(child);
-
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
-            if let Some(mut c) = self.process.lock().take() {
-                let _ = c.kill();
-                let _ = c.wait();
-            }
-            Self::force_kill_all_cores();
-            let _ = PlatformProxy::disable_proxy();
-            return Err("Connection cancelled by user".to_string());
-        }
-
+        // Attempt #1 starts the core with NO tunnel up so the probes below ride
+        // the physical network truthfully. The v0.2.83 field incident showed the
+        // core SIGSEGV-ing within its first 300ms in exactly that state, so on
+        // Android a startup crash now falls back to the proven tunnel-first
+        // ordering (raise VpnService, then restart the core) and both crash
+        // excerpts are embedded in the error text — the UI banner is
+        // self-diagnosing either way.
+        #[cfg(target_os = "android")]
+        let android_prepared_fd = match self
+            .spawn_core_with_tunnel_fallback(&binary_path, &config_path, &log_file_path, current_gen, &app)
+            .await
         {
-            let mut proc_lock = self.process.lock();
-            if let Some(ref mut c) = *proc_lock {
-                if let Ok(Some(exit_status)) = c.try_wait() {
-                    let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+            Ok(fd_opt) => fd_opt,
+            Err(msg) => return Err(msg),
+        };
+        #[cfg(not(target_os = "android"))]
+        {
+            match self.spawn_core_checked(&binary_path, &config_path, &log_file_path, current_gen).await {
+                Ok(()) => {}
+                Err(CoreStartup::Cancelled) => {
+                    Self::force_kill_all_cores();
+                    let _ = PlatformProxy::disable_proxy();
+                    return Err("Connection cancelled by user".to_string());
+                }
+                Err(CoreStartup::Fatal(msg)) => return Err(msg),
+                Err(CoreStartup::EarlyExit(exit_status, err_log)) => {
                     let _ = PlatformProxy::disable_proxy();
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     *self.connected_chain.lock() = None;
                     let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                    *proc_lock = None;
                     return Err(format!(
                         "Smart group core startup failed ({}):\n{}",
                         exit_status,
@@ -1946,9 +1945,12 @@ rules:
         // every ROM, regardless of how the platform handles vpn uid exclusion.
         #[cfg(target_os = "android")]
         {
-            let tun_fd = match self.wait_for_android_tun_fd(current_gen, &app).await {
+            let tun_fd = match android_prepared_fd {
+                // The startup-crash fallback already raised the tunnel.
                 Some(fd) => fd,
-                None => {
+                None => match self.wait_for_android_tun_fd(current_gen, &app).await {
+                    Some(fd) => fd,
+                    None => {
                     if let Some(mut c) = self.process.lock().take() {
                         let _ = c.kill();
                         let _ = c.wait();
@@ -1967,6 +1969,7 @@ rules:
                         self.android_vpn_diag()
                     ));
                 }
+            },
             };
             if let Err(e) = self.start_tunrelay(&app, tun_fd, settings.mixed_port).await {
                 if let Some(mut c) = self.process.lock().take() {
@@ -2005,6 +2008,153 @@ rules:
 
         Ok(())
 
+    }
+
+    /// Spawn the core, let it run through the startup window (300ms), and keep
+    /// the live child in `self.process`. On Android the smart-group path starts
+    /// the core BEFORE the VpnService tunnel exists (probes must ride the
+    /// physical network) — the v0.2.83 field report proved that state can
+    /// SIGSEGV inside sing-box on some ROMs, so `spawn_core_with_tunnel_fallback`
+    /// retries tunnel-first when this returns `EarlyExit`.
+    async fn spawn_core_checked(
+        &self,
+        binary_path: &Path,
+        config_path: &Path,
+        log_file_path: &Path,
+        current_gen: u64,
+    ) -> Result<(), CoreStartup> {
+        let log_out = std::fs::File::create(log_file_path)
+            .map_err(|e| CoreStartup::Fatal(format!("Failed to create core log file: {}", e)))?;
+        let log_err = log_out.try_clone()
+            .map_err(|e| CoreStartup::Fatal(format!("Failed to clone core log handle: {}", e)))?;
+        // File::create truncates, so a previous attempt's failure tail can never
+        // be mistaken for this attempt's when it is quoted inside error messages.
+
+        let mut cmd = Command::new(binary_path);
+        cmd.arg("run").arg("-c").arg(config_path)
+            .stdout(std::process::Stdio::from(log_out))
+            .stderr(std::process::Stdio::from(log_err));
+        hide_window_std(&mut cmd);
+
+        let child = cmd.spawn()
+            .map_err(|e| CoreStartup::Fatal(format!("Failed to start sing-box process ({}): {}", binary_path.display(), e)))?;
+
+        if let Some(ref guard) = self.job_guard {
+            let _ = guard.assign_process(&child);
+        }
+
+        *self.process.lock() = Some(child);
+
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+            if let Some(mut c) = self.process.lock().take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            return Err(CoreStartup::Cancelled);
+        }
+
+        let mut proc_lock = self.process.lock();
+        if let Some(ref mut c) = *proc_lock {
+            if let Ok(Some(status)) = c.try_wait() {
+                let log = std::fs::read_to_string(log_file_path).unwrap_or_default();
+                *proc_lock = None;
+                return Err(CoreStartup::EarlyExit(status, log));
+            }
+        }
+        Ok(())
+    }
+
+    /// Pull the Go panic report (message + stack) out of a captured core log.
+    /// The function names after "[signal SIGSEGV" are the entire point: without
+    /// them a field crash on the phone is undiagnosable from here.
+    #[cfg(target_os = "android")]
+    fn panic_excerpt(log: &str) -> String {
+        match log.find("panic:") {
+            Some(i) => log[i..].chars().take(1400).collect::<String>(),
+            None => {
+                let t: Vec<char> = log.trim().chars().rev().take(600).collect();
+                t.into_iter().rev().collect()
+            }
+        }
+    }
+
+    /// Android smart-group startup: try no-tunnel first; if the core dies in the
+    /// startup window (v0.2.83 SIGSEGV), raise the VpnService tunnel and restart
+    /// the core tunnel-first — the ordering every release up to v0.2.82 ran with.
+    /// Returns Ok(Some(fd)) when the tunnel was already raised for the retry, so
+    /// the post-winner stage does not request a second one.
+    #[cfg(target_os = "android")]
+    async fn spawn_core_with_tunnel_fallback(
+        &self,
+        binary_path: &Path,
+        config_path: &Path,
+        log_file_path: &Path,
+        current_gen: u64,
+        app: &AppHandle,
+    ) -> Result<Option<i32>, String> {
+        let (exit_status, err_log) = match self
+            .spawn_core_checked(binary_path, config_path, log_file_path, current_gen).await
+        {
+            Ok(()) => return Ok(None),
+            Err(CoreStartup::Cancelled) => {
+                Self::force_kill_all_cores();
+                let _ = PlatformProxy::disable_proxy();
+                return Err("Connection cancelled by user".to_string());
+            }
+            Err(CoreStartup::Fatal(msg)) => return Err(msg),
+            Err(CoreStartup::EarlyExit(s, l)) => (s, l),
+        };
+
+        let note = format!(
+            "核心在无隧道状态下启动即崩溃（{}），已自动改为先建立 VPN 隧道再重启核心。第一次崩溃日志: {}",
+            exit_status,
+            Self::panic_excerpt(&err_log)
+        );
+        log::warn!("{}", note);
+        Self::force_kill_all_cores();
+
+        let fd = match self.wait_for_android_tun_fd(current_gen, app).await {
+            Some(fd) => fd,
+            None => {
+                let _ = PlatformProxy::disable_proxy();
+                if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+                    return Err("Connection cancelled by user".to_string());
+                }
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err(format!(
+                    "无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}｜{}",
+                    self.android_vpn_diag(),
+                    note
+                ));
+            }
+        };
+
+        match self.spawn_core_checked(binary_path, config_path, log_file_path, current_gen).await {
+            Ok(()) => Ok(Some(fd)),
+            Err(CoreStartup::Cancelled) => {
+                Self::force_kill_all_cores();
+                let _ = PlatformProxy::disable_proxy();
+                Err("Connection cancelled by user".to_string())
+            }
+            Err(CoreStartup::Fatal(msg)) => Err(msg),
+            Err(CoreStartup::EarlyExit(exit2, log2)) => {
+                let _ = PlatformProxy::disable_proxy();
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                Err(format!(
+                    "Smart group core startup failed（隧道建立后仍崩溃, {}）: {}｜第二次崩溃日志: {}",
+                    exit2,
+                    note,
+                    Self::panic_excerpt(&log2)
+                ))
+            }
+        }
     }
 
     /// On Android, trigger VpnService and wait for the TUN fd file to appear.

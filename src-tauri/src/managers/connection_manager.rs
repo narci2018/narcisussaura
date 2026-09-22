@@ -1824,11 +1824,7 @@ rules:
             .generate_config_for_urltest(&nodes, &settings, &self.app_data_dir)
             .map_err(|e| format!("Failed to generate smart group config: {}", e))?;
 
-        // On Android always run in relay mode and patch the config up front,
-        // but DO NOT build the VpnService tunnel yet: with a live tunnel any
-        // ROM that mishandles addDisallowedApplication folds sing-box's own
-        // node connections back into the tunnel, and every probe would fail.
-        // The tunnel is established only after a winning node is found.
+        // On Android always run in relay mode and patch the config up front.
         #[cfg(target_os = "android")]
         let config_str = Self::patch_android_relay_config(&config_str)?;
 
@@ -1837,21 +1833,60 @@ rules:
 
         let log_file_path = self.app_data_dir.join("singbox.log");
 
-        // Attempt #1 starts the core with NO tunnel up so the probes below ride
-        // the physical network truthfully. The v0.2.83 field incident showed the
-        // core SIGSEGV-ing within its first 300ms in exactly that state, so on
-        // Android a startup crash now falls back to the proven tunnel-first
-        // ordering (raise VpnService, then restart the core) and both crash
-        // excerpts are embedded in the error text — the UI banner is
-        // self-diagnosing either way.
+        // Android raises the VpnService tunnel BEFORE spawning the core — the
+        // ordering every release up to v0.2.82 ran with and the only one proven
+        // to start on-device: the v0.2.83/84 field reports showed a tunnel-less
+        // core start SIGSEGVs inside sing-box within 300ms on MIUI. Probes still
+        // ride the physical network because the tunnel excludes our own package
+        // (addDisallowedApplication), as v0.2.81/82 demonstrated by getting
+        // real per-node probe results with the tunnel already up.
         #[cfg(target_os = "android")]
-        let android_prepared_fd = match self
-            .spawn_core_with_tunnel_fallback(&binary_path, &config_path, &log_file_path, current_gen, &app)
+        let android_tun_fd = match self.wait_for_android_tun_fd(current_gen, &app).await {
+            Some(fd) => fd,
+            None => {
+                Self::force_kill_all_cores();
+                let _ = PlatformProxy::disable_proxy();
+                if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+                    return Err("Connection cancelled by user".to_string());
+                }
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err(format!(
+                    "无法建立 VPN 隧道：请点击页面顶部的橙色「需要 VPN 授权」按钮完成授权；若没有该按钮，请重新点击连接并在系统弹窗中允许 VPN{}",
+                    self.android_vpn_diag()
+                ));
+            }
+        };
+
+        #[cfg(target_os = "android")]
+        if let Err(e) = self
+            .spawn_core_checked(&binary_path, &config_path, &log_file_path, current_gen)
             .await
         {
-            Ok(fd_opt) => fd_opt,
-            Err(msg) => return Err(msg),
-        };
+            match e {
+                CoreStartup::Cancelled => {
+                    Self::force_kill_all_cores();
+                    let _ = PlatformProxy::disable_proxy();
+                    return Err("Connection cancelled by user".to_string());
+                }
+                CoreStartup::Fatal(msg) => return Err(msg),
+                CoreStartup::EarlyExit(exit_status, err_log) => {
+                    let _ = PlatformProxy::disable_proxy();
+                    *self.status.lock() = ConnectionStatus::Error;
+                    *self.connected_node.lock() = None;
+                    *self.connected_chain.lock() = None;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    return Err(format!(
+                        "核心启动失败（{}，隧道 fd={}）：{}",
+                        exit_status,
+                        android_tun_fd,
+                        Self::panic_excerpt(&err_log)
+                    ));
+                }
+            }
+        }
         #[cfg(not(target_os = "android"))]
         {
             match self.spawn_core_checked(&binary_path, &config_path, &log_file_path, current_gen).await {
@@ -1939,39 +1974,12 @@ rules:
         }
 
         // A traffic-carrying node is confirmed — only NOW hand the device's
-        // traffic over: raise the VpnService tunnel (this is where the system
-        // consent dialog appears) and bridge it into the core's mixed port.
-        // Keeping the tunnel down during the probe makes the probe truthful on
-        // every ROM, regardless of how the platform handles vpn uid exclusion.
+        // traffic over: bridge the already-live VpnService tunnel into the
+        // core's mixed port. Until this point the tunnel fd has no reader, so
+        // captured packets simply black-hole and the probe stays truthful.
         #[cfg(target_os = "android")]
         {
-            let tun_fd = match android_prepared_fd {
-                // The startup-crash fallback already raised the tunnel.
-                Some(fd) => fd,
-                None => match self.wait_for_android_tun_fd(current_gen, &app).await {
-                    Some(fd) => fd,
-                    None => {
-                    if let Some(mut c) = self.process.lock().take() {
-                        let _ = c.kill();
-                        let _ = c.wait();
-                    }
-                    Self::force_kill_all_cores();
-                    let _ = PlatformProxy::disable_proxy();
-                    if self.connect_generation.load(Ordering::SeqCst) != current_gen {
-                        return Err("Connection cancelled by user".to_string());
-                    }
-                    *self.status.lock() = ConnectionStatus::Error;
-                    *self.connected_node.lock() = None;
-                    *self.connected_chain.lock() = None;
-                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                    return Err(format!(
-                        "VPN隧道建立失败：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}",
-                        self.android_vpn_diag()
-                    ));
-                }
-            },
-            };
-            if let Err(e) = self.start_tunrelay(&app, tun_fd, settings.mixed_port).await {
+            if let Err(e) = self.start_tunrelay(&app, android_tun_fd, settings.mixed_port).await {
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
@@ -2011,11 +2019,9 @@ rules:
     }
 
     /// Spawn the core, let it run through the startup window (300ms), and keep
-    /// the live child in `self.process`. On Android the smart-group path starts
-    /// the core BEFORE the VpnService tunnel exists (probes must ride the
-    /// physical network) — the v0.2.83 field report proved that state can
-    /// SIGSEGV inside sing-box on some ROMs, so `spawn_core_with_tunnel_fallback`
-    /// retries tunnel-first when this returns `EarlyExit`.
+    /// the live child in `self.process`. On Android the VpnService tunnel is
+    /// already up by the time this runs (the tunnel-less start of v0.2.83/84
+    /// SIGSEGVs inside sing-box on MIUI, so it is never attempted).
     async fn spawn_core_checked(
         &self,
         binary_path: &Path,
@@ -2079,84 +2085,6 @@ rules:
         }
     }
 
-    /// Android smart-group startup: try no-tunnel first; if the core dies in the
-    /// startup window (v0.2.83 SIGSEGV), raise the VpnService tunnel and restart
-    /// the core tunnel-first — the ordering every release up to v0.2.82 ran with.
-    /// Returns Ok(Some(fd)) when the tunnel was already raised for the retry, so
-    /// the post-winner stage does not request a second one.
-    #[cfg(target_os = "android")]
-    async fn spawn_core_with_tunnel_fallback(
-        &self,
-        binary_path: &Path,
-        config_path: &Path,
-        log_file_path: &Path,
-        current_gen: u64,
-        app: &AppHandle,
-    ) -> Result<Option<i32>, String> {
-        let (exit_status, err_log) = match self
-            .spawn_core_checked(binary_path, config_path, log_file_path, current_gen).await
-        {
-            Ok(()) => return Ok(None),
-            Err(CoreStartup::Cancelled) => {
-                Self::force_kill_all_cores();
-                let _ = PlatformProxy::disable_proxy();
-                return Err("Connection cancelled by user".to_string());
-            }
-            Err(CoreStartup::Fatal(msg)) => return Err(msg),
-            Err(CoreStartup::EarlyExit(s, l)) => (s, l),
-        };
-
-        let note = format!(
-            "核心在无隧道状态下启动即崩溃（{}），已自动改为先建立 VPN 隧道再重启核心。第一次崩溃日志: {}",
-            exit_status,
-            Self::panic_excerpt(&err_log)
-        );
-        log::warn!("{}", note);
-        Self::force_kill_all_cores();
-
-        let fd = match self.wait_for_android_tun_fd(current_gen, app).await {
-            Some(fd) => fd,
-            None => {
-                let _ = PlatformProxy::disable_proxy();
-                if self.connect_generation.load(Ordering::SeqCst) != current_gen {
-                    return Err("Connection cancelled by user".to_string());
-                }
-                *self.status.lock() = ConnectionStatus::Error;
-                *self.connected_node.lock() = None;
-                *self.connected_chain.lock() = None;
-                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(format!(
-                    "无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}｜{}",
-                    self.android_vpn_diag(),
-                    note
-                ));
-            }
-        };
-
-        match self.spawn_core_checked(binary_path, config_path, log_file_path, current_gen).await {
-            Ok(()) => Ok(Some(fd)),
-            Err(CoreStartup::Cancelled) => {
-                Self::force_kill_all_cores();
-                let _ = PlatformProxy::disable_proxy();
-                Err("Connection cancelled by user".to_string())
-            }
-            Err(CoreStartup::Fatal(msg)) => Err(msg),
-            Err(CoreStartup::EarlyExit(exit2, log2)) => {
-                let _ = PlatformProxy::disable_proxy();
-                *self.status.lock() = ConnectionStatus::Error;
-                *self.connected_node.lock() = None;
-                *self.connected_chain.lock() = None;
-                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                Err(format!(
-                    "Smart group core startup failed（隧道建立后仍崩溃, {}）: {}｜第二次崩溃日志: {}",
-                    exit2,
-                    note,
-                    Self::panic_excerpt(&log2)
-                ))
-            }
-        }
-    }
-
     /// On Android, trigger VpnService and wait for the TUN fd file to appear.
     /// Returns the fd number on success, or None on non-Android / proxy-only mode.
     #[cfg(target_os = "android")]
@@ -2199,13 +2127,18 @@ rules:
                     Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
                     _ => "service_starting".to_string(),
                 };
-                // Fatal stages: the service already gave up (FGS promise could
-                // not be kept, it was never allowed to start, or the user
-                // denied consent). No fd will ever arrive, so return within
-                // ~5s instead of the full 120s.
+                // Fatal stages: the service already gave up for a reason the
+                // user cannot recover from within this attempt (FGS promise
+                // could not be kept, the service was never allowed to start).
+                // NOTE: consent_denied is NOT fatal. MIUI silently drops the
+                // auto-launched consent dialog (a startActivity not bound to
+                // user input), which reads back as an instant "denial" even
+                // when the user never saw anything. The native orange consent
+                // button (VpnInitProvider) IS input-bound and always works,
+                // so keep waiting and let the user tap it; the 120s cap and
+                // the generation check still bound the wait.
                 if stage.starts_with("fgs_start_failed")
                     || stage.starts_with("service_start_failed")
-                    || stage.starts_with("consent_denied")
                 {
                     let _ = std::fs::remove_file(&pending_file);
                     // Tell the service to drop tunnelRequested; otherwise it

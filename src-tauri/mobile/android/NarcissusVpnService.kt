@@ -108,6 +108,13 @@ class NarcissusVpnService : VpnService() {
     // a resume-triggered re-entry can detect a user denial instead of looping.
     @Volatile
     private var consentDialogShown = false
+    // The AUTO consent launch (a startActivity not bound to user input) is
+    // silently dropped by MIUI's background-dialog policy: it resumes the
+    // activity instantly with a cancel, which reads back as a denial. That
+    // attempt must therefore happen exactly once per connect; afterwards the
+    // input-bound native orange button is the reliable consent path.
+    @Volatile
+    private var consentAutoAttempted = false
     // The system VPN-consent Intent, retained so the foreground notification can
     // offer it as a tappable fallback (notification taps are exempt from
     // background-activity-start restrictions on every OEM ROM).
@@ -154,6 +161,7 @@ class NarcissusVpnService : VpnService() {
                 // A fresh connect attempt earns a fresh dialog allowance (the
                 // native overlay button stays available meanwhile).
                 consentDialogShown = false
+                consentAutoAttempted = false
                 if (!resolveForegroundPromise("正在连接", "Narcissus Aura VPN 正在建立连接...")) {
                     // We hold a startForegroundService() promise we could not keep:
                     // stopSelf() already ran before the 5s deadline. The Rust side
@@ -202,12 +210,22 @@ class NarcissusVpnService : VpnService() {
             if (prepareIntent != null) {
                 if (consentDialogShown) {
                     // The dialog we raised already came and went but consent is
-                    // still missing: the user denied. Re-launching on every
-                    // resume would trap them in an inescapable prompt loop.
+                    // still missing: the user denied (or MIUI instantly dropped
+                    // it). Re-launching on every resume would trap them in an
+                    // inescapable prompt loop.
                     consentDialogShown = false
                     writeVpnStatus("consent_denied")
                     return
                 }
+                if (consentAutoAttempted) {
+                    // The single auto attempt is spent; stay in consent_denied
+                    // so the native button remains available. Rust keeps the
+                    // connect alive meanwhile and the button tap re-enters here
+                    // with consent already granted.
+                    writeVpnStatus("consent_denied")
+                    return
+                }
+                consentAutoAttempted = true
                 pendingConsentIntent = prepareIntent
                 writeVpnStatus("consent_required")
                 val act = currentActivity

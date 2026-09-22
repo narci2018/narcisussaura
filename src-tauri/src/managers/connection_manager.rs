@@ -1868,10 +1868,18 @@ rules:
                     _ => "service_starting".to_string(),
                 };
                 // Fatal stages: the service already gave up (FGS promise could
-                // not be kept, or it was never allowed to start). No fd will
-                // ever arrive, so return within ~5s instead of the full 120s.
-                if stage.starts_with("fgs_start_failed") || stage.starts_with("service_start_failed") {
+                // not be kept, it was never allowed to start, or the user
+                // denied consent). No fd will ever arrive, so return within
+                // ~5s instead of the full 120s.
+                if stage.starts_with("fgs_start_failed")
+                    || stage.starts_with("service_start_failed")
+                    || stage.starts_with("consent_denied")
+                {
                     let _ = std::fs::remove_file(&pending_file);
+                    // Tell the service to drop tunnelRequested; otherwise it
+                    // re-raises the consent flow on every activity resume and
+                    // the native consent button lingers on a dead attempt.
+                    let _ = std::fs::write(self.app_data_dir.join("vpn_stop"), "1");
                     log::error!("Android: VpnService reported fatal stage {}, abandoning", stage);
                     let _ = app.emit("core:vpn-stage", stage.clone());
                     return None;
@@ -1885,6 +1893,7 @@ rules:
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         let _ = std::fs::remove_file(&pending_file);
+        let _ = std::fs::write(self.app_data_dir.join("vpn_stop"), "1");
         let diag = self.android_vpn_diag();
         log::error!("Android: timed out waiting for TUN fd from VpnService (120s). {}", diag);
         None

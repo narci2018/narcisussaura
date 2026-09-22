@@ -60,6 +60,13 @@ class NarcissusVpnService : VpnService() {
             }
         }
 
+        // True while a tunnel request is outstanding and unfulfilled; gates the
+        // provider's native consent button.
+        fun tunnelPending(): Boolean {
+            val svc = instance ?: return false
+            return svc.tunnelRequested && svc.vpnInterface == null
+        }
+
         fun startVpn(context: Context) {
             val intent = Intent(context, NarcissusVpnService::class.java).apply {
                 action = ACTION_CONNECT
@@ -97,6 +104,10 @@ class NarcissusVpnService : VpnService() {
     private var vpnInterface: ParcelFileDescriptor? = null
     @Volatile
     private var tunnelRequested = false
+    // True between "we raised the system consent dialog" and its dismissal, so
+    // a resume-triggered re-entry can detect a user denial instead of looping.
+    @Volatile
+    private var consentDialogShown = false
     // The system VPN-consent Intent, retained so the foreground notification can
     // offer it as a tappable fallback (notification taps are exempt from
     // background-activity-start restrictions on every OEM ROM).
@@ -140,6 +151,9 @@ class NarcissusVpnService : VpnService() {
             ACTION_CONNECT -> {
                 isRunning = true
                 tunnelRequested = true
+                // A fresh connect attempt earns a fresh dialog allowance (the
+                // native overlay button stays available meanwhile).
+                consentDialogShown = false
                 if (!resolveForegroundPromise("正在连接", "Narcissus Aura VPN 正在建立连接...")) {
                     // We hold a startForegroundService() promise we could not keep:
                     // stopSelf() already ran before the 5s deadline. The Rust side
@@ -186,6 +200,14 @@ class NarcissusVpnService : VpnService() {
         try {
             val prepareIntent = prepare(this)
             if (prepareIntent != null) {
+                if (consentDialogShown) {
+                    // The dialog we raised already came and went but consent is
+                    // still missing: the user denied. Re-launching on every
+                    // resume would trap them in an inescapable prompt loop.
+                    consentDialogShown = false
+                    writeVpnStatus("consent_denied")
+                    return
+                }
                 pendingConsentIntent = prepareIntent
                 writeVpnStatus("consent_required")
                 val act = currentActivity
@@ -198,6 +220,7 @@ class NarcissusVpnService : VpnService() {
                     Log.i(TAG, "VPN consent required, launching dialog from Activity (main thread)")
                     try {
                         act.startActivity(Intent(prepareIntent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        consentDialogShown = true
                         writeVpnStatus("consent_dialog_opened")
                         return
                     } catch (e: Exception) {
@@ -213,6 +236,7 @@ class NarcissusVpnService : VpnService() {
                 showConsentNotification()
                 return
             }
+            consentDialogShown = false
 
             writeVpnStatus("establishing")
             val builder = Builder()
@@ -306,6 +330,7 @@ class NarcissusVpnService : VpnService() {
         isRunning = false
         isTunReady = false
         tunnelRequested = false
+        consentDialogShown = false
         cleanupVpnInterface()
         pendingConsentIntent = null
         try {

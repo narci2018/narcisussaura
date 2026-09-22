@@ -103,10 +103,100 @@ class VpnInitProvider : ContentProvider() {
                     }
                 }
             )
+
+            // MIUI silently DROPS activities started by a handler post that is
+            // not tied to a user tap ("后台弹出界面" policy) — no exception, no
+            // dialog. That is why the VPN-consent dialog never rendered even
+            // though startActivity "succeeded". A native in-window button is
+            // the only bulletproof path: its click handler is user-input
+            // bound, so the consent dialog launch can never be intercepted.
+            startConsentOverlayPoller(ctx.applicationContext)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to init provider", e)
         }
         return true
+    }
+
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var consentOverlay: android.widget.Button? = null
+    private var overlayHost: Activity? = null
+
+    private fun startConsentOverlayPoller(appCtx: android.content.Context) {
+        mainHandler.post(object : Runnable {
+            override fun run() {
+                try {
+                    refreshConsentOverlay(appCtx)
+                } catch (e: Exception) {
+                    Log.w(TAG, "consent overlay refresh failed: ${e.message}")
+                }
+                mainHandler.postDelayed(this, 600)
+            }
+        })
+    }
+
+    private fun refreshConsentOverlay(appCtx: android.content.Context) {
+        val status = try {
+            File(appCtx.dataDir, "vpn_status").readText().trim()
+        } catch (_: Exception) {
+            ""
+        }
+        val act = NarcissusVpnService.currentActivity
+        val needsConsent = act != null &&
+            NarcissusVpnService.tunnelPending() &&
+            status.startsWith("consent")
+        if (!needsConsent) {
+            removeConsentOverlay()
+            return
+        }
+        if (consentOverlay != null && overlayHost === act) return
+
+        val activity = act ?: return
+        val btn = android.widget.Button(activity).apply {
+            text = "⚠ 需要 VPN 授权：点击此处完成"
+            setBackgroundColor(0xFFF59E0B.toInt())
+            setTextColor(0xFF111827.toInt())
+            setOnClickListener {
+                val a = NarcissusVpnService.currentActivity ?: return@setOnClickListener
+                try {
+                    val prep = android.net.VpnService.prepare(a)
+                    if (prep != null) {
+                        a.startActivity(prep)
+                    } else {
+                        // Consent already granted (e.g. "always allow"): just
+                        // nudge the service to build the tunnel now.
+                        NarcissusVpnService.notifyActivityResumed()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "overlay consent launch failed", e)
+                    try {
+                        File(appCtx.dataDir, "vpn_status")
+                            .writeText("consent_overlay_failed:${e.javaClass.simpleName}")
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+        val lp = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        )
+        lp.setMargins(48, 220, 48, 0)
+        try {
+            (activity.window.decorView as? android.view.ViewGroup)?.addView(btn, lp)
+            consentOverlay = btn
+            overlayHost = activity
+            Log.i(TAG, "Consent overlay button attached")
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to attach consent overlay: ${e.message}")
+        }
+    }
+
+    private fun removeConsentOverlay() {
+        val btn = consentOverlay ?: run { overlayHost = null; return }
+        try {
+            (btn.parent as? android.view.ViewGroup)?.removeView(btn)
+        } catch (_: Exception) {}
+        consentOverlay = null
+        overlayHost = null
     }
 
     @Volatile

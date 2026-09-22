@@ -308,43 +308,54 @@ impl SingBoxAdapter {
         self.generate_config_common(outbounds, Vec::new(), "chain-0", "chain-0", settings, work_dir)
     }
 
+    /// Smart-group config: a selector group holding every candidate node, plus the
+    /// ordered member tags. At connect time Rust pins members one by one through
+    /// the Clash API and probes real HTTPS traffic, keeping the first node that
+    /// actually carries data. urltest is deliberately NOT used: its health checks
+    /// ride a single fresh connection, and free nodes that accept that but RST
+    /// concurrent streams keep winning the latency race and permanently stall
+    /// the group (verified offline against the user's real node pool).
+    /// Returns (config, member node indices in `nodes` order, e.g. tag `node-k`
+    /// == `nodes[members[k]]`).
     pub fn generate_config_for_urltest(
         &self,
         nodes: &[UnifiedNode],
         settings: &AppSettings,
         work_dir: &Path,
-    ) -> Result<String> {
+    ) -> Result<(String, Vec<usize>)> {
         if nodes.is_empty() {
-            bail!("Cannot generate urltest config for empty node list");
+            bail!("Cannot generate smart group config for empty node list");
         }
         if nodes.len() == 1 {
-            return self.generate_config_with_relay(&nodes[0], None, settings, work_dir);
+            return Ok((
+                self.generate_config_with_relay(&nodes[0], None, settings, work_dir)?,
+                vec![0],
+            ));
         }
 
         let mut outbounds = Vec::new();
         let mut tags = Vec::new();
+        let mut members = Vec::new();
 
-        for node in nodes.iter() {
+        for (i, node) in nodes.iter().enumerate() {
             if let Ok(mut ob) = self.build_outbound(node) {
                 let tag = format!("node-{}", tags.len());
                 ob["tag"] = json!(tag);
                 tags.push(tag);
+                members.push(i);
                 outbounds.push(ob);
             }
         }
 
         if outbounds.is_empty() {
-            bail!("No compatible outbound nodes available for urltest");
+            bail!("No compatible outbound nodes available for smart group");
         }
 
-        // Add the urltest outbound
         outbounds.insert(0, json!({
-            "type": "urltest",
-            "tag": "smart-urltest",
+            "type": "selector",
+            "tag": "smart-select",
             "outbounds": tags,
-            "url": "http://cp.cloudflare.com/generate_204",
-            "interval": "3m",
-            "tolerance": 50
+            "default": tags[0]
         }));
 
         outbounds.push(json!({
@@ -357,7 +368,10 @@ impl SingBoxAdapter {
         }));
 
 
-        self.generate_config_common(outbounds, Vec::new(), "smart-urltest", "smart-urltest", settings, work_dir)
+        Ok((
+            self.generate_config_common(outbounds, Vec::new(), "smart-select", "smart-select", settings, work_dir)?,
+            members,
+        ))
     }
 
     pub fn generate_config_common(
@@ -720,8 +734,12 @@ impl SingBoxAdapter {
                 "servers": [
                     {
                         "tag": "dns-remote",
-                        "type": "tls",
+                        // DoH on 443, NOT DoT on 853: most subscription nodes only
+                        // permit outbound 443/80 and RST 853 tunnels, which made every
+                        // domain lookup through the tunnel fail.
+                        "type": "https",
                         "server": "8.8.8.8",
+                        "path": "/dns-query",
                         "detour": dns_remote_detour
                     },
                     {

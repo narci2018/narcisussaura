@@ -251,16 +251,18 @@ impl InspectorManager {
             .timeout(Duration::from_secs(6))
             .build()?;
 
-        // 1. Measure real latency via standard generate_204 endpoint
+        // 1. Measure real latency via standard generate_204 endpoint.
+        // https, not http:80 — nodes that only egress 443 RST port-80 tunnels
+        // and were being misrated here.
         let start = Instant::now();
-        let _ = client.get("http://cp.cloudflare.com/generate_204").send().await;
+        let _ = client.get("https://cp.cloudflare.com/generate_204").send().await;
         let latency = start.elapsed().as_millis() as u64;
 
         // 2. Query accurate GeoIP via ip-api.com
         let mut cc = String::new();
         let mut country = String::new();
 
-        if let Ok(res) = client.get("http://ip-api.com/json").send().await {
+        if let Ok(res) = client.get("https://ip-api.com/json").send().await {
             if let Ok(json) = res.json::<serde_json::Value>().await {
                 if json.get("status").and_then(|s| s.as_str()) == Some("success") {
                     if let Some(code) = json.get("countryCode").and_then(|c| c.as_str()) {

@@ -1518,7 +1518,11 @@ rules:
             .map_err(|e| format!("Invalid local proxy configuration: {}", e))?;
 
         let timeout_ms = if is_residential { 6000 } else { 4500 };
-        let max_attempts = if is_residential { 12 } else { 6 };
+        let max_attempts = if is_residential { 12 } else { 10 };
+        // Hard wall-clock cap: extra attempts only help slow tunnel handshakes;
+        // never burn more than this on black-holing nodes (previous worst case
+        // was ~90s of blind retries on a dead relay).
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(40);
 
         let client = reqwest::Client::builder()
             .proxy(proxy)
@@ -1529,6 +1533,9 @@ rules:
         let mut last_err = String::new();
         // Probe up to max_attempts (allows time for multi-hop relays and OpenVPN tunnels to finish handshake)
         for attempt in 1..=max_attempts {
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
             if connect_gen.load(Ordering::SeqCst) != current_gen {
                 return Err("Connection cancelled by user".to_string());
             }
@@ -1540,8 +1547,10 @@ rules:
                 }
             }
 
-            // Primary probe: Cloudflare captive portal 204 endpoint
-            match client.get("http://cp.cloudflare.com/generate_204").send().await {
+            // Primary probe: Cloudflare captive portal 204 endpoint.
+            // Must be https: many nodes RST port-80 tunnels, so an http probe
+            // fails even when the tunnel carries real (443) traffic fine.
+            match client.get("https://cp.cloudflare.com/generate_204").send().await {
                 Ok(resp) if resp.status().as_u16() == 204 || resp.status().as_u16() == 200 => {
                     return Ok(());
                 }
@@ -1558,15 +1567,15 @@ rules:
             }
 
             // Secondary fallback probe: Google 204 endpoint
-            if let Ok(resp) = client.get("http://www.google.com/generate_204").send().await {
+            if let Ok(resp) = client.get("https://www.google.com/generate_204").send().await {
                 let code = resp.status().as_u16();
                 if code == 204 || code == 200 {
                     return Ok(());
                 }
             }
 
-            // Tertiary fallback: Cloudflare Trace
-            if let Ok(resp) = client.get("http://1.1.1.1/cdn-cgi/trace").send().await {
+            // Tertiary fallback: Cloudflare Trace (hostname form so the cert verifies)
+            if let Ok(resp) = client.get("https://one.one.one.one/cdn-cgi/trace").send().await {
                 if resp.status().is_success() {
                     return Ok(());
                 }
@@ -1578,6 +1587,91 @@ rules:
         }
 
         Err(format!("端到端测试超时：数据包无法在预定时限内到达国际互联网目标（{}）", last_err))
+    }
+
+    /// Pin smart-group selector members one by one via the Clash API and probe
+    /// real HTTPS traffic through each. Returns the index (into `nodes`) of the
+    /// first member that actually carries traffic, or None if none works within
+    /// the time budget.
+    async fn probe_smart_members(
+        nodes: &[UnifiedNode],
+        members: &[usize],
+        mixed_port: u16,
+        clash_port: u16,
+        current_gen: u64,
+        connect_gen: &Arc<AtomicU64>,
+    ) -> Option<usize> {
+        let cancelled = || connect_gen.load(Ordering::SeqCst) != current_gen;
+
+        // Wait for the core's mixed port to actually accept connections.
+        for _ in 0..24 {
+            if cancelled() {
+                return None;
+            }
+            if tokio::net::TcpStream::connect(("127.0.0.1", mixed_port)).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+
+        let api = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(4))
+            .build()
+            .ok()?;
+        let proxy = reqwest::Proxy::all(format!("http://127.0.0.1:{}", mixed_port)).ok()?;
+        let probe = reqwest::Client::builder()
+            .proxy(proxy)
+            .timeout(std::time::Duration::from_secs(4))
+            .build()
+            .ok()?;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(75);
+
+        for (k, &node_idx) in members.iter().enumerate() {
+            if cancelled() || tokio::time::Instant::now() >= deadline {
+                return None;
+            }
+            if members.len() > 1 {
+                let tag = format!("node-{}", k);
+                if let Err(e) = api
+                    .put(format!("http://127.0.0.1:{}/proxies/smart-select", clash_port))
+                    .json(&serde_json::json!({ "name": tag }))
+                    .send()
+                    .await
+                {
+                    log::warn!("smart-select pin {} failed: {}", tag, e);
+                }
+            }
+            let mut working = false;
+            for url in [
+                "https://cp.cloudflare.com/generate_204",
+                "https://www.google.com/generate_204",
+            ] {
+                if cancelled() {
+                    return None;
+                }
+                if let Ok(resp) = probe.get(url).send().await {
+                    let code = resp.status().as_u16();
+                    if code == 204 || code == 200 || code == 302 {
+                        working = true;
+                        break;
+                    }
+                }
+            }
+            if working {
+                log::info!(
+                    "smart-select: member {} ({}) carries real traffic",
+                    k,
+                    nodes[node_idx].name
+                );
+                return Some(node_idx);
+            }
+            log::info!(
+                "smart-select: member {} ({}) failed probe, trying next",
+                k,
+                nodes[node_idx].name
+            );
+        }
+        None
     }
 
     fn start_traffic_monitor(&self, app: AppHandle, clash_port: u16) {
@@ -1691,9 +1785,9 @@ rules:
         let android_tun_fd_smart: Option<i32> = None;
 
         let adapter = SingBoxAdapter::new();
-        let mut config_str = adapter
+        let (mut config_str, members) = adapter
             .generate_config_for_urltest(&nodes, &settings, &self.app_data_dir)
-            .map_err(|e| format!("Failed to generate urltest config: {}", e))?;
+            .map_err(|e| format!("Failed to generate smart group config: {}", e))?;
 
         if android_tun_fd_smart.is_some() {
             config_str = Self::patch_android_relay_config(&config_str)?;
@@ -1768,37 +1862,49 @@ rules:
             }
         }
 
-        // End-to-End Real Internet Connectivity Verification Probe
-        log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
-        if let Err(probe_err) = Self::verify_internet_connectivity(
+        // Sequential real-traffic verification: pin each selector member through
+        // the Clash API and probe HTTPS until one node actually carries traffic.
+        // A plain group-level probe is not enough — free nodes routinely pass
+        // latency checks yet RST every real stream, and the group would keep
+        // selecting them.
+        log::info!("Smart group: probing {} candidate members...", members.len());
+        match Self::probe_smart_members(
+            &nodes,
+            &members,
             settings.mixed_port,
-            false,
+            settings.clash_api_port,
             current_gen,
-            Arc::clone(&self.connect_generation),
+            &self.connect_generation,
         ).await {
-            if self.connect_generation.load(Ordering::SeqCst) != current_gen || probe_err.contains("cancelled") {
+            Some(winner_idx) => {
+                *self.connected_node.lock() = Some(nodes[winner_idx].clone());
+            }
+            None => {
+                if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+                    if let Some(mut c) = self.process.lock().take() {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
+                    Self::force_kill_all_cores();
+                    let _ = PlatformProxy::disable_proxy();
+                    log::info!("Smart group connection aborted by user during probe");
+                    return Err("Connection cancelled by user".to_string());
+                }
+
+                let probe_err = format!("全部 {} 个候选节点均无法建立有效数据通道（节点已失效或被限速）", members.len());
+                log::warn!("Internet connectivity verification failed for smart group: {}", probe_err);
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
                 let _ = PlatformProxy::disable_proxy();
-                log::info!("Smart group connection aborted by user during probe");
-                return Err("Connection cancelled by user".to_string());
+                *self.status.lock() = ConnectionStatus::Error;
+                *self.connected_node.lock() = None;
+                *self.connected_chain.lock() = None;
+                let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                return Err(format!("外网连通性校验失败: {}", probe_err));
             }
-
-            log::warn!("Internet connectivity verification failed for smart group: {}", probe_err);
-            if let Some(mut c) = self.process.lock().take() {
-                let _ = c.kill();
-                let _ = c.wait();
-            }
-            Self::force_kill_all_cores();
-            let _ = PlatformProxy::disable_proxy();
-            *self.status.lock() = ConnectionStatus::Error;
-            *self.connected_node.lock() = None;
-            *self.connected_chain.lock() = None;
-            let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-            return Err(format!("外网连通性校验失败: {}", probe_err));
         }
 
         if self.connect_generation.load(Ordering::SeqCst) != current_gen {
@@ -1921,8 +2027,10 @@ rules:
     /// netlink socket at startup, which Android SELinux bans for app uids and
     /// turns into a fatal "create network monitor" error. With it false, sing-box
     /// tolerates the missing monitor and starts normally (route/network.go).
-    #[cfg(target_os = "android")]
-    fn patch_android_relay_config(config_str: &str) -> Result<String, String> {
+    ///
+    /// pub + cfg-free so an integration test can validate the exact Android
+    /// config with `sing-box check` on the host (CI only compiles Kotlin).
+    pub fn patch_android_relay_config(config_str: &str) -> Result<String, String> {
         let mut config: serde_json::Value = serde_json::from_str(config_str)
             .map_err(|e| format!("Failed to parse config for Android relay patch: {}", e))?;
 
@@ -1948,12 +2056,6 @@ rules:
         log::info!("Android: stripped tun inbound, disabled auto_detect_interface, added sniff/resolve rules");
 
         serde_json::to_string(&config).map_err(|e| format!("Failed to serialize patched config: {}", e))
-    }
-
-    #[cfg(not(target_os = "android"))]
-    fn patch_android_relay_config(config_str: &str) -> Result<String, String> {
-        // Unreachable: android_tun_fd is always None off Android.
-        Ok(config_str.to_string())
     }
 
     /// Spawn the tunrelay helper (Android-only): a static-Go gVisor netstack

@@ -368,7 +368,7 @@ export const CountryNodeSelector: React.FC<CountryNodeSelectorProps> = ({
       const code = value.substring(8);
       const cg = countryGroups.find(c => c.country === code);
       if (cg && cg.bestNode) {
-        return { primary: cg.countryZh, secondary: `智能漂移 (自动分配)` };
+        return { primary: cg.countryZh, secondary: `智能优选 (自动选择)` };
       }
     }
     // Find which country+node

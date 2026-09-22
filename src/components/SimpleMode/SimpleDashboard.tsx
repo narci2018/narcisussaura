@@ -74,9 +74,12 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
     return selectedValue;
   }, [selectedValue, globalBest, regularNodes]);
 
-  // Auto-dismiss error after 8 seconds
+  // Transient hints auto-dismiss after 8s; connect failures stay on screen
+  // (cleared by the next connect attempt) so the exact cause can be read.
   useEffect(() => {
     if (errorMessage) {
+      const persistent = /连接失败|Connect failed|校验失败|授权/.test(errorMessage);
+      if (persistent) return;
       const t = setTimeout(() => setErrorMessage(null), 8000);
       return () => clearTimeout(t);
     }
@@ -93,8 +96,9 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
       }
       if (selectedValue === 'smart') {
         const topNodes = [...regularNodes]
-          .sort((a, b) => (a.latency_ms || 9999) - (b.latency_ms || 9999))
-          .slice(0, 10)
+          .sort((a, b) => (a.status === 'dead' ? 1 : 0) - (b.status === 'dead' ? 1 : 0)
+            || (a.latency_ms || 9999) - (b.latency_ms || 9999))
+          .slice(0, 30)
           .map(n => n.id);
         if (topNodes.length > 0) {
           useAppStore.getState().connectSmartGroup(topNodes);
@@ -111,7 +115,7 @@ export const SimpleDashboard: React.FC<SimpleDashboardProps> = ({ onSwitchToExpe
 
   // Determine node name shown under button
   const displayNodeName = isConnected
-    ? (connectedChainId === 'smart-group' ? `${connectedNode?.name} (智能漂移)` : connectedNode?.name)
+    ? (connectedChainId === 'smart-group' ? `${connectedNode?.name} (智能优选)` : connectedNode?.name)
     : selectedValue === 'smart'
     ? globalBest?.name
     : selectedValue.startsWith('country:')

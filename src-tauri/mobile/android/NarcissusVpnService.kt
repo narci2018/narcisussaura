@@ -69,9 +69,16 @@ class NarcissusVpnService : VpnService() {
     private var watchThread: Thread? = null
     @Volatile
     private var tunnelRequested = false
+    // Reference to the app's visible Activity. The VPN-consent Intent MUST be
+    // launched from it, not from the Service: a background service starting an
+    // activity is blocked (or rendered as a translucent blank dialog) by
+    // Android 10+ background-activity-start restrictions on many OEM ROMs.
+    @Volatile
+    private var currentActivity: Activity? = null
 
     private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
+            currentActivity = activity
             if (tunnelRequested && vpnInterface == null) {
                 Log.i(TAG, "Activity resumed, retrying VPN establishment")
                 tryEstablishTunnel()
@@ -80,9 +87,13 @@ class NarcissusVpnService : VpnService() {
         override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) {}
         override fun onActivityStarted(activity: Activity) {}
         override fun onActivityPaused(activity: Activity) {}
-        override fun onActivityStopped(activity: Activity) {}
+        override fun onActivityStopped(activity: Activity) {
+            if (currentActivity === activity) currentActivity = null
+        }
         override fun onActivitySaveInstanceState(activity: Activity, outState: android.os.Bundle) {}
-        override fun onActivityDestroyed(activity: Activity) {}
+        override fun onActivityDestroyed(activity: Activity) {
+            if (currentActivity === activity) currentActivity = null
+        }
     }
 
     override fun onCreate() {
@@ -141,7 +152,21 @@ class NarcissusVpnService : VpnService() {
         try {
             val prepareIntent = prepare(this)
             if (prepareIntent != null) {
-                Log.i(TAG, "VPN consent required, launching system dialog")
+                val act = currentActivity
+                if (act != null && !act.isFinishing) {
+                    // Launch consent from the visible Activity: it is exempt from
+                    // background-activity-start limits, so the dialog renders
+                    // correctly. onActivityResumed re-triggers this path once the
+                    // user allows or denies.
+                    Log.i(TAG, "VPN consent required, launching dialog from Activity")
+                    try {
+                        act.startActivity(prepareIntent)
+                        return
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Activity launch failed, falling back to service: ${e.message}")
+                    }
+                }
+                Log.i(TAG, "VPN consent required, no foreground Activity, launching from service")
                 prepareIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(prepareIntent)
                 return
@@ -187,14 +212,34 @@ class NarcissusVpnService : VpnService() {
         if (watchThread?.isAlive == true) return
         watchThread = Thread({
             val pendingFile = File(dataDir, "vpn_pending")
+            val stopFile = File(dataDir, "vpn_stop")
             while (isRunning && !Thread.currentThread().isInterrupted) {
-                if (pendingFile.exists() && vpnInterface == null) {
-                    Log.i(TAG, "Detected vpn_pending signal, establishing tunnel")
+                // Rust writes vpn_stop when the user disconnects. Close the tunnel
+                // but keep the service alive so a later connect can re-hand it over.
+                if (stopFile.exists()) {
+                    try { stopFile.delete() } catch (_: Exception) {}
+                    if (vpnInterface != null) {
+                        Log.i(TAG, "Detected vpn_stop signal, closing tunnel")
+                        cleanupVpnInterface()
+                        updateNotification("待机中", "Narcissus Aura VPN 服务就绪")
+                    }
+                }
+                if (pendingFile.exists()) {
+                    try { pendingFile.delete() } catch (_: Exception) {}
                     tunnelRequested = true
-                    try {
-                        pendingFile.delete()
-                    } catch (_: Exception) {}
-                    tryEstablishTunnel()
+                    val existing = vpnInterface
+                    if (existing != null) {
+                        // Reconnect fast path: Rust consumed and deleted the previous
+                        // tun_fd, so hand the already-open fd back immediately instead
+                        // of waiting for a fresh establishment (which would never fire
+                        // because the interface is non-null).
+                        Log.i(TAG, "Detected vpn_pending with live tunnel, re-handing fd=${existing.fd}")
+                        isTunReady = true
+                        writeTunFd(existing.fd)
+                    } else {
+                        Log.i(TAG, "Detected vpn_pending signal, establishing tunnel")
+                        tryEstablishTunnel()
+                    }
                 }
                 try {
                     Thread.sleep(500)

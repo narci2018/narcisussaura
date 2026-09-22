@@ -68,212 +68,52 @@ class VpnInitProvider : ContentProvider() {
             // the VpnService: Android 12+ foreground-service-start restrictions
             // (and aggressive OEM/MIUI killing) can prevent the service from
             // ever starting, and a service-side watcher would die with it. If
-            // nothing consumes Rust's vpn_pending signal, connect hangs for 120s
+            // nothing consumes Rust's vpn_pending signal, connect hangs for the full timeout
             // with zero UI feedback. The watchdog instead starts the service
             // lazily, exactly when the user taps connect (app is foreground,
             // so startForegroundService is always allowed).
             startVpnWatchdog(ctx.applicationContext)
 
-            // Track the visible Activity process-wide. The provider runs
-            // before the first onActivityResumed, so currentActivity is
-            // populated even though the VpnService only starts later, when
-            // the user taps connect. The consent dialog must launch from a
-            // resumed Activity (BAL restrictions), and its dismissal resumes
-            // the Activity, which re-triggers tunnel establishment.
+            // Track the visible Activity process-wide: the service's one
+            // consent-dialog allowance launches from it, and its dismissal
+            // resumes the Activity, which re-triggers tunnel establishment.
+            // (The watchdog also refreshes "connect hangs with zero UI
+            // feedback" by consuming Rust's vpn_pending signal.)
             (ctx.applicationContext as? Application)?.registerActivityLifecycleCallbacks(
                 object : Application.ActivityLifecycleCallbacks {
                     override fun onActivityResumed(activity: Activity) {
                         NarcissusVpnService.currentActivity = activity
-                        NarcissusVpnService.activityResumed = true
                         NarcissusVpnService.notifyActivityResumed()
                         requestNotificationPermissionOnce(activity)
                     }
                     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
                     override fun onActivityStarted(activity: Activity) {}
-                    override fun onActivityPaused(activity: Activity) {
-                        if (NarcissusVpnService.currentActivity === activity) {
-                            NarcissusVpnService.activityResumed = false
-                        }
-                    }
+                    override fun onActivityPaused(activity: Activity) {}
                     override fun onActivityStopped(activity: Activity) {
                         if (NarcissusVpnService.currentActivity === activity) {
                             NarcissusVpnService.currentActivity = null
-                            NarcissusVpnService.activityResumed = false
                         }
                     }
                     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
                     override fun onActivityDestroyed(activity: Activity) {
                         if (NarcissusVpnService.currentActivity === activity) {
                             NarcissusVpnService.currentActivity = null
-                            NarcissusVpnService.activityResumed = false
                         }
                     }
                 }
             )
 
-            // MIUI silently DROPS activities started by a handler post that is
-            // not tied to a user tap ("后台弹出界面" policy) — no exception, no
-            // dialog. That is why the VPN-consent dialog never rendered even
-            // though startActivity "succeeded". A native in-window button is
-            // the only bulletproof path: its click handler is user-input
-            // bound, so the consent dialog launch can never be intercepted.
-            startConsentOverlayPoller(ctx.applicationContext)
+            // Consent is raised by the SETTINGS app, never from our own
+            // process: v0.2.85-87 field reports proved MIUI swallows every
+            // app-initiated VpnConfirm launch — auto, input-bound native
+            // button, all of it. The UI instead walks the user through
+            // 系统设置 → VPN → Narcissus Aura, where the dialog is
+            // system-raised and unavoidable. Rust's 4s re-signal then builds
+            // the tunnel the moment consent exists, no extra tap needed.
         } catch (e: Exception) {
             Log.e(TAG, "Failed to init provider", e)
         }
         return true
-    }
-
-    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private var consentOverlay: android.widget.Button? = null
-    private var overlayHost: Activity? = null
-
-    private fun startConsentOverlayPoller(appCtx: android.content.Context) {
-        mainHandler.post(object : Runnable {
-            override fun run() {
-                try {
-                    refreshConsentOverlay(appCtx)
-                } catch (e: Exception) {
-                    Log.w(TAG, "consent overlay refresh failed: ${e.message}")
-                }
-                mainHandler.postDelayed(this, 600)
-            }
-        })
-    }
-
-    private fun refreshConsentOverlay(appCtx: android.content.Context) {
-        val status = try {
-            File(appCtx.dataDir, "vpn_status").readText().trim()
-        } catch (_: Exception) {
-            ""
-        }
-        val act = NarcissusVpnService.currentActivity
-        // Primary gate is the FILE marker Rust writes for the whole duration of
-        // the tunnel wait: MIUI kills background services, and a condition that
-        // required the live service (tunnelPending) hid the button exactly on
-        // the devices that need it most (v0.2.85 field report). The
-        // service-state check stays as a secondary trigger.
-        val markerUp = try {
-            File(appCtx.dataDir, "vpn_consent").exists()
-        } catch (_: Exception) {
-            false
-        }
-        val needsConsent = act != null && markerUp && !status.startsWith("established")
-        if (!needsConsent) {
-            removeConsentOverlay()
-            return
-        }
-        if (consentOverlay != null && overlayHost === act) return
-
-        val activity = act ?: return
-        val btn = android.widget.Button(activity).apply {
-            text = "⚠ 需要 VPN 授权：点击此处完成"
-            setBackgroundColor(0xFFF59E0B.toInt())
-            setTextColor(0xFF111827.toInt())
-            // Draw AND hit-test above the WebView sibling: elevation makes
-            // ViewGroup order the button first in touch dispatch too.
-            elevation = 1000f
-            setOnClickListener { v ->
-                val a = NarcissusVpnService.currentActivity ?: (v.context as? Activity)
-                if (a == null) {
-                    android.widget.Toast
-                        .makeText(v.context, "界面已切换，请重新点击「连接」", android.widget.Toast.LENGTH_SHORT)
-                        .show()
-                    return@setOnClickListener
-                }
-                try {
-                    // Self-evidencing tap: the consent_tapped stage + Toast
-                    // prove whether the touch actually reached this native
-                    // button. If the UI never shows it, touches are being
-                    // stolen before the button; if it later shows
-                    // consent_tapped_no_dialog the click worked and MIUI
-                    // dropped the dialog — each outcome gets its own text.
-                    File(appCtx.dataDir, "vpn_status").writeText("consent_tapped")
-                    android.widget.Toast
-                        .makeText(a, "正在打开系统 VPN 授权弹窗…", android.widget.Toast.LENGTH_SHORT)
-                        .show()
-                    val prep = android.net.VpnService.prepare(a)
-                    if (prep == null) {
-                        // Consent already granted: revive the service (or the
-                        // live instance via resume-hook) so it builds the tunnel.
-                        File(appCtx.dataDir, "vpn_pending").writeText("1")
-                        NarcissusVpnService.notifyActivityResumed()
-                    } else {
-                        a.startActivity(prep)
-                        mainHandler.postDelayed({
-                            try {
-                                if (android.net.VpnService.prepare(appCtx) == null) {
-                                    // User allowed within the check window.
-                                    File(appCtx.dataDir, "vpn_pending").writeText("1")
-                                    NarcissusVpnService.notifyActivityResumed()
-                                } else if (!NarcissusVpnService.activityResumed) {
-                                    // Our activity is covered: the dialog is
-                                    // (probably) on screen right now. Writing
-                                    // no_dialog here would be a lie; the Rust
-                                    // 4s re-signal plus the resume hook handle
-                                    // both the allow and the deny outcome.
-                                    Log.i(TAG, "Consent dialog likely visible at check time")
-                                } else {
-                                    // Click worked, startActivity did not throw,
-                                    // yet we are still resumed and consent is
-                                    // still missing: MIUI swallowed the dialog.
-                                    // The service re-entry posts the tappable
-                                    // consent notification (BAL-exempt).
-                                    File(appCtx.dataDir, "vpn_status").writeText("consent_tapped_no_dialog")
-                                    File(appCtx.dataDir, "vpn_pending").writeText("1")
-                                    android.widget.Toast
-                                        .makeText(
-                                            appCtx,
-                                            "授权弹窗被系统拦截，请下拉通知栏点击「需要允许 VPN 连接」完成授权",
-                                            android.widget.Toast.LENGTH_LONG
-                                        ).show()
-                                }
-                            } catch (_: Exception) {}
-                        }, 2500)
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "overlay consent launch failed", e)
-                    try {
-                        File(appCtx.dataDir, "vpn_status")
-                            .writeText("consent_overlay_failed:${e.javaClass.simpleName}")
-                    } catch (_: Exception) {}
-                }
-            }
-        }
-        val lp = android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
-        )
-        lp.setMargins(48, 220, 48, 0)
-        try {
-            // Attach INSIDE android.R.id.content — the FrameLayout the WebView
-            // itself lives in. v0.2.86 added the button to the raw decorView;
-            // on OEM decor hierarchies a decor-level sibling of the whole
-            // window content can render fine yet never receive touches, which
-            // matches the field report: button visible, tap inert.
-            val parent = (activity.findViewById(android.R.id.content) as? android.view.ViewGroup)
-                ?: (activity.window.decorView as? android.view.ViewGroup)
-            if (parent == null) {
-                Log.w(TAG, "No view group available for consent overlay")
-                return
-            }
-            parent.addView(btn, lp)
-            btn.bringToFront()
-            consentOverlay = btn
-            overlayHost = activity
-            Log.i(TAG, "Consent overlay button attached to content view")
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to attach consent overlay: ${e.message}")
-        }
-    }
-
-    private fun removeConsentOverlay() {
-        val btn = consentOverlay ?: run { overlayHost = null; return }
-        try {
-            (btn.parent as? android.view.ViewGroup)?.removeView(btn)
-        } catch (_: Exception) {}
-        consentOverlay = null
-        overlayHost = null
     }
 
     @Volatile

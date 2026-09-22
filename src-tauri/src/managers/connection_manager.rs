@@ -520,7 +520,7 @@ impl ConnectionManager {
                 }
                 *self.status.lock() = ConnectionStatus::Error;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(format!("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}", self.android_vpn_diag()));
+                return Err(format!("无法建立 VPN 隧道：缺少系统 VPN 授权。请打开手机「设置 → 连接与共享（或 更多连接）→ VPN」，点击「Narcissus Aura」，在弹窗中点「允许」并勾选「不再询问」，然后回到本应用重新点击连接{}", self.android_vpn_diag()));
             }
         };
         #[cfg(not(target_os = "android"))]
@@ -802,7 +802,7 @@ impl ConnectionManager {
                 }
                 *self.status.lock() = ConnectionStatus::Error;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(format!("无法建立 VPN 隧道：请在点击连接后，于系统弹窗中允许 VPN 权限，然后重试{}", self.android_vpn_diag()));
+                return Err(format!("无法建立 VPN 隧道：缺少系统 VPN 授权。请打开手机「设置 → 连接与共享（或 更多连接）→ VPN」，点击「Narcissus Aura」，在弹窗中点「允许」并勾选「不再询问」，然后回到本应用重新点击连接{}", self.android_vpn_diag()));
             }
         };
         #[cfg(not(target_os = "android"))]
@@ -1854,7 +1854,7 @@ rules:
                 *self.connected_chain.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
                 return Err(format!(
-                    "无法建立 VPN 隧道：请点击页面顶部的橙色「需要 VPN 授权」按钮完成授权；若没有该按钮，请重新点击连接并在系统弹窗中允许 VPN{}",
+                    "无法建立 VPN 隧道：缺少系统 VPN 授权。请打开手机「设置 → 连接与共享（或 更多连接）→ VPN」，点击「Narcissus Aura」，在弹窗中点「允许」并勾选「不再询问」，然后回到本应用重新点击连接{}",
                     self.android_vpn_diag()
                 ));
             }
@@ -2088,24 +2088,25 @@ rules:
     /// On Android, trigger VpnService and wait for the TUN fd file to appear.
     /// Returns the fd number on success, or None on non-Android / proxy-only mode.
     ///
-    /// The whole handshake is FILE-DRIVEN on purpose. The v0.2.85 field report
-    /// (status frozen at consent_dialog_opened, no orange button, no progress)
-    /// showed MIUI can silently drop the auto consent dialog AND kill the
-    /// VpnService afterwards, which broke every in-process signal the button
-    /// used to depend on. So:
-    /// - `vpn_consent` marker: while it exists the Kotlin overlay poller shows
-    ///   the input-bound orange consent button unconditionally (service death
-    ///   cannot hide it);
+    /// The whole handshake is FILE-DRIVEN on purpose: MIUI can kill the
+    /// VpnService mid-handshake, so no in-process signal is trustworthy.
     /// - `vpn_pending` is re-signalled every ~4s: if the service is killed
     ///   mid-handshake the app-process watchdog starts it again, and a
     ///   re-started service that finds consent already granted establishes
     ///   the tunnel immediately.
+    ///
+    /// Consent is NO LONGER chased inside our own process (v0.2.86/87 field
+    /// reports: MIUI swallows our consent dialog launches regardless of
+    /// origin, native overlay buttons included). Instead the UI guides the
+    /// user to 系统设置 → VPN, where SETTINGS itself raises the consent
+    /// dialog — a system-initiated dialog MIUI cannot swallow. The 4s
+    /// re-signal then establishes the tunnel automatically right after the
+    /// user allows, without ever leaving "Connecting".
     #[cfg(target_os = "android")]
     async fn wait_for_android_tun_fd(&self, my_gen: u64, app: &AppHandle) -> Option<i32> {
         let fd_file = self.app_data_dir.join("tun_fd");
         let pending_file = self.app_data_dir.join("vpn_pending");
         let status_file = self.app_data_dir.join("vpn_status");
-        let consent_marker = self.app_data_dir.join("vpn_consent");
         let stop_file = self.app_data_dir.join("vpn_stop");
         let _ = std::fs::remove_file(&fd_file);
         // Drop the previous session's stage report so diagnostics can never
@@ -2114,20 +2115,17 @@ rules:
 
         log::info!("Android: writing vpn_pending signal for VpnService...");
         let _ = std::fs::write(&pending_file, "1");
-        // Show the native consent button from t=0, regardless of what the
-        // service or the system dialog do next.
-        let _ = std::fs::write(&consent_marker, "1");
 
-        // Up to 120s: the first connection also waits for the user to accept
-        // the system VPN-permission dialog before the tunnel can be built.
+        // Up to 180s: consent now happens in the system Settings app, which
+        // means the user leaves our app, navigates pages, taps 允许, and comes
+        // back — budget for that round trip.
         let mut last_stage = String::new();
-        for i in 0..480 {
+        for i in 0..720 {
             // Abandon promptly if the user hit terminate (disconnect bumps the
             // generation) or a newer connect superseded this one; otherwise the
-            // UI is frozen on "Connecting" for the full 120s and cannot be stopped.
+            // UI is frozen on "Connecting" for the full timeout and cannot be stopped.
             if self.connect_generation.load(Ordering::SeqCst) != my_gen {
                 let _ = std::fs::remove_file(&pending_file);
-                let _ = std::fs::remove_file(&consent_marker);
                 log::info!("Android: tun fd wait cancelled (generation changed)");
                 return None;
             }
@@ -2135,7 +2133,6 @@ rules:
                 if let Ok(fd) = content.trim().parse::<i32>() {
                     log::info!("Android: received TUN fd={} after {}ms", fd, i * 250);
                     let _ = std::fs::remove_file(&fd_file);
-                    let _ = std::fs::remove_file(&consent_marker);
                     // The periodic re-signal may have raced the fd write; drop
                     // it so the watchdog does not restart a handshake that is
                     // already complete.
@@ -2146,15 +2143,16 @@ rules:
             // Self-heal the service side: MIUI kills background services freely.
             // Re-signalling makes the watchdog start it again; the service
             // treats a re-entry as the same attempt (no consent-dialog storm).
+            // This is ALSO the auto-continue mechanism: the moment the user
+            // grants consent in system Settings, the next re-entry's
+            // prepare() returns null and the tunnel is built without any
+            // further tap from the user.
             if i % 16 == 8 {
                 let _ = std::fs::write(&pending_file, "1");
             }
             // Surface the tunnel service's current stage to the UI every ~2s
             // while we wait. Without this an early terminate shows nothing at
-            // all, and a stuck handshake is undiagnosable from the phone. The
-            // faster cadence also matters for the button tap diagnostics
-            // (consent_tapped / consent_tapped_no_dialog), which the Kotlin
-            // side may overwrite within a few seconds.
+            // all, and a stuck handshake is undiagnosable from the phone.
             if i % 8 == 4 {
                 let stage = match std::fs::read_to_string(&status_file) {
                     Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
@@ -2163,21 +2161,15 @@ rules:
                 // Fatal stages: the service already gave up for a reason the
                 // user cannot recover from within this attempt (FGS promise
                 // could not be kept, the service was never allowed to start).
-                // NOTE: consent_denied is NOT fatal. MIUI silently drops the
-                // auto-launched consent dialog (a startActivity not bound to
-                // user input), which reads back as an instant "denial" even
-                // when the user never saw anything. The native orange consent
-                // button (VpnInitProvider) IS input-bound and always works,
-                // so keep waiting and let the user tap it; the 120s cap and
-                // the generation check still bound the wait.
+                // NOTE: every consent_* stage is NOT fatal — it just means
+                // consent is still missing, and the UI text points the user
+                // at system Settings to grant it.
                 if stage.starts_with("fgs_start_failed")
                     || stage.starts_with("service_start_failed")
                 {
                     let _ = std::fs::remove_file(&pending_file);
-                    let _ = std::fs::remove_file(&consent_marker);
                     // Tell the service to drop tunnelRequested; otherwise it
-                    // re-raises the consent flow on every activity resume and
-                    // the native consent button lingers on a dead attempt.
+                    // re-raises the consent flow on every activity resume.
                     let _ = std::fs::write(&stop_file, "1");
                     log::error!("Android: VpnService reported fatal stage {}, abandoning", stage);
                     let _ = app.emit("core:vpn-stage", stage.clone());
@@ -2192,10 +2184,9 @@ rules:
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         let _ = std::fs::remove_file(&pending_file);
-        let _ = std::fs::remove_file(&consent_marker);
         let _ = std::fs::write(&stop_file, "1");
         let diag = self.android_vpn_diag();
-        log::error!("Android: timed out waiting for TUN fd from VpnService (120s). {}", diag);
+        log::error!("Android: timed out waiting for TUN fd from VpnService (180s). {}", diag);
         None
     }
 

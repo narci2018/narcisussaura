@@ -2149,10 +2149,13 @@ rules:
             if i % 16 == 8 {
                 let _ = std::fs::write(&pending_file, "1");
             }
-            // Surface the tunnel service's current stage to the UI every ~5s
+            // Surface the tunnel service's current stage to the UI every ~2s
             // while we wait. Without this an early terminate shows nothing at
-            // all, and a stuck handshake is undiagnosable from the phone.
-            if i % 20 == 4 {
+            // all, and a stuck handshake is undiagnosable from the phone. The
+            // faster cadence also matters for the button tap diagnostics
+            // (consent_tapped / consent_tapped_no_dialog), which the Kotlin
+            // side may overwrite within a few seconds.
+            if i % 8 == 4 {
                 let stage = match std::fs::read_to_string(&status_file) {
                     Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
                     _ => "service_starting".to_string(),

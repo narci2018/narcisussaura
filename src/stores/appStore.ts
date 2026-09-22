@@ -164,6 +164,8 @@ function translateVpnStage(raw: string): string {
   if (raw === 'consent_notify_posted') return '请下拉通知栏，点击「需要允许 VPN 连接」完成授权';
   if (raw === 'consent_notify_blocked') return '通知权限被拒，无法弹出授权入口：请先到系统设置 → 通知 中允许「Narcissus Aura」显示通知，再重新连接';
   if (raw === 'consent_denied') return 'VPN 授权被拒绝（或被系统静默拦截）。请点击页面顶部橙色「需要 VPN 授权」按钮完成授权，连接会自动继续（最多等待 2 分钟）';
+  if (raw === 'consent_tapped') return '已收到你的点击，正在打开系统 VPN 授权弹窗...';
+  if (raw === 'consent_tapped_no_dialog') return '已确认按钮点击生效，但授权弹窗被系统拦截。请下拉通知栏点击「需要允许 VPN 连接」（或直接点击「正在连接」那条通知）完成授权；授权后连接自动继续';
   if (raw.startsWith('consent_overlay_failed')) return '授权弹窗仍被系统拦截，请前往系统设置 → 应用 → Narcissus Aura，允许「显示弹窗/后台弹出界面」后重试';
   if (raw.startsWith('consent_notify_failed')) return '授权通知创建失败，请在系统设置中允许本应用显示通知后重试';
   if (raw === 'establishing') return '正在建立 VPN 隧道...';

@@ -84,21 +84,28 @@ class VpnInitProvider : ContentProvider() {
                 object : Application.ActivityLifecycleCallbacks {
                     override fun onActivityResumed(activity: Activity) {
                         NarcissusVpnService.currentActivity = activity
+                        NarcissusVpnService.activityResumed = true
                         NarcissusVpnService.notifyActivityResumed()
                         requestNotificationPermissionOnce(activity)
                     }
                     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
                     override fun onActivityStarted(activity: Activity) {}
-                    override fun onActivityPaused(activity: Activity) {}
+                    override fun onActivityPaused(activity: Activity) {
+                        if (NarcissusVpnService.currentActivity === activity) {
+                            NarcissusVpnService.activityResumed = false
+                        }
+                    }
                     override fun onActivityStopped(activity: Activity) {
                         if (NarcissusVpnService.currentActivity === activity) {
                             NarcissusVpnService.currentActivity = null
+                            NarcissusVpnService.activityResumed = false
                         }
                     }
                     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
                     override fun onActivityDestroyed(activity: Activity) {
                         if (NarcissusVpnService.currentActivity === activity) {
                             NarcissusVpnService.currentActivity = null
+                            NarcissusVpnService.activityResumed = false
                         }
                     }
                 }
@@ -163,23 +170,66 @@ class VpnInitProvider : ContentProvider() {
             text = "⚠ 需要 VPN 授权：点击此处完成"
             setBackgroundColor(0xFFF59E0B.toInt())
             setTextColor(0xFF111827.toInt())
-            setOnClickListener {
-                val a = NarcissusVpnService.currentActivity ?: return@setOnClickListener
+            // Draw AND hit-test above the WebView sibling: elevation makes
+            // ViewGroup order the button first in touch dispatch too.
+            elevation = 1000f
+            setOnClickListener { v ->
+                val a = NarcissusVpnService.currentActivity ?: (v.context as? Activity)
+                if (a == null) {
+                    android.widget.Toast
+                        .makeText(v.context, "界面已切换，请重新点击「连接」", android.widget.Toast.LENGTH_SHORT)
+                        .show()
+                    return@setOnClickListener
+                }
                 try {
-                    // Revive the (possibly MIUI-killed) service first: the
-                    // watchdog picks the signal up within 400ms and a restarted
-                    // service establishes the tunnel immediately when consent
-                    // is already granted.
-                    File(appCtx.dataDir, "vpn_pending").writeText("1")
+                    // Self-evidencing tap: the consent_tapped stage + Toast
+                    // prove whether the touch actually reached this native
+                    // button. If the UI never shows it, touches are being
+                    // stolen before the button; if it later shows
+                    // consent_tapped_no_dialog the click worked and MIUI
+                    // dropped the dialog — each outcome gets its own text.
+                    File(appCtx.dataDir, "vpn_status").writeText("consent_tapped")
+                    android.widget.Toast
+                        .makeText(a, "正在打开系统 VPN 授权弹窗…", android.widget.Toast.LENGTH_SHORT)
+                        .show()
                     val prep = android.net.VpnService.prepare(a)
-                    if (prep != null) {
-                        // Input-bound launch: MIUI's background-dialog policy
-                        // cannot drop this.
-                        a.startActivity(prep)
-                    } else {
-                        // Consent already granted (e.g. "always allow"): just
-                        // nudge the service to build the tunnel now.
+                    if (prep == null) {
+                        // Consent already granted: revive the service (or the
+                        // live instance via resume-hook) so it builds the tunnel.
+                        File(appCtx.dataDir, "vpn_pending").writeText("1")
                         NarcissusVpnService.notifyActivityResumed()
+                    } else {
+                        a.startActivity(prep)
+                        mainHandler.postDelayed({
+                            try {
+                                if (android.net.VpnService.prepare(appCtx) == null) {
+                                    // User allowed within the check window.
+                                    File(appCtx.dataDir, "vpn_pending").writeText("1")
+                                    NarcissusVpnService.notifyActivityResumed()
+                                } else if (!NarcissusVpnService.activityResumed) {
+                                    // Our activity is covered: the dialog is
+                                    // (probably) on screen right now. Writing
+                                    // no_dialog here would be a lie; the Rust
+                                    // 4s re-signal plus the resume hook handle
+                                    // both the allow and the deny outcome.
+                                    Log.i(TAG, "Consent dialog likely visible at check time")
+                                } else {
+                                    // Click worked, startActivity did not throw,
+                                    // yet we are still resumed and consent is
+                                    // still missing: MIUI swallowed the dialog.
+                                    // The service re-entry posts the tappable
+                                    // consent notification (BAL-exempt).
+                                    File(appCtx.dataDir, "vpn_status").writeText("consent_tapped_no_dialog")
+                                    File(appCtx.dataDir, "vpn_pending").writeText("1")
+                                    android.widget.Toast
+                                        .makeText(
+                                            appCtx,
+                                            "授权弹窗被系统拦截，请下拉通知栏点击「需要允许 VPN 连接」完成授权",
+                                            android.widget.Toast.LENGTH_LONG
+                                        ).show()
+                                }
+                            } catch (_: Exception) {}
+                        }, 2500)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "overlay consent launch failed", e)
@@ -196,10 +246,22 @@ class VpnInitProvider : ContentProvider() {
         )
         lp.setMargins(48, 220, 48, 0)
         try {
-            (activity.window.decorView as? android.view.ViewGroup)?.addView(btn, lp)
+            // Attach INSIDE android.R.id.content — the FrameLayout the WebView
+            // itself lives in. v0.2.86 added the button to the raw decorView;
+            // on OEM decor hierarchies a decor-level sibling of the whole
+            // window content can render fine yet never receive touches, which
+            // matches the field report: button visible, tap inert.
+            val parent = (activity.findViewById(android.R.id.content) as? android.view.ViewGroup)
+                ?: (activity.window.decorView as? android.view.ViewGroup)
+            if (parent == null) {
+                Log.w(TAG, "No view group available for consent overlay")
+                return
+            }
+            parent.addView(btn, lp)
+            btn.bringToFront()
             consentOverlay = btn
             overlayHost = activity
-            Log.i(TAG, "Consent overlay button attached")
+            Log.i(TAG, "Consent overlay button attached to content view")
         } catch (e: Exception) {
             Log.w(TAG, "Failed to attach consent overlay: ${e.message}")
         }

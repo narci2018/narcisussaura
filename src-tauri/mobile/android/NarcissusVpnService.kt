@@ -42,6 +42,15 @@ class NarcissusVpnService : VpnService() {
         @Volatile
         var currentActivity: Activity? = null
 
+        // True only while currentActivity is between onResume and onPause.
+        // Activity#isResumed is not public framework API, so the provider's
+        // lifecycle callbacks maintain this themselves. Used by the consent
+        // button's delayed check: if the app is NOT resumed ~2.5s after we
+        // launched the consent dialog, the dialog is on screen (a real
+        // success); still resumed means MIUI swallowed it.
+        @Volatile
+        var activityResumed = false
+
         @Volatile
         private var instance: NarcissusVpnService? = null
 
@@ -124,6 +133,10 @@ class NarcissusVpnService : VpnService() {
     // background-activity-start restrictions on every OEM ROM).
     @Volatile
     private var pendingConsentIntent: Intent? = null
+    // Dedup: the Rust side re-signals vpn_pending every ~4s (MIUI kills the
+    // service), and each re-entry would otherwise re-notify.
+    @Volatile
+    private var consentNotifyPosted = false
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
@@ -168,6 +181,7 @@ class NarcissusVpnService : VpnService() {
                 // process-scope (companion) so revivals can never storm it.
                 if (!tunnelRequested) {
                     consentDialogShown = false
+                    consentNotifyPosted = false
                 }
                 tunnelRequested = true
                 if (!resolveForegroundPromise("正在连接", "Narcissus Aura VPN 正在建立连接...")) {
@@ -222,15 +236,14 @@ class NarcissusVpnService : VpnService() {
                     // it). Re-launching on every resume would trap them in an
                     // inescapable prompt loop.
                     consentDialogShown = false
-                    writeVpnStatus("consent_denied")
+                    enterWaitingConsent(prepareIntent)
                     return
                 }
                 if (consentAutoAttempted) {
-                    // The single auto attempt is spent; stay in consent_denied
-                    // so the native button remains available. Rust keeps the
-                    // connect alive meanwhile and the button tap re-enters here
-                    // with consent already granted.
-                    writeVpnStatus("consent_denied")
+                    // The single auto attempt is spent; stay in the consent
+                    // waiting state so the native button remains available.
+                    // Rust keeps the connect alive meanwhile.
+                    enterWaitingConsent(prepareIntent)
                     return
                 }
                 markConsentAutoAttempted()
@@ -286,6 +299,11 @@ class NarcissusVpnService : VpnService() {
                 val fd = vpnInterface!!.fd
                 isTunReady = true
                 pendingConsentIntent = null
+                consentNotifyPosted = false
+                try {
+                    (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                        .cancel(NOTIFICATION_ID + 1)
+                } catch (_: Exception) {}
                 writeTunFd(fd)
                 writeVpnStatus("established:$fd")
                 updateNotification("正在运行", "Narcissus Aura VPN 已连接")
@@ -300,6 +318,32 @@ class NarcissusVpnService : VpnService() {
         }
     }
 
+    /**
+     * Consent is still missing after the single auto attempt. Two entry points
+     * stay open for the user: the native orange button (VpnInitProvider, driven
+     * by Rust's vpn_consent marker) and a tappable consent notification — a
+     * notification tap is user-initiated, which even MIUI's dialog-blocking
+     * policy cannot intercept. A fresh button tap writes its own diagnostic
+     * stage (consent_tapped*), which this path must not clobber.
+     */
+    private fun enterWaitingConsent(prepareIntent: Intent) {
+        pendingConsentIntent = prepareIntent
+        if (!currentStage().startsWith("consent_tapped")) {
+            writeVpnStatus("consent_denied")
+        }
+        showConsentNotification()
+        // Re-post the ongoing FGS notification too: buildNotification now
+        // binds its tap to the consent intent, so the persistent
+        // "connecting" notification is itself a consent entry point.
+        updateNotification("需要授权", "Narcissus Aura 等待你点击此处完成 VPN 授权")
+    }
+
+    private fun currentStage(): String = try {
+        File(dataDir, "vpn_status").readText().trim()
+    } catch (_: Exception) {
+        ""
+    }
+
     private fun writeVpnStatus(status: String) {
         try {
             File(dataDir, "vpn_status").writeText(status)
@@ -311,6 +355,7 @@ class NarcissusVpnService : VpnService() {
 
     private fun showConsentNotification() {
         val consent = pendingConsentIntent ?: return
+        if (consentNotifyPosted) return
         try {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !manager.areNotificationsEnabled()) {
@@ -335,7 +380,10 @@ class NarcissusVpnService : VpnService() {
                 .setAutoCancel(false)
                 .build()
             manager.notify(NOTIFICATION_ID + 1, notification)
-            writeVpnStatus("consent_notify_posted")
+            consentNotifyPosted = true
+            if (!currentStage().startsWith("consent_tapped")) {
+                writeVpnStatus("consent_notify_posted")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to show consent notification", e)
             writeVpnStatus("consent_notify_failed:${e.javaClass.simpleName}")
@@ -359,6 +407,7 @@ class NarcissusVpnService : VpnService() {
         consentDialogShown = false
         cleanupVpnInterface()
         pendingConsentIntent = null
+        consentNotifyPosted = false
         try {
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .cancel(NOTIFICATION_ID + 1)
@@ -432,13 +481,28 @@ class NarcissusVpnService : VpnService() {
             .setOngoing(true)
 
         try {
-            val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-            if (launchIntent != null) {
-                val pendingIntent = PendingIntent.getActivity(
-                    this, 0, launchIntent,
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+            // While consent is pending, tapping the ongoing "connecting"
+            // notification opens the consent page directly: another tap
+            // target that no dialog-blocking policy can swallow.
+            val consent = pendingConsentIntent
+            if (consent != null) {
+                val pi = PendingIntent.getActivity(
+                    this, 100,
+                    Intent(consent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    else PendingIntent.FLAG_UPDATE_CURRENT
                 )
-                builder.setContentIntent(pendingIntent)
+                builder.setContentIntent(pi)
+            } else {
+                val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+                if (launchIntent != null) {
+                    val pendingIntent = PendingIntent.getActivity(
+                        this, 0, launchIntent,
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+                    )
+                    builder.setContentIntent(pendingIntent)
+                }
             }
         } catch (t: Throwable) {
             Log.w(TAG, "Notification contentIntent unavailable: ${t.message}")

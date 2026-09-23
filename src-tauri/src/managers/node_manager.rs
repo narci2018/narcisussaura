@@ -767,6 +767,29 @@ impl NodeManager {
 
         let (country_code, country_name) = Self::detect_country(&name);
 
+        // WS transport params the core MUST replay verbatim. Cheaper panels now
+        // ship disguised paths (`/events?ed=2560`) behind Cloudflare ECH:
+        // dropping path/host breaks the WS upgrade (404/RST), and without the
+        // ECH public name the CDN TLS handshake silently hangs.
+        let ws_path = query
+            .get("path")
+            .cloned()
+            .or_else(|| query.get("ws-path").cloned());
+        let ws_host = query
+            .get("host")
+            .cloned()
+            .or_else(|| query.get("hostname").cloned())
+            .or_else(|| query.get("ws-host").cloned());
+        let ech = query.get("ech").cloned().map(|v| {
+            // v2rayN format: "<public-name>+<resolver>" — sing-box queries the
+            // HTTPS record itself, so only the name matters.
+            v.split('+').next().unwrap_or("").to_string()
+        });
+        let insecure = matches!(
+            query.get("allowInsecure").map(|s| s.as_str()).unwrap_or(""),
+            "1" | "true"
+        );
+
         let node = UnifiedNode {
             id: Uuid::new_v4().to_string(),
             name,
@@ -792,6 +815,10 @@ impl NodeManager {
                 "short_id": short_id,
                 "fingerprint": fingerprint,
                 "network": query.get("type").cloned().unwrap_or_else(|| "tcp".to_string()),
+                "path": ws_path,
+                "host": ws_host,
+                "ech": ech,
+                "insecure": insecure,
             }),
         };
         Ok(node)
@@ -807,6 +834,19 @@ impl NodeManager {
 
         let query: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
         let sni = query.get("sni").cloned().unwrap_or_else(|| host.to_string());
+        let ws_path = query
+            .get("path")
+            .cloned()
+            .or_else(|| query.get("ws-path").cloned());
+        let ws_host = query
+            .get("host")
+            .cloned()
+            .or_else(|| query.get("ws-host").cloned());
+        let ech = query.get("ech").cloned().map(|v| v.split('+').next().unwrap_or("").to_string());
+        let insecure = matches!(
+            query.get("allowInsecure").map(|s| s.as_str()).unwrap_or(""),
+            "1" | "true"
+        );
 
         let (country_code, country_name) = Self::detect_country(&name);
 
@@ -828,7 +868,12 @@ impl NodeManager {
             status: NodeStatus::Unknown,
             config: json!({
                 "password": password,
-                "sni": sni
+                "sni": sni,
+                "network": query.get("type").cloned().unwrap_or_else(|| "tcp".to_string()),
+                "path": ws_path,
+                "host": ws_host,
+                "ech": ech,
+                "insecure": insecure,
             }),
         })
     }
@@ -939,5 +984,28 @@ impl NodeManager {
         fs::write(&self.data_path, json_data)
             .map_err(|e| format!("Failed to write nodes.json: {}", e))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vless_ws_link_keeps_transport_and_ech_params() {
+        // Exact shape of the current freesubplus links (France 122): without
+        // path/host/ech/fp the core can never speak to these nodes — v2rayN
+        // parses all of them, our old parser dropped everything but uuid.
+        let link = "vless://08ea5abf-fbe9-4c40-983d-099076942b93@104.252.111.38:8443?security=tls&type=ws&ech=cloudflare-ech.com%2Bhttps%3A%2F%2Fdns.alidns.com%2Fdns-query&host=forfreesub.tclucky.eu.cc&fp=chrome&sni=forfreesub.tclucky.eu.cc&path=%2Fevents%3Fed%3D2560&encryption=none#%F0%9F%87%AB%F0%9F%87%B7+France+122";
+        let node = NodeManager::parse_vless_link(link).expect("parse vless link");
+        assert_eq!(node.address, "104.252.111.38");
+        assert_eq!(node.port, 8443);
+        assert_eq!(node.config["path"], "/events?ed=2560");
+        assert_eq!(node.config["host"], "forfreesub.tclucky.eu.cc");
+        assert_eq!(node.config["sni"], "forfreesub.tclucky.eu.cc");
+        assert_eq!(node.config["network"], "ws");
+        assert_eq!(node.config["security"], "tls");
+        assert_eq!(node.config["fingerprint"], "chrome");
+        assert_eq!(node.config["ech"], "cloudflare-ech.com");
     }
 }

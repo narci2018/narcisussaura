@@ -68,6 +68,7 @@ impl SingBoxAdapter {
                     } else {
                         tls_obj["alpn"] = json!(["h2", "http/1.1"]);
                     }
+                    apply_utls_ech(&mut tls_obj, conf);
                     outbound["tls"] = tls_obj;
                 }
 
@@ -136,6 +137,11 @@ impl SingBoxAdapter {
                         "insecure": conf.get("insecure").and_then(|v| v.as_bool()).unwrap_or(false)
                     }
                 });
+                if let Some(ech_name) = conf.get("ech").and_then(|v| v.as_str()) {
+                    if !ech_name.is_empty() {
+                        outbound["tls"]["ech"] = json!({ "enabled": true, "query_server_name": ech_name });
+                    }
+                }
 
                 if network == "ws" {
                     let path = conf.get("path").and_then(|v| v.as_str()).unwrap_or("/");
@@ -718,6 +724,25 @@ impl SingBoxAdapter {
             "domain": ["cp.cloudflare.com", "www.google.com", "one.one.one.one", "ip-api.com"],
             "server": "dns-direct"
         }));
+        // ECH is resolved by sing-box itself (HTTPS record of the public name)
+        // before the tunnel exists; routed through dns-remote it would deadlock
+        // behind the very node whose handshake needs the answer.
+        let mut ech_names: Vec<String> = Vec::new();
+        for ob in outbounds.iter() {
+            if let Some(name) = ob
+                .get("tls")
+                .and_then(|t| t.get("ech"))
+                .and_then(|e| e.get("query_server_name"))
+                .and_then(|s| s.as_str())
+            {
+                if !name.is_empty() && !ech_names.iter().any(|n| n == name) {
+                    ech_names.push(name.to_string());
+                }
+            }
+        }
+        if !ech_names.is_empty() {
+            dns_rules.push(json!({ "domain": ech_names, "server": "dns-direct" }));
+        }
         if !block_dns_tags.is_empty() {
             dns_rules.push(json!({
                 "rule_set": block_dns_tags,
@@ -786,6 +811,19 @@ impl SingBoxAdapter {
         }
 
         Ok(serde_json::to_string_pretty(&full_config)?)
+    }
+}
+
+fn apply_utls_ech(tls_obj: &mut Value, conf: &Value) {
+    if let Some(fp) = conf.get("fingerprint").and_then(|v| v.as_str()) {
+        if !fp.is_empty() {
+            tls_obj["utls"] = json!({ "enabled": true, "fingerprint": fp });
+        }
+    }
+    if let Some(ech_name) = conf.get("ech").and_then(|v| v.as_str()) {
+        if !ech_name.is_empty() {
+            tls_obj["ech"] = json!({ "enabled": true, "query_server_name": ech_name });
+        }
     }
 }
 

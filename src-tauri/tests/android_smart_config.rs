@@ -154,3 +154,65 @@ fn android_smart_group_config_is_valid_json_structure() {
     let patched3 = ConnectionManager::patch_android_relay_config(&raw3).expect("android patch failed");
     write_checked(&patched3, "android_single_config.json");
 }
+
+#[test]
+fn vless_ws_ech_node_config_carries_every_handshake_param() {
+    // Mirrors what NodeManager::parse_vless_link now produces for the live
+    // freesubplus links (France 122): path/host/fp/ech all survived parsing.
+    // If any of them is missing from the sing-box outbound, the node either
+    // 404s the WS upgrade, gets RST by the GFW (no uTLS) or hangs at the
+    // Cloudflare edge (no ECH) — the exact France failure of v0.2.96-98.
+    let settings = AppSettings::default();
+    let work_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+    let fr = node(
+        "fr122",
+        ProtocolType::Vless,
+        "104.252.111.38",
+        8443,
+        json!({
+            "uuid": "08ea5abf-fbe9-4c40-983d-099076942b93",
+            "security": "tls",
+            "sni": "forfreesub.tclucky.eu.cc",
+            "network": "ws",
+            "path": "/events?ed=2560",
+            "host": "forfreesub.tclucky.eu.cc",
+            "fingerprint": "chrome",
+            "ech": "cloudflare-ech.com",
+        }),
+    );
+    let adapter = SingBoxAdapter::new();
+    let raw = adapter
+        .generate_config_with_relay(&fr, None, &settings, &work_dir)
+        .expect("single-node config failed");
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let ob = v["outbounds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["type"] == "vless")
+        .expect("vless outbound");
+    assert_eq!(ob["transport"]["path"], "/events?ed=2560");
+    assert_eq!(ob["transport"]["headers"]["Host"], "forfreesub.tclucky.eu.cc");
+    assert_eq!(ob["tls"]["utls"]["enabled"], true);
+    assert_eq!(ob["tls"]["utls"]["fingerprint"], "chrome");
+    assert_eq!(ob["tls"]["ech"]["enabled"], true);
+    assert_eq!(ob["tls"]["ech"]["query_server_name"], "cloudflare-ech.com");
+    // The HTTPS record fetch must NOT ride dns-remote through the node whose
+    // handshake is waiting for the answer.
+    let dns_rules = v["dns"]["rules"].as_array().unwrap();
+    let ech_rule = dns_rules
+        .iter()
+        .find(|r| {
+            r["domain"]
+                .as_array()
+                .map(|d| d.iter().any(|x| x == "cloudflare-ech.com"))
+                .unwrap_or(false)
+        })
+        .expect("ECH public name must resolve outside the tunnel");
+    assert_eq!(ech_rule["server"], "dns-direct");
+    write_checked(&raw, "android_fr122_ech.json");
+
+    // And the phone-patched variant must stay structurally valid too.
+    let patched = ConnectionManager::patch_android_relay_config(&raw).expect("android patch");
+    write_checked(&patched, "android_fr122_ech_patched.json");
+}

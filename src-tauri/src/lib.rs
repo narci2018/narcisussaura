@@ -37,21 +37,7 @@ async fn get_crash_report(app: AppHandle) -> Option<String> {
     {
         use tauri::Manager;
         let dir = app.path().app_data_dir().ok()?;
-        let mut parts: Vec<String> = Vec::new();
-        for name in ["crash_log", "panic_log"] {
-            let f = dir.join(name);
-            if let Ok(s) = std::fs::read_to_string(&f) {
-                if !s.trim().is_empty() {
-                    parts.push(format!("[{}] {}", name, s.trim()));
-                }
-                let _ = std::fs::remove_file(&f);
-            }
-        }
-        if parts.is_empty() {
-            None
-        } else {
-            Some(parts.join("\n"))
-        }
+        crate::platform::android::read_crash_report(&dir)
     }
     #[cfg(not(target_os = "android"))]
     {
@@ -546,12 +532,7 @@ pub fn run() {
             // readable trace behind: write it to panic_log, surfaced in the UI
             // on the next launch via get_crash_report.
             #[cfg(target_os = "android")]
-            {
-                let panic_dir = app_data_dir.clone();
-                std::panic::set_hook(Box::new(move |info| {
-                    let _ = std::fs::write(panic_dir.join("panic_log"), format!("{info}"));
-                }));
-            }
+            crate::platform::android::install_panic_hook(&app_data_dir);
 
             if let Some(parent) = app_data_dir.parent() {
                 let old_dir = parent.join("com.auravpn.client");

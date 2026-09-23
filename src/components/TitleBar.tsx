@@ -3,6 +3,9 @@ import { Minus, Square, Copy, X, Shield, Smartphone, Sun, Moon } from 'lucide-re
 import { getVersion } from '@tauri-apps/api/app';
 import { api } from '../services/api';
 import { useAppStore } from '../stores/appStore';
+// 平台差异一律经 src/platform 分发（规则见仓库根 AGENTS.md）——
+// 组件内不允许自行嗅探 UA / 判断平台。
+import { currentProfile } from '../platform';
 // Build-time version: package.json is tagged together with the release, so it
 // is a truthful fallback when the runtime getVersion() IPC is unavailable.
 import pkg from '../../package.json';
@@ -12,17 +15,16 @@ interface TitleBarProps {
   onSwitchToSimple?: () => void;
 }
 
+// UA is static for the process lifetime; resolve once.
+const profile = currentProfile();
+
 export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
   const { status, connectedNode, settings, saveSettings, disconnect } = useAppStore();
   const [isMaximized, setIsMaximized] = useState(false);
   const [appVersion, setAppVersion] = useState('');
-  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    const ua = navigator.userAgent.toLowerCase();
-    const mobile = ua.includes('android') || ua.includes('iphone') || ua.includes('ipad');
-    setIsMobile(mobile);
-    if (!mobile) {
+    if (profile.windowChrome) {
       api.isWindowMaximized().then(setIsMaximized).catch(() => {});
     }
     getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion(`v${pkg.version}`));
@@ -52,12 +54,12 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
 
   return (
     <div
-      {...(!isMobile && { 'data-tauri-drag-region': true })}
-      onDoubleClick={isMobile ? undefined : handleToggleMaximize}
+      {...(profile.windowChrome && { 'data-tauri-drag-region': true })}
+      onDoubleClick={profile.windowChrome ? handleToggleMaximize : undefined}
       className="h-10 bg-[#090a0f] border-b border-[#1c1f2b] flex items-center justify-between px-3 select-none z-50 text-xs font-medium text-gray-400 cursor-default"
     >
       {/* Left: Brand & Status pill */}
-      <div className="flex items-center gap-2.5 pointer-events-none" {...(!isMobile && { 'data-tauri-drag-region': true })}>
+      <div className="flex items-center gap-2.5 pointer-events-none" {...(profile.windowChrome && { 'data-tauri-drag-region': true })}>
         <div className="w-5 h-5 rounded-md bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/20">
           <Shield className="w-3.5 h-3.5" />
         </div>
@@ -111,7 +113,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
         >
           {settings.theme === 'light' ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5" />}
         </button>
-        {!isMobile && (
+        {profile.windowChrome && (
           <>
             <button
               onClick={handleMinimize}

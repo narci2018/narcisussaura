@@ -243,6 +243,7 @@ impl ConnectionManager {
             if let Err(probe_err) = Self::verify_internet_connectivity(
                 settings.mixed_port,
                 is_residential,
+                node.latency_ms.map(|l| l.max(0) as u64),
                 current_gen,
                 Arc::clone(&self.connect_generation),
             ).await {
@@ -620,6 +621,7 @@ impl ConnectionManager {
         if let Err(probe_err) = Self::verify_internet_connectivity(
             settings.mixed_port,
             is_residential,
+            node.latency_ms.map(|l| l.max(0) as u64),
             current_gen,
             Arc::clone(&self.connect_generation),
         ).await {
@@ -898,6 +900,7 @@ impl ConnectionManager {
         if let Err(probe_err) = Self::verify_internet_connectivity(
             settings.mixed_port,
             false,
+            Some(nodes.iter().filter_map(|n| n.latency_ms.map(|l| l.max(0) as u64)).sum()),
             current_gen,
             Arc::clone(&self.connect_generation),
         ).await {
@@ -1529,9 +1532,16 @@ rules:
     /// Verifies end-to-end internet connectivity through the newly started local proxy port.
     /// Sends a lightweight HTTP GET request to Cloudflare / Google 204 endpoint.
     /// If internet is unreachable, returns an Err describing the failure.
+    ///
+    /// `node_latency_ms` is the node's known RTT (from the subscription DB).
+    /// The probe budget must cover the whole chain through the tunnel — TCP +
+    /// WS upgrade + TLS to the node (~4 RTT) plus TLS + HTTP to the target
+    /// (~2 RTT) — so it scales with latency: a fixed 4.5s cap mathematically
+    /// condemned every node above ~600ms RTT even when it carried traffic fine.
     async fn verify_internet_connectivity(
         proxy_port: u16,
         is_residential: bool,
+        node_latency_ms: Option<u64>,
         current_gen: u64,
         connect_gen: Arc<AtomicU64>,
     ) -> Result<(), String> {
@@ -1539,12 +1549,15 @@ rules:
         let proxy = reqwest::Proxy::all(&proxy_url)
             .map_err(|e| format!("Invalid local proxy configuration: {}", e))?;
 
-        let timeout_ms = if is_residential { 6000 } else { 4500 };
+        let latency = node_latency_ms.unwrap_or(0);
+        let floor = if is_residential { 6000 } else { 4500 };
+        let timeout_ms = floor.max(latency * 6 + 2000).min(20000);
         let max_attempts = if is_residential { 12 } else { 10 };
         // Hard wall-clock cap: extra attempts only help slow tunnel handshakes;
         // never burn more than this on black-holing nodes (previous worst case
         // was ~90s of blind retries on a dead relay).
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(40);
+        let cap_secs = (timeout_ms * 3 / 1000).clamp(40, 90);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(cap_secs);
 
         let client = reqwest::Client::builder()
             .proxy(proxy)
@@ -1580,7 +1593,13 @@ rules:
                     last_err = format!("HTTP 状态码: {}", resp.status());
                 }
                 Err(e) => {
-                    last_err = e.to_string();
+                    last_err = if e.is_timeout() {
+                        format!("请求超时（单次时限 {}ms）", timeout_ms)
+                    } else if e.is_connect() {
+                        format!("连接失败: {}", e)
+                    } else {
+                        format!("{}", e)
+                    };
                 }
             }
 
@@ -1608,7 +1627,10 @@ rules:
             return Err("Connection cancelled by user".to_string());
         }
 
-        Err(format!("端到端测试超时：数据包无法在预定时限内到达国际互联网目标（{}）", last_err))
+        Err(format!(
+            "端到端测试超时：数据包无法在预定时限内到达国际互联网目标（总时限 {}s，{}）",
+            cap_secs, last_err
+        ))
     }
 
     /// Pin smart-group selector members one by one via the Clash API and probe
@@ -1648,12 +1670,24 @@ rules:
             .timeout(std::time::Duration::from_secs(4))
             .build()
             .ok() else { diag.push("api client build failed".into()); return (None, diag); };
+        // Same chain-through-tunnel math as verify_internet_connectivity: the
+        // fixed 3s budget below the ~6xRTT handshake cost of any node above
+        // ~400ms, so high-latency members were condemned before they spoke.
+        let worst_latency = members
+            .iter()
+            .filter_map(|&i| nodes.get(i).and_then(|n| n.latency_ms).map(|l| l.max(0) as u64))
+            .max()
+            .unwrap_or(0);
+        let probe_timeout_ms = 3000u64.max(worst_latency * 6 + 2000).min(20000);
         let Some(probe) = reqwest::Client::builder()
             .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{}", mixed_port)).unwrap())
-            .timeout(std::time::Duration::from_secs(3))
+            .timeout(std::time::Duration::from_millis(probe_timeout_ms))
             .build()
             .ok() else { diag.push("probe client build failed".into()); return (None, diag); };
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(75);
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_millis(probe_timeout_ms * 2 + 4000)
+                .max(std::time::Duration::from_secs(75))
+                .min(std::time::Duration::from_secs(150));
 
         for (k, &node_idx) in members.iter().enumerate() {
             if cancelled() {

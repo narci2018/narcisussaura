@@ -104,25 +104,25 @@ export const Dashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-6 flex flex-col items-center justify-between max-w-4xl mx-auto w-full">
+    <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col items-center justify-between max-w-4xl mx-auto w-full">
       {/* Error alert banner */}
       {errorMessage && (
-        <div className="w-full mb-5 p-4 rounded-2xl bg-[#1c1216] border border-red-500/30 text-red-300 text-xs shadow-xl shadow-red-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="w-full mb-5 p-4 rounded-2xl bg-[#1c1216] border border-red-500/30 text-red-300 text-[13px] shadow-xl shadow-red-950/20 flex flex-col justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
           <div className="flex items-start gap-3 flex-1 min-w-0 select-text">
             <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <div className="text-[11px] font-semibold text-red-300 mb-1 flex items-center gap-1.5">
+              <div className="text-[12px] font-semibold text-red-300 mb-1 flex items-center gap-1.5">
                 <span>连接失败或启动错误 (Connection Error)</span>
               </div>
-              <div className="font-mono text-[11px] leading-relaxed break-all select-text cursor-text bg-[#0e0709] p-2.5 rounded-xl border border-red-900/40 text-red-200 max-h-48 overflow-y-auto overscroll-contain whitespace-pre-line">
+              <div className="font-mono text-[12px] leading-relaxed break-all select-text cursor-text bg-[#0e0709] p-2.5 rounded-xl border border-red-900/40 text-red-200 max-h-48 overflow-y-auto overscroll-contain whitespace-pre-line">
                 {errorMessage}
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+          <div className="flex items-center gap-2 shrink-0 self-end self-center">
             <button
               onClick={handleCopyError}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
                 copiedError
                   ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-500/20'
                   : 'bg-red-600/20 hover:bg-red-600/30 text-red-200 hover:text-white border-red-500/40'
@@ -143,7 +143,7 @@ export const Dashboard: React.FC = () => {
             </button>
             <button
               onClick={handleCopyFullLogs}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
                 copiedLogs
                   ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-500/20'
                   : 'bg-sky-600/20 hover:bg-sky-600/30 text-sky-200 hover:text-white border-sky-500/40'
@@ -169,7 +169,7 @@ export const Dashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setErrorMessage(null)}
-              className="px-2.5 py-1.5 rounded-xl text-xs text-gray-400 hover:text-white hover:bg-gray-800/60 transition-colors border border-transparent"
+              className="px-2.5 py-1.5 rounded-xl text-[13px] text-gray-400 hover:text-white hover:bg-gray-800/60 transition-colors border border-transparent"
               title="关闭错误提示"
             >
               Dismiss
@@ -224,7 +224,7 @@ export const Dashboard: React.FC = () => {
                   }`}
                 />
               )}
-              <span className="text-xs font-semibold uppercase tracking-wider">
+              <span className="text-[13px] font-semibold uppercase tracking-wider">
                 {isConnected ? 'Disconnect' : isConnecting ? '终止连接' : 'Connect'}
               </span>
             </button>
@@ -255,14 +255,14 @@ export const Dashboard: React.FC = () => {
             <div className="mt-2.5 flex justify-center">
               <button
                 onClick={() => disconnect()}
-                className="px-4 py-1.5 rounded-full bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-red-100 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-red-500/10 active:scale-95"
+                className="px-4 py-1.5 rounded-full bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-red-100 text-[13px] font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-red-500/10 active:scale-95"
               >
                 <Square className="w-3 h-3 fill-red-400 text-red-400" />
                 <span>终止当前连接</span>
               </button>
             </div>
           )}
-          <p className="text-xs text-gray-400 mt-1">
+          <p className="text-[13px] text-gray-400 mt-1">
             {isConnected
               ? `${connectedNode?.country_name || 'Global Proxy'} · ${connectedNode?.name || ''}`
               : selectedNode
@@ -276,7 +276,7 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {/* Selected Server Card & Quick Change */}
-      <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+      <div className="w-full grid grid-cols-1 gap-4 mt-6">
         {/* Server Card */}
         <div className="bg-[#12151f] border border-[#212637] rounded-2xl p-4 flex items-center justify-between hover:border-[#2f364d] transition-all">
           <div className="flex items-center gap-3">
@@ -284,16 +284,16 @@ export const Dashboard: React.FC = () => {
               <Globe className="w-5 h-5" />
             </div>
             <div>
-              <div className="text-xs text-gray-400">Current Server</div>
+              <div className="text-[13px] text-gray-400">Current Server</div>
               <div className="text-sm font-semibold text-gray-200 mt-0.5 truncate max-w-[200px]">
                 {selectedNode?.name || 'No server selected'}
               </div>
               <div className="flex items-center gap-2 mt-1">
-                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[10px] uppercase font-mono font-bold">
+                <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-[12px] uppercase font-mono font-bold">
                   {selectedNode?.protocol || 'VLESS'}
                 </span>
                 {selectedNode?.latency_ms !== null && selectedNode?.latency_ms !== undefined && (
-                  <span className="text-[11px] font-mono text-emerald-400">
+                  <span className="text-[12px] font-mono text-emerald-400">
                     {selectedNode.latency_ms} ms
                   </span>
                 )}
@@ -303,7 +303,7 @@ export const Dashboard: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('servers')}
-            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/10 transition-colors"
+            className="flex items-center gap-1 text-[13px] text-blue-400 hover:text-blue-300 font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/10 transition-colors"
           >
             <span>Change</span>
             <ChevronRight className="w-3.5 h-3.5" />
@@ -314,14 +314,14 @@ export const Dashboard: React.FC = () => {
         <div className="bg-[#12151f] border border-[#212637] rounded-2xl p-4 flex items-center justify-between">
           <div className="flex items-center gap-6 w-full justify-around text-center">
             <div>
-              <div className="flex items-center justify-center gap-1 text-[11px] text-gray-400 mb-1">
+              <div className="flex items-center justify-center gap-1 text-[12px] text-gray-400 mb-1">
                 <ArrowDown className="w-3.5 h-3.5 text-emerald-400" />
                 <span>Download</span>
               </div>
               <div className="text-sm font-bold font-mono text-gray-100">
                 {formatSpeed(traffic.download_speed)}
               </div>
-              <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+              <div className="text-[12px] text-gray-500 font-mono mt-0.5">
                 {formatBytes(traffic.download_bytes)}
               </div>
             </div>
@@ -329,14 +329,14 @@ export const Dashboard: React.FC = () => {
             <div className="h-8 w-px bg-[#202535]" />
 
             <div>
-              <div className="flex items-center justify-center gap-1 text-[11px] text-gray-400 mb-1">
+              <div className="flex items-center justify-center gap-1 text-[12px] text-gray-400 mb-1">
                 <ArrowUp className="w-3.5 h-3.5 text-blue-400" />
                 <span>Upload</span>
               </div>
               <div className="text-sm font-bold font-mono text-gray-100">
                 {formatSpeed(traffic.upload_speed)}
               </div>
-              <div className="text-[10px] text-gray-500 font-mono mt-0.5">
+              <div className="text-[12px] text-gray-500 font-mono mt-0.5">
                 {formatBytes(traffic.upload_bytes)}
               </div>
             </div>
@@ -344,14 +344,14 @@ export const Dashboard: React.FC = () => {
             <div className="h-8 w-px bg-[#202535]" />
 
             <div>
-              <div className="flex items-center justify-center gap-1 text-[11px] text-gray-400 mb-1">
+              <div className="flex items-center justify-center gap-1 text-[12px] text-gray-400 mb-1">
                 <Clock className="w-3.5 h-3.5 text-indigo-400" />
                 <span>Uptime</span>
               </div>
               <div className="text-sm font-bold font-mono text-gray-100">
                 {formatDuration(traffic.uptime_seconds)}
               </div>
-              <div className="text-[10px] text-gray-500 mt-0.5">
+              <div className="text-[12px] text-gray-500 mt-0.5">
                 {isConnected ? 'Active' : 'Offline'}
               </div>
             </div>

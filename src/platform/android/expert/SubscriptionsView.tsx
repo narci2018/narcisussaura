@@ -108,7 +108,7 @@ export const SubscriptionsView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-6 max-w-[1600px] mx-auto w-full">
+    <div className="flex-1 overflow-y-auto px-4 py-4 max-w-[1600px] mx-auto w-full">
       {/* Header */}
       <div className="flex items-center justify-between pb-4 border-b border-[#1f2433] mb-6">
         <div>
@@ -116,7 +116,7 @@ export const SubscriptionsView: React.FC = () => {
             <FolderSync className="w-4 h-4 text-blue-400" />
             <span>Subscriptions</span>
           </h1>
-          <p className="text-xs text-gray-500">
+          <p className="text-[13px] text-gray-500">
             Manage your Clash, Base64, and V2Ray subscription endpoints
           </p>
         </div>
@@ -124,7 +124,7 @@ export const SubscriptionsView: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => updateAllSubscriptions()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#171b26] hover:bg-[#202536] text-gray-200 hover:text-white text-xs font-medium border border-[#242b3d] shadow-sm transition-all"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#171b26] hover:bg-[#202536] text-gray-200 hover:text-white text-[13px] font-medium border border-[#242b3d] shadow-sm transition-all"
             title="Fetch latest nodes from all subscriptions"
           >
             <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
@@ -133,7 +133,7 @@ export const SubscriptionsView: React.FC = () => {
 
           <button
             onClick={() => setIsAdding(!isAdding)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold shadow-sm shadow-blue-500/20 transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/20 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Custom</span>
@@ -146,7 +146,7 @@ export const SubscriptionsView: React.FC = () => {
         <div className="flex items-center gap-3">
           <button
             onClick={() => setUpdateSubViaProxy(!updateSubViaProxy)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
               updateSubViaProxy
                 ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 shadow-sm shadow-blue-500/10'
                 : 'bg-[#151924] text-gray-400 border-[#262e42] hover:text-gray-200'
@@ -162,15 +162,15 @@ export const SubscriptionsView: React.FC = () => {
 
           <div className="h-4 w-px bg-[#222736]" />
 
-          <div className="flex items-center gap-1.5 text-xs">
+          <div className="flex items-center gap-1.5 text-[13px]">
             <span className="text-gray-400">代理状态:</span>
             {isConnected ? (
-              <span className="flex items-center gap-1 text-emerald-400 font-mono text-[11px] bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg font-medium">
+              <span className="flex items-center gap-1 text-emerald-400 font-mono text-[12px] bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-lg font-medium">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 <span>127.0.0.1:{settings.mixed_port} (已就绪 - 通过当前节点安全拉取)</span>
               </span>
             ) : (
-              <span className="flex items-center gap-1 text-gray-400 font-mono text-[11px] bg-gray-800/40 border border-gray-700/30 px-2 py-0.5 rounded-lg">
+              <span className="flex items-center gap-1 text-gray-400 font-mono text-[12px] bg-gray-800/40 border border-gray-700/30 px-2 py-0.5 rounded-lg">
                 <span className="w-1.5 h-1.5 rounded-full bg-gray-500" />
                 <span>未连接 (自动启用 GitHub 镜像加速通道)</span>
               </span>
@@ -178,7 +178,7 @@ export const SubscriptionsView: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 text-[11px] text-gray-400 bg-[#0d0f17] border border-[#1b202e] px-3 py-1.5 rounded-xl">
+        <div className="flex items-center gap-2 text-[12px] text-gray-400 bg-[#0d0f17] border border-[#1b202e] px-3 py-1.5 rounded-xl">
           <Globe className="w-3.5 h-3.5 text-indigo-400" />
           <span>大陆防墙优化: GitHub 源自动附加高速镜像加速</span>
         </div>
@@ -190,36 +190,36 @@ export const SubscriptionsView: React.FC = () => {
           onSubmit={handleAdd}
           className="bg-[#12151f] border border-blue-500/30 rounded-2xl p-5 mb-6 shadow-xl space-y-4 animate-in fade-in slide-in-from-top-2 duration-200"
         >
-          <div className="text-xs font-semibold text-gray-200">Add New Subscription</div>
+          <div className="text-[13px] font-semibold text-gray-200">Add New Subscription</div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <div>
-              <label className="text-[11px] text-gray-400 block mb-1">Subscription Name</label>
+              <label className="text-[12px] text-gray-400 block mb-1">Subscription Name</label>
               <input
                 type="text"
                 placeholder="e.g. Premium VIP Provider"
                 value={subName}
                 onChange={(e) => setSubName(e.target.value)}
-                className="w-full bg-[#0a0c12] border border-[#23283a] rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-blue-500/60"
+                className="w-full bg-[#0a0c12] border border-[#23283a] rounded-xl px-3 py-2 text-[13px] text-gray-200 focus:outline-none focus:border-blue-500/60"
                 required
               />
             </div>
 
             <div>
-              <label className="text-[11px] text-gray-400 block mb-1">Subscription URL</label>
+              <label className="text-[12px] text-gray-400 block mb-1">Subscription URL</label>
               <input
                 type="url"
                 placeholder="https://example.com/api/v1/client/subscribe?token=..."
                 value={subUrl}
                 onChange={(e) => setSubUrl(e.target.value)}
-                className="w-full bg-[#0a0c12] border border-[#23283a] rounded-xl px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-blue-500/60 font-mono"
+                className="w-full bg-[#0a0c12] border border-[#23283a] rounded-xl px-3 py-2 text-[13px] text-gray-200 focus:outline-none focus:border-blue-500/60 font-mono"
                 required
               />
             </div>
           </div>
 
           {addingError && (
-            <div className="text-xs text-red-400 flex items-center gap-1.5">
+            <div className="text-[13px] text-red-400 flex items-center gap-1.5">
               <AlertCircle className="w-3.5 h-3.5" />
               <span>{addingError}</span>
             </div>
@@ -229,13 +229,13 @@ export const SubscriptionsView: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsAdding(false)}
-              className="px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-[#1a1e2b]"
+              className="px-3 py-1.5 rounded-lg text-[13px] text-gray-400 hover:text-gray-200 hover:bg-[#1a1e2b]"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium"
+              className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-medium"
             >
               Save & Fetch
             </button>
@@ -246,10 +246,10 @@ export const SubscriptionsView: React.FC = () => {
       {/* Subscriptions Grid */}
       <div className="space-y-4">
         {subscriptions.length === 0 ? (
-          <div className="h-56 flex flex-col items-center justify-center text-gray-500 text-xs border border-dashed border-[#202535] rounded-2xl">
+          <div className="h-56 flex flex-col items-center justify-center text-gray-500 text-[13px] border border-dashed border-[#202535] rounded-2xl">
             <FolderSync className="w-8 h-8 mb-2 opacity-30 text-gray-400" />
             <span className="font-medium text-gray-400">No subscriptions configured yet</span>
-            <span className="text-[11px] text-gray-600 mt-0.5">
+            <span className="text-[12px] text-gray-600 mt-0.5">
               Click &quot;Add Subscription&quot; to import your Clash or Base64 provider URL
             </span>
           </div>
@@ -279,23 +279,23 @@ export const SubscriptionsView: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-gray-100">{sub.name}</span>
                         {isUpdating && (
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse font-mono">
+                          <span className="px-2 py-0.5 rounded text-[12px] bg-blue-500/10 text-blue-400 border border-blue-500/20 animate-pulse font-mono">
                             Updating...
                           </span>
                         )}
                         {isError && (
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 font-mono">
+                          <span className="px-2 py-0.5 rounded text-[12px] bg-red-500/10 text-red-400 border border-red-500/20 font-mono">
                             Update Failed
                           </span>
                         )}
                         {!isUpdating && !isError && sub.last_updated && (
-                          <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                          <span className="px-2 py-0.5 rounded text-[12px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
                             Active
                           </span>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-3 text-[11px] text-gray-400 mt-1">
+                      <div className="flex items-center gap-3 text-[12px] text-gray-400 mt-1">
                         <span className="flex items-center gap-1">
                           <Layers className="w-3.5 h-3.5 text-gray-500" />
                           <span className="font-semibold text-gray-300">{sub.node_count}</span> nodes
@@ -351,37 +351,37 @@ export const SubscriptionsView: React.FC = () => {
                 {/* Inline Edit Form */}
                 {editingId === sub.id && (
                   <div className="bg-[#0b0e17] border border-blue-500/30 rounded-2xl p-4 space-y-3 animate-in fade-in slide-in-from-top-1 duration-150">
-                    <div className="text-xs font-semibold text-blue-300 flex items-center gap-1.5">
+                    <div className="text-[13px] font-semibold text-blue-300 flex items-center gap-1.5">
                       <Pencil className="w-3 h-3" />
                       编辑订阅
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3">
                       <div>
-                        <label className="text-[11px] text-gray-400 block mb-1">订阅名称</label>
+                        <label className="text-[12px] text-gray-400 block mb-1">订阅名称</label>
                         <input
                           type="text"
                           value={editName}
                           onChange={(e) => { setEditName(e.target.value); setEditError(null); }}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
                           placeholder="订阅名称"
-                          className="w-full bg-[#0a0c12] border border-[#23283a] focus:border-blue-500/60 rounded-xl px-3 py-2 text-xs text-gray-200 outline-none transition-colors"
+                          className="w-full bg-[#0a0c12] border border-[#23283a] focus:border-blue-500/60 rounded-xl px-3 py-2 text-[13px] text-gray-200 outline-none transition-colors"
                           autoFocus
                         />
                       </div>
                       <div>
-                        <label className="text-[11px] text-gray-400 block mb-1">订阅 URL</label>
+                        <label className="text-[12px] text-gray-400 block mb-1">订阅 URL</label>
                         <input
                           type="url"
                           value={editUrl}
                           onChange={(e) => { setEditUrl(e.target.value); setEditError(null); }}
                           onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
                           placeholder="https://example.com/subscribe?token=..."
-                          className="w-full bg-[#0a0c12] border border-[#23283a] focus:border-blue-500/60 rounded-xl px-3 py-2 text-xs text-gray-200 outline-none font-mono transition-colors"
+                          className="w-full bg-[#0a0c12] border border-[#23283a] focus:border-blue-500/60 rounded-xl px-3 py-2 text-[13px] text-gray-200 outline-none font-mono transition-colors"
                         />
                       </div>
                     </div>
                     {editError && (
-                      <div className="text-xs text-red-400 flex items-center gap-1.5">
+                      <div className="text-[13px] text-red-400 flex items-center gap-1.5">
                         <AlertCircle className="w-3.5 h-3.5" />
                         <span>{editError}</span>
                       </div>
@@ -389,7 +389,7 @@ export const SubscriptionsView: React.FC = () => {
                     <div className="flex justify-end gap-2 pt-1">
                       <button
                         onClick={cancelEditing}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-gray-200 hover:bg-[#1a1e2b] transition-colors"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[13px] text-gray-400 hover:text-gray-200 hover:bg-[#1a1e2b] transition-colors"
                       >
                         <X className="w-3.5 h-3.5" />
                         取消
@@ -397,7 +397,7 @@ export const SubscriptionsView: React.FC = () => {
                       <button
                         onClick={saveEditing}
                         disabled={editSaving || !editName.trim() || !editUrl.trim()}
-                        className="flex items-center gap-1 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+                        className="flex items-center gap-1 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[13px] font-medium transition-colors"
                       >
                         <Save className="w-3.5 h-3.5" />
                         {editSaving ? '保存中...' : '保存'}
@@ -409,7 +409,7 @@ export const SubscriptionsView: React.FC = () => {
                 {/* Traffic Quota Bar (if provided by subscription server) */}
                 {sub.traffic && totalBytes > 0 && (
                   <div className="bg-[#0b0d13] border border-[#1d2232] rounded-xl p-3 space-y-2">
-                    <div className="flex items-center justify-between text-[11px]">
+                    <div className="flex items-center justify-between text-[12px]">
                       <span className="text-gray-400">Data Traffic Quota</span>
                       <span className="font-mono text-gray-300">
                         {formatBytes(usedBytes)} / {formatBytes(totalBytes)} ({usagePercent}%)
@@ -430,7 +430,7 @@ export const SubscriptionsView: React.FC = () => {
                     </div>
 
                     {sub.traffic.expire && (
-                      <div className="flex items-center gap-1 text-[10px] text-gray-500">
+                      <div className="flex items-center gap-1 text-[12px] text-gray-500">
                         <Calendar className="w-3 h-3" />
                         <span>
                           Expires: {new Date(sub.traffic.expire * 1000).toLocaleDateString()}
@@ -442,17 +442,17 @@ export const SubscriptionsView: React.FC = () => {
 
                 {/* Error Banner */}
                 {sub.error_message && (
-                  <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs flex items-center justify-between gap-2">
+                  <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-[13px] flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                      <span className="font-mono text-[11px] truncate select-text">{sub.error_message}</span>
+                      <span className="font-mono text-[12px] truncate select-text">{sub.error_message}</span>
                     </div>
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         navigator.clipboard.writeText(sub.error_message || '');
                       }}
-                      className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[10px] shrink-0 border border-red-500/30 transition-colors"
+                      className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[12px] shrink-0 border border-red-500/30 transition-colors"
                       title="拷贝错误信息"
                     >
                       拷贝

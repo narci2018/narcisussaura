@@ -4,7 +4,6 @@ import {
   Star,
   Zap,
   Trash2, X, CheckCircle,
-  Check,
   Plus,
   RefreshCw,
   Globe,
@@ -188,7 +187,7 @@ export const ServerList: React.FC = () => {
     const isTesting = testingLatencyIds.includes(node.id);
     if (isTesting) {
       return (
-        <span className="text-[11px] text-blue-400 font-mono px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 flex items-center gap-1 animate-pulse">
+        <span className="text-[12px] text-blue-400 font-mono px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 flex items-center gap-1 animate-pulse">
           <RefreshCw className="w-2.5 h-2.5 animate-spin" />
           <span>Ping...</span>
         </span>
@@ -198,34 +197,34 @@ export const ServerList: React.FC = () => {
     const latency = node.latency_ms;
     if (latency === undefined || latency === null) {
       return (
-        <span className="text-[11px] text-gray-500 font-mono px-2 py-0.5 rounded bg-gray-800/40 border border-gray-700/30">
+        <span className="text-[12px] text-gray-500 font-mono px-2 py-0.5 rounded bg-gray-800/40 border border-gray-700/30">
           Unchecked
         </span>
       );
     }
     if (latency <= 0) {
       return (
-        <span className="text-[11px] text-red-400 font-mono px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 flex items-center gap-1">
+        <span className="text-[12px] text-red-400 font-mono px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 flex items-center gap-1">
           <span>Timeout</span>
         </span>
       );
     }
     if (latency < 100) {
       return (
-        <span className="text-[11px] text-emerald-400 font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+        <span className="text-[12px] text-emerald-400 font-mono px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
           {latency} ms
         </span>
       );
     }
     if (latency < 250) {
       return (
-        <span className="text-[11px] text-yellow-400 font-mono px-2 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/20">
+        <span className="text-[12px] text-yellow-400 font-mono px-2 py-0.5 rounded bg-yellow-500/10 border border-yellow-500/20">
           {latency} ms
         </span>
       );
     }
     return (
-      <span className="text-[11px] text-orange-400 font-mono px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/20">
+      <span className="text-[12px] text-orange-400 font-mono px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/20">
         {latency} ms
       </span>
     );
@@ -238,7 +237,7 @@ export const ServerList: React.FC = () => {
     
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-        <div className="bg-[#12151f] p-6 rounded-2xl shadow-2xl w-full max-w-2xl border border-[#212637] flex flex-col max-h-[85vh]">
+        <div className="bg-[#12151f] p-4 rounded-2xl shadow-2xl w-full max-w-2xl border border-[#212637] flex flex-col max-h-[85vh]">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400">
@@ -267,14 +266,14 @@ export const ServerList: React.FC = () => {
                     <span className="text-sm font-semibold text-gray-300 truncate mr-2" title={item.oldName}>
                       {item.oldName}
                     </span>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                    <span className="text-[13px] px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
                       修复后 ➔
                     </span>
                   </div>
                   <div className="text-sm font-semibold text-emerald-400 truncate" title={item.newName}>
                     {item.newName}
                   </div>
-                  <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-white/5 text-xs">
+                  <div className="grid grid-cols-3 gap-2 mt-2 pt-2 border-t border-white/5 text-[13px]">
                     <div>
                       <div className="text-gray-500 mb-0.5">国家地区</div>
                       <div className="flex items-center gap-1">
@@ -365,7 +364,7 @@ export const ServerList: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden px-6 py-4 max-w-[1600px] mx-auto w-full relative">
+    <div className="flex-1 flex flex-col overflow-hidden px-4 py-3 max-w-[1600px] mx-auto w-full relative">
       {renderInspectModal()}
       {renderInspectReport()}
       {/* Top Controls Bar */}
@@ -378,7 +377,7 @@ export const ServerList: React.FC = () => {
             placeholder="Search servers by name, group, country, IP..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#12151e] border border-[#222736] rounded-xl pl-9 pr-4 py-2 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/60 transition-colors"
+            className="w-full bg-[#12151e] border border-[#222736] rounded-xl pl-9 pr-4 py-2 text-[13px] text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500/60 transition-colors"
           />
         </div>
 
@@ -388,7 +387,7 @@ export const ServerList: React.FC = () => {
           <div className="flex items-center bg-[#111420] border border-[#222738] rounded-xl p-0.5 shadow-sm">
             <button
               onClick={() => setSortMode(sortMode === 'latency' ? 'default' : 'latency')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
                 sortMode === 'latency'
                   ? 'bg-blue-600/30 text-blue-300 font-semibold border border-blue-500/40 shadow-sm'
                   : 'text-gray-400 hover:text-gray-200 border border-transparent'
@@ -401,7 +400,7 @@ export const ServerList: React.FC = () => {
 
             <button
               onClick={() => setSortMode(sortMode === 'speed' ? 'default' : 'speed')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
                 sortMode === 'speed'
                   ? 'bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/40 shadow-sm'
                   : 'text-gray-400 hover:text-gray-200 border border-transparent'
@@ -419,7 +418,7 @@ export const ServerList: React.FC = () => {
           <button
             onClick={() => testAllNodes()}
             disabled={isTestingAll}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] hover:bg-[#1d2233] text-gray-300 hover:text-white text-xs font-medium border border-[#242a3d] transition-all disabled:opacity-50 shadow-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] hover:bg-[#1d2233] text-gray-300 hover:text-white text-[13px] font-medium border border-[#242a3d] transition-all disabled:opacity-50 shadow-sm"
             title="对所有节点批量测试延迟 (Ping Latency)"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isTestingAll ? 'animate-spin text-blue-400' : 'text-blue-400'}`} />
@@ -430,7 +429,7 @@ export const ServerList: React.FC = () => {
           <button
             onClick={() => startDeepInspection(filteredAndSortedNodes)}
             disabled={!!inspectProgress || filteredAndSortedNodes.length === 0}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 hover:text-purple-300 text-xs font-medium border border-purple-500/30 transition-all disabled:opacity-50 shadow-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 hover:text-purple-300 text-[13px] font-medium border border-purple-500/30 transition-all disabled:opacity-50 shadow-sm"
           >
             <Rocket className="w-3.5 h-3.5" />
             <span>深度质检</span>
@@ -439,7 +438,7 @@ export const ServerList: React.FC = () => {
           <button
             onClick={() => testAllSpeeds()}
             disabled={isTestingAllSpeed}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] hover:bg-[#1d2233] text-indigo-300 hover:text-indigo-200 text-xs font-medium border border-indigo-500/30 transition-all disabled:opacity-50 shadow-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] hover:bg-[#1d2233] text-indigo-300 hover:text-indigo-200 text-[13px] font-medium border border-indigo-500/30 transition-all disabled:opacity-50 shadow-sm"
             title="对所有节点批量测真实带宽速度 (Test Speed)"
           >
             <Gauge className={`w-3.5 h-3.5 ${isTestingAllSpeed ? 'animate-spin text-indigo-400' : 'text-indigo-400'}`} />
@@ -449,7 +448,7 @@ export const ServerList: React.FC = () => {
           {/* Add Server */}
           <button
             onClick={() => setActiveTab('import')}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium shadow-sm shadow-blue-500/20 transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-medium shadow-sm shadow-blue-500/20 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Server</span>
@@ -459,7 +458,7 @@ export const ServerList: React.FC = () => {
 
       {/* Subscription / Group Tabs Bar with Left/Right Buttons and Visible Horizontal Scrollbar */}
       <div className="relative flex items-center mb-3 bg-[#0d0f17] border border-[#1b1f2e] rounded-xl px-2 py-1.5 shadow-sm">
-        <span className="text-[11px] text-gray-400 font-medium mr-2 flex items-center gap-1 shrink-0 select-none">
+        <span className="text-[12px] text-gray-400 font-medium mr-2 flex items-center gap-1 shrink-0 select-none">
           <FolderSync className="w-3.5 h-3.5 text-blue-400" />
           <span>分组:</span>
         </span>
@@ -467,7 +466,7 @@ export const ServerList: React.FC = () => {
         {/* Left Scroll Button */}
         <button
           onClick={() => scrollGroups(-240)}
-          className="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-800/60 shrink-0 transition-colors mr-1"
+          className="w-9 h-9 rounded-md flex items-center justify-center text-gray-400 active:bg-gray-800/60 shrink-0 transition-colors mr-1"
           title="向前滚动分组"
         >
           <ChevronLeft className="w-4 h-4" />
@@ -486,14 +485,14 @@ export const ServerList: React.FC = () => {
               <button
                 key={grp}
                 onClick={() => setSelectedGroup(grp)}
-                className={`px-3 py-1 rounded-lg text-xs font-medium border shrink-0 transition-all flex items-center gap-1.5 ${
+                className={`px-3 py-1 rounded-lg text-[13px] font-medium border shrink-0 transition-all flex items-center gap-1.5 ${
                   isSelected
                     ? 'bg-blue-600/25 text-blue-300 border-blue-500/50 font-semibold shadow-sm shadow-blue-500/10'
                     : 'bg-[#111420] text-gray-400 border-[#1f2538] hover:border-[#2f3854] hover:text-gray-200'
                 }`}
               >
                 <span>{grp === 'all' ? 'All Subscriptions' : grp}</span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                <span className={`text-[12px] px-1.5 py-0.2 rounded-full font-mono ${
                   isSelected ? 'bg-blue-500/30 text-blue-200' : 'bg-gray-800/80 text-gray-500'
                 }`}>
                   {count}
@@ -506,7 +505,7 @@ export const ServerList: React.FC = () => {
         {/* Right Scroll Button */}
         <button
           onClick={() => scrollGroups(240)}
-          className="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-800/60 shrink-0 transition-colors ml-1"
+          className="w-9 h-9 rounded-md flex items-center justify-center text-gray-400 active:bg-gray-800/60 shrink-0 transition-colors ml-1"
           title="向后滚动分组"
         >
           <ChevronRight className="w-4 h-4" />
@@ -517,7 +516,7 @@ export const ServerList: React.FC = () => {
       <div className="flex items-center gap-2 mb-3.5 overflow-x-auto pb-1">
         <button
           onClick={() => setFilterFavorite(!filterFavorite)}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[13px] font-medium border transition-all ${
             filterFavorite
               ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
               : 'bg-[#12151e] text-gray-400 border-[#222736] hover:text-gray-200'
@@ -533,7 +532,7 @@ export const ServerList: React.FC = () => {
           <button
             key={proto}
             onClick={() => setSelectedProtocol(proto)}
-            className={`px-3 py-1 rounded-lg text-xs font-medium border transition-all ${
+            className={`px-3 py-1 rounded-lg text-[13px] font-medium border transition-all ${
               selectedProtocol === proto
                 ? proto === 'masque'
                   ? 'bg-purple-500/20 text-purple-300 border-purple-500/50 font-bold shadow-sm shadow-purple-500/20'
@@ -557,7 +556,7 @@ export const ServerList: React.FC = () => {
       {/* Nodes List */}
       <div className="flex-1 overflow-y-auto pr-1 space-y-2.5">
         {filteredAndSortedNodes.length === 0 ? (
-          <div className="h-48 flex flex-col items-center justify-center text-gray-500 text-xs">
+          <div className="h-48 flex flex-col items-center justify-center text-gray-500 text-[13px]">
             <Radio className="w-8 h-8 mb-2 opacity-40 text-gray-400" />
             <span>No matching servers found</span>
           </div>
@@ -586,14 +585,14 @@ export const ServerList: React.FC = () => {
                 <div className="flex items-center gap-3.5">
                   {/* Country Flag or Globe Icon */}
                   <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-xs ${
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-[13px] ${
                       isLiveConnected
                         ? 'bg-emerald-500/20 text-emerald-300'
                         : 'bg-[#1b202e] text-gray-300 border border-[#272e42]'
                     }`}
                   >
                     {node.country_code ? (
-                      <span className="font-mono text-xs">{node.country_code}</span>
+                      <span className="font-mono text-[13px]">{node.country_code}</span>
                     ) : (
                       <Globe className="w-4 h-4 text-gray-400" />
                     )}
@@ -601,33 +600,33 @@ export const ServerList: React.FC = () => {
 
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-semibold text-gray-200">{node.name}</span>
+                      <span className="text-[13px] font-semibold text-gray-200">{node.name}</span>
 
                       {/* Recommended Tag */}
                       {recommended && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30 flex items-center gap-1 shadow-sm shadow-amber-500/10">
+                        <span className="px-1.5 py-0.5 rounded text-[12px] bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30 flex items-center gap-1 shadow-sm shadow-amber-500/10">
                           <Sparkles className="w-2.5 h-2.5 text-amber-400" />
                           <span>推荐</span>
                         </span>
                       )}
 
                       {isLiveConnected && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                        <span className="px-1.5 py-0.5 rounded text-[12px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
                           Active
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-[11px] text-gray-400 font-mono mt-0.5 flex-wrap">
+                    <div className="flex items-center gap-2 text-[12px] text-gray-400 font-mono mt-0.5 flex-wrap">
                       <span>
                         {node.address}:{node.port}
                       </span>
                       {node.protocol === 'masque' ? (
-                        <span className="text-[10px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-purple-500/10">
+                        <span className="text-[12px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-purple-500/10">
                           WARP · MASQUE (H3)
                         </span>
                       ) : node.protocol === 'wireguard' ? (
-                        <span className="text-[10px] font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-cyan-500/10">
+                        <span className="text-[12px] font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-cyan-500/10">
                           WARP · WireGuard
                         </span>
                       ) : (
@@ -649,7 +648,7 @@ export const ServerList: React.FC = () => {
                 <div className="flex items-center gap-2.5" onClick={(e) => e.stopPropagation()}>
                   {/* Real Download Speed Badge */}
                   {node.speed_bps ? (
-                    <span className="text-[11px] font-mono text-indigo-300 px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 flex items-center gap-1">
+                    <span className="text-[12px] font-mono text-indigo-300 px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 flex items-center gap-1">
                       <Gauge className="w-3 h-3 text-indigo-400" />
                       <span>{formatSpeed(node.speed_bps)}</span>
                     </span>
@@ -700,13 +699,11 @@ export const ServerList: React.FC = () => {
                         e.stopPropagation();
                         disconnect();
                       }}
-                      className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-red-500/20 text-emerald-400 hover:text-red-400 border border-emerald-500/30 hover:border-red-500/40 text-xs font-medium transition-all flex items-center gap-1.5 group"
+                      className="px-2.5 py-1.5 rounded-lg bg-red-500/15 active:bg-red-500/25 text-red-400 border border-red-500/30 text-[13px] font-medium transition-all flex items-center gap-1.5"
                       title="已连接，点击断开"
                     >
-                      <Check className="w-3.5 h-3.5 group-hover:hidden" />
-                      <Square className="w-3 h-3 fill-red-400 hidden group-hover:inline" />
-                      <span className="group-hover:hidden">Connected</span>
-                      <span className="hidden group-hover:inline text-red-400">断开</span>
+                      <Square className="w-3 h-3 fill-red-400" />
+                      <span>断开</span>
                     </button>
                   ) : isThisConnecting ? (
                     <button
@@ -714,7 +711,7 @@ export const ServerList: React.FC = () => {
                         e.stopPropagation();
                         disconnect();
                       }}
-                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 text-xs font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95"
+                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 text-[13px] font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95"
                       title="点击终止当前连接"
                     >
                       <Square className="w-3 h-3 fill-red-400 text-red-400 animate-pulse" />
@@ -726,7 +723,7 @@ export const ServerList: React.FC = () => {
                         setSelectedNodeId(node.id);
                         connect(node.id);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-medium transition-all active:scale-95"
+                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-[13px] font-medium transition-all active:scale-95"
                     >
                       Connect
                     </button>

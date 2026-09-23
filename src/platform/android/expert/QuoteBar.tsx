@@ -33,8 +33,8 @@ The light they fought for will travel across the ages, illuminating the lives of
           </div>
           <div className="absolute inset-0 rounded-xl border border-cyan-400/20 animate-ping opacity-25 pointer-events-none" />
         </div>
-        <div className="hidden sm:flex flex-col">
-          <span className="text-[10px] font-mono font-bold tracking-wider uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-cyan-300 to-indigo-200">
+        <div className="hidden flex-col">
+          <span className="text-[12px] font-mono font-bold tracking-wider uppercase text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-cyan-300 to-indigo-200">
             文明之光
           </span>
           <span className="text-[8px] font-mono tracking-widest text-gray-500 -mt-0.5">
@@ -46,20 +46,20 @@ The light they fought for will travel across the ages, illuminating the lives of
       {/* Center: Dual-Line Quotes (Fully Visible, No Truncation) */}
       <div className="flex-1 flex flex-col justify-center min-w-0 px-2 text-left">
         {/* Chinese Quote Line */}
-        <div className="flex flex-wrap items-center gap-1.5 text-xs sm:text-[12.5px] leading-relaxed font-medium text-gray-200">
+        <div className="flex flex-wrap items-center gap-1.5 text-[13px] leading-relaxed font-medium text-gray-200">
           <Quote className="w-3 h-3 text-cyan-400/80 shrink-0 rotate-180 -mt-0.5" />
           <span>
             致敬推动<span className="text-cyan-300 font-semibold mx-0.5">文明进步</span>的每一个人。他们争取到的
             <span className="text-amber-300 font-bold mx-0.5 drop-shadow-[0_0_6px_rgba(252,211,77,0.4)]">光</span>
             ，会穿越漫长岁月，照亮世间每一个人，包括你。
           </span>
-          <span className="text-[11px] text-gray-400/80 font-mono shrink-0 ml-1">
+          <span className="text-[12px] text-gray-400/80 font-mono shrink-0 ml-1">
             —— 无名氏
           </span>
         </div>
 
         {/* English Quote Line */}
-        <div className="text-[10px] sm:text-[11px] leading-relaxed text-gray-400/90 font-sans tracking-wide mt-1">
+        <div className="text-[12px] leading-relaxed text-gray-400/90 font-sans tracking-wide mt-1">
           <span className="italic">
             A tribute to everyone who has helped advance human civilization. The light they fought for will travel across the ages, illuminating the lives of everyone in this world—including you.
           </span>
@@ -73,7 +73,7 @@ The light they fought for will travel across the ages, illuminating the lives of
       <div className="flex items-center shrink-0 select-none">
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#141b2f]/90 hover:bg-[#1e2744] text-gray-400 hover:text-cyan-300 border border-[#232f50] hover:border-cyan-500/50 transition-all text-[10px] font-mono shadow-sm group/btn"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#141b2f]/90 hover:bg-[#1e2744] text-gray-400 hover:text-cyan-300 border border-[#232f50] hover:border-cyan-500/50 transition-all text-[12px] font-mono shadow-sm group/btn"
           title="复制中英文名言至剪贴板"
         >
           {copied ? (
@@ -84,7 +84,7 @@ The light they fought for will travel across the ages, illuminating the lives of
           ) : (
             <>
               <Copy className="w-3 h-3 text-gray-400 group-hover/btn:text-cyan-300 transition-colors" />
-              <span className="hidden sm:inline">复制</span>
+              <span className="hidden">复制</span>
             </>
           )}
         </button>

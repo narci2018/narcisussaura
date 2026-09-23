@@ -27,7 +27,7 @@ export const RelayBar: React.FC<RelayBarProps> = ({
   const bestCandidate = relayCandidates.length > 0 ? relayCandidates[0] : null;
 
   return (
-    <div className="mx-6 my-2.5 p-3 bg-[#121520]/95 border border-blue-500/25 rounded-2xl flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-lg shadow-black/20 backdrop-blur-sm">
+    <div className="mx-3 my-2.5 p-3 bg-[#121520]/95 border border-blue-500/25 rounded-2xl flex flex-col justify-between gap-3 shadow-lg shadow-black/20 backdrop-blur-sm">
       <div className="flex items-start gap-3">
         <div className={`mt-0.5 p-2 rounded-xl flex items-center justify-center transition-colors ${
           relayEnabled ? 'bg-blue-500/15 text-blue-400 border border-blue-500/30' : 'bg-gray-800 text-gray-500 border border-gray-700'
@@ -36,10 +36,10 @@ export const RelayBar: React.FC<RelayBarProps> = ({
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-gray-200">
+            <span className="text-[13px] font-semibold text-gray-200">
               链式中转加速 (Relay Proxy)
             </span>
-            <span className={`px-1.5 py-0.5 text-[10px] font-bold rounded uppercase tracking-wide border ${
+            <span className={`px-1.5 py-0.5 text-[12px] font-bold rounded uppercase tracking-wide border ${
               relayEnabled
                 ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
                 : 'bg-gray-800 text-gray-400 border-gray-700'
@@ -47,13 +47,13 @@ export const RelayBar: React.FC<RelayBarProps> = ({
               {relayEnabled ? '已启用 (Active)' : '已关闭 (Direct)'}
             </span>
           </div>
-          <p className="text-[11px] text-gray-400 mt-0.5 leading-relaxed">
+          <p className="text-[12px] text-gray-400 mt-0.5 leading-relaxed">
             {description}
           </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-2.5 self-end md:self-auto shrink-0">
+      <div className="flex items-center gap-2.5 self-end shrink-0">
         {/* Toggle Switch */}
         <button
           onClick={() => setRelayEnabled(!relayEnabled)}
@@ -76,7 +76,7 @@ export const RelayBar: React.FC<RelayBarProps> = ({
               <select
                 value={selectedRelayNodeId}
                 onChange={(e) => setSelectedRelayNodeId(e.target.value)}
-                className="appearance-none bg-[#191d2c] hover:bg-[#1f2437] text-gray-200 text-xs font-medium pl-3 pr-8 py-1.5 rounded-xl border border-[#2e354e] focus:outline-none focus:border-blue-500 transition-colors max-w-[240px] truncate"
+                className="appearance-none bg-[#191d2c] hover:bg-[#1f2437] text-gray-200 text-[13px] font-medium pl-3 pr-8 py-1.5 rounded-xl border border-[#2e354e] focus:outline-none focus:border-blue-500 transition-colors max-w-[240px] truncate"
               >
                 <option value="auto">
                   ⚡ 自动优选最快节点 {bestCandidate ? `(${bestCandidate.country_code} · ${bestCandidate.latency_ms ?? '~'}ms)` : ''}

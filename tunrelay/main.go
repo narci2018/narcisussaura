@@ -108,6 +108,13 @@ func main() {
 	if err := s.SetPromiscuousMode(1, true); err != nil {
 		log.Fatalf("tunrelay: promiscuous: %v", err)
 	}
+	// The forwarder binds each relayed flow to the *destination* address the
+	// app wanted (e.g. 1.1.1.1), which is not the NIC's own 172.19.0.1/32.
+	// Without spoofing enabled, gVisor's FindRoute rejects that source and
+	// CreateEndpoint fails with "no route to host" for every flow.
+	if err := s.SetSpoofing(1, true); err != nil {
+		log.Fatalf("tunrelay: spoofing: %v", err)
+	}
 
 	ip := net.ParseIP(*address)
 	if ip == nil {

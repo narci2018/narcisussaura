@@ -68,4 +68,5 @@ export const api = {
   },
 
   getCrashReport: () => invoke<string | null>('get_crash_report'),
+  getFullLogs: () => invoke<string>('get_full_logs'),
 };

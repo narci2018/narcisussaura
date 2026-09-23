@@ -34,19 +34,31 @@ import (
 )
 
 var (
-	socksServer   string
-	tcpForwarder  *tcp.Forwarder
-	activeTCP     atomic.Int64
-	activeUDP     atomic.Int64
-	tcpFlows      atomic.Int64
-	udpFlows      atomic.Int64
-	socksErrs     atomic.Int64
+	socksServer  string
+	tcpForwarder *tcp.Forwarder
+	activeTCP    atomic.Int64
+	activeUDP    atomic.Int64
+	tcpFlows     atomic.Int64
+	udpFlows     atomic.Int64
+	socksErrs    atomic.Int64
+	bytesTCP     atomic.Int64
+	bytesUDP     atomic.Int64
 )
+
+// socksPeer is the dialed UDP socket returned by socksAssociate: Write sends
+// framed datagrams to the relay, ReadFrom receives replies.
+type socksPeer interface {
+	Write(b []byte) (int, error)
+	ReadFrom(b []byte) (int, net.Addr, error)
+	Close() error
+}
 
 type udpSession struct {
 	tun  *gonet.UDPConn
-	scx  net.Conn
+	scx  socksPeer    // dialed to the SOCKS5 relay (BND) address
+	ctrl net.Conn     // TCP control connection: keep-alive for the association
 	last atomic.Int64 // unix nano of last activity
+	once sync.Once
 }
 
 func (s *udpSession) touch() { s.last.Store(time.Now().UnixNano()) }
@@ -159,8 +171,9 @@ func main() {
 func logStats() {
 	for {
 		time.Sleep(2 * time.Second)
-		log.Printf("stats tcp_flows=%d udp_flows=%d active_tcp=%d active_udp=%d socks_errs=%d",
-			tcpFlows.Load(), udpFlows.Load(), activeTCP.Load(), activeUDP.Load(), socksErrs.Load())
+		log.Printf("stats tcp_flows=%d udp_flows=%d active_tcp=%d active_udp=%d socks_errs=%d bytes_tcp=%d bytes_udp=%d",
+			tcpFlows.Load(), udpFlows.Load(), activeTCP.Load(), activeUDP.Load(), socksErrs.Load(),
+			bytesTCP.Load(), bytesUDP.Load())
 	}
 }
 
@@ -204,10 +217,12 @@ func handleTCP(r *tcp.ForwarderRequest) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			io.Copy(remote, conn)
+			n, _ := io.Copy(remote, conn)
+			bytesTCP.Add(n)
 			remote.Close()
 		}()
-		io.Copy(conn, remote)
+		n, _ := io.Copy(conn, remote)
+		bytesTCP.Add(n)
 		conn.CloseRead()
 		wg.Wait()
 	}()
@@ -237,26 +252,26 @@ func handleUDP(r *udp.ForwarderRequest) {
 	}
 	uc := gonet.NewUDPConn(&wq, ep)
 
-	scx, aerr := socksAssociate(dst)
+	scx, ctrl, aerr := socksAssociate()
 	if aerr != nil {
 		socksErrs.Add(1)
 		log.Printf("udp %s: socks associate: %v", dst, aerr)
 		uc.Close()
 		return
 	}
-	sess := &udpSession{tun: uc, scx: scx}
+	sess := &udpSession{tun: uc, scx: scx, ctrl: ctrl}
 	sess.touch()
 
 	udpMu.Lock()
 	udpSessions[key] = sess
 	udpMu.Unlock()
 	activeUDP.Add(1)
-	defer activeUDP.Add(-1)
 
 	udpAddr, rerr := net.ResolveUDPAddr("udp", dst)
 	if rerr != nil {
 		uc.Close()
 		scx.Close()
+		ctrl.Close()
 		udpMu.Lock()
 		delete(udpSessions, key)
 		udpMu.Unlock()
@@ -272,9 +287,11 @@ func handleUDP(r *udp.ForwarderRequest) {
 				return
 			}
 			sess.touch()
-			if _, werr := scx.Write(socksUDPFrame(udpAddr, b[:n])); werr != nil {
+			frame := socksUDPFrame(udpAddr, b[:n])
+			if _, werr := scx.Write(frame); werr != nil {
 				return
 			}
+			bytesUDP.Add(int64(n))
 		}
 	}()
 
@@ -282,7 +299,7 @@ func handleUDP(r *udp.ForwarderRequest) {
 		defer sess.close()
 		b := make([]byte, 65536)
 		for {
-			n, err := scx.Read(b)
+			n, _, err := scx.ReadFrom(b)
 			if err != nil || n < header.UDPMinimumSize {
 				return
 			}
@@ -294,21 +311,26 @@ func handleUDP(r *udp.ForwarderRequest) {
 			if _, werr := uc.Write(payload); werr != nil {
 				return
 			}
+			bytesUDP.Add(int64(len(payload)))
 		}
 	}()
 }
 
 func (s *udpSession) close() {
-	s.tun.Close()
-	s.scx.Close()
-	udpMu.Lock()
-	defer udpMu.Unlock()
-	for k, v := range udpSessions {
-		if v == s {
-			delete(udpSessions, k)
-			break
+	s.once.Do(func() {
+		activeUDP.Add(-1)
+		s.tun.Close()
+		s.scx.Close()
+		s.ctrl.Close()
+		udpMu.Lock()
+		defer udpMu.Unlock()
+		for k, v := range udpSessions {
+			if v == s {
+				delete(udpSessions, k)
+				break
+			}
 		}
-	}
+	})
 }
 
 func reapUDPSessions() {
@@ -369,63 +391,101 @@ func socksRequestAddr(target string) ([]byte, error) {
 	return append(req, port[:]...), nil
 }
 
-func socksReadReply(c net.Conn) error {
+// socksReadReply parses the SOCKS5 reply and returns BND.ADDR:BND.PORT.
+func socksReadReply(c net.Conn) (string, error) {
 	b := make([]byte, 4)
 	if _, err := io.ReadFull(c, b); err != nil {
-		return err
+		return "", err
 	}
 	if b[1] != 0x00 {
-		return fmt.Errorf("socks failure reply code 0x%02x", b[1])
+		return "", fmt.Errorf("socks failure reply code 0x%02x", b[1])
 	}
 	switch b[3] {
 	case 0x01:
-		_, err := io.ReadFull(c, make([]byte, 4+2))
-		return err
+		addr := make([]byte, 4+2)
+		if _, err := io.ReadFull(c, addr); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%d.%d.%d.%d:%d",
+			addr[0], addr[1], addr[2], addr[3],
+			binary.BigEndian.Uint16(addr[4:])), nil
 	case 0x03:
 		l := make([]byte, 1)
 		if _, err := io.ReadFull(c, l); err != nil {
-			return err
+			return "", err
 		}
-		_, err := io.ReadFull(c, make([]byte, int(l[0])+2))
-		return err
+		addr := make([]byte, int(l[0])+2)
+		if _, err := io.ReadFull(c, addr); err != nil {
+			return "", err
+		}
+		return net.JoinHostPort(string(addr[:len(addr)-2]),
+			fmt.Sprint(binary.BigEndian.Uint16(addr[len(addr)-2:]))), nil
 	case 0x04:
-		_, err := io.ReadFull(c, make([]byte, 16+2))
-		return err
+		addr := make([]byte, 16+2)
+		if _, err := io.ReadFull(c, addr); err != nil {
+			return "", err
+		}
+		return net.JoinHostPort(net.IP(addr[:16]).String(),
+			fmt.Sprint(binary.BigEndian.Uint16(addr[16:]))), nil
 	}
-	return fmt.Errorf("unknown socks ATYP 0x%02x", b[3])
+	return "", fmt.Errorf("unknown socks ATYP 0x%02x", b[3])
 }
 
-func socksDial(target string, cmd byte) (net.Conn, error) {
+func socksDial(target string, cmd byte) (net.Conn, string, error) {
 	c, err := net.DialTimeout("tcp", socksServer, 10*time.Second)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := socksGreeting(c); err != nil {
 		c.Close()
-		return nil, err
+		return nil, "", err
 	}
 	req, err := socksRequestAddr(target)
 	if err != nil {
 		c.Close()
-		return nil, err
+		return nil, "", err
 	}
 	req[1] = cmd
 	if _, err := c.Write(req); err != nil {
 		c.Close()
-		return nil, err
+		return nil, "", err
 	}
-	if err := socksReadReply(c); err != nil {
+	bnd, err := socksReadReply(c)
+	if err != nil {
 		c.Close()
-		return nil, err
+		return nil, "", err
 	}
-	return c, nil
+	return c, bnd, nil
 }
 
-func socksConnect(target string) (net.Conn, error) { return socksDial(target, 0x01) }
+func socksConnect(target string) (net.Conn, error) {
+	c, _, err := socksDial(target, 0x01)
+	return c, err
+}
 
-// socksAssociate sets up a UDP_ASSOCIATE session bound for target (used only
-// for the 0.0.0.0 placeholder address in the request).
-func socksAssociate(_ string) (net.Conn, error) { return socksDial("0.0.0.0:0", 0x03) }
+// socksAssociate performs SOCKS5 UDP_ASSOCIATE and returns a UDP socket
+// dialed to the relay address (BND.ADDR:PORT) plus the TCP control conn.
+// sing-box's mixed inbound does NOT read framed datagrams on the TCP control
+// connection (it RSTs any attempt); per RFC 1928 §7 the datagram path is a
+// real UDP socket toward BND. The control conn must stay open or sing-box
+// tears the association down.
+func socksAssociate() (socksPeer, net.Conn, error) {
+	ctrl, bnd, err := socksDial("0.0.0.0:0", 0x03)
+	if err != nil {
+		return nil, nil, err
+	}
+	bndAddr, err := net.ResolveUDPAddr("udp", bnd)
+	if err != nil {
+		ctrl.Close()
+		return nil, nil, fmt.Errorf("resolve socks relay %q: %w", bnd, err)
+	}
+	peer, err := net.DialUDP("udp", nil, bndAddr)
+	if err != nil {
+		ctrl.Close()
+		return nil, nil, fmt.Errorf("dial socks relay %s: %w", bnd, err)
+	}
+	return peer, ctrl, nil
+}
 
 func socksUDPFrame(dst *net.UDPAddr, payload []byte) []byte {
 	var head []byte

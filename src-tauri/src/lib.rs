@@ -60,6 +60,45 @@ async fn get_crash_report(app: AppHandle) -> Option<String> {
     }
 }
 
+/// Concatenate every diagnostic log the app owns so the user can copy the
+/// whole thing in one tap (the in-app views cannot scroll to the end of long
+/// logs on some devices). Tail-bounded to keep the clipboard usable.
+#[tauri::command]
+async fn get_full_logs(app: AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("app_data_dir: {}", e))?;
+    let tail = |path: std::path::PathBuf, max_lines: usize| -> String {
+        match std::fs::read_to_string(&path) {
+            Ok(s) => {
+                let lines: Vec<&str> = s.lines().collect();
+                let skip = lines.len().saturating_sub(max_lines);
+                let mut out = String::new();
+                if skip > 0 {
+                    out.push_str(&format!("... (前 {} 行省略)\n", skip));
+                }
+                out.push_str(lines[skip..].join("\n").as_str());
+                out
+            }
+            Err(_) => "(文件不存在)".to_string(),
+        }
+    };
+    let mut parts = vec![
+        format!("app版本: v{}", env!("CARGO_PKG_VERSION")),
+        format!("===== singbox.log =====\n{}", tail(dir.join("singbox.log"), 300)),
+        format!("===== tunrelay.log =====\n{}", tail(dir.join("tunrelay.log"), 400)),
+    ];
+    for name in ["crash_log", "panic_log"] {
+        let s = tail(dir.join(name), 60);
+        if s != "(文件不存在)" && !s.trim().is_empty() {
+            parts.push(format!("===== {} =====\n{}", name, s));
+        }
+    }
+    Ok(parts.join("\n\n"))
+}
+
 #[tauri::command]
 #[allow(unused_variables)]
 async fn get_machine_id(app: AppHandle) -> Result<String, String> {
@@ -495,6 +534,7 @@ async fn fetch_residential_nodes(url: Option<String>, state: State<'_, AppState>
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -611,6 +651,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![connect_smart_group, 
             get_machine_id,
             get_crash_report,
+            get_full_logs,
             request_auth,
             get_connection_status,
             get_connected_node,

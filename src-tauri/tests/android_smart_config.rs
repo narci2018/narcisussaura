@@ -98,7 +98,21 @@ fn android_smart_group_config_is_valid_json_structure() {
     assert_eq!(v["route"]["auto_detect_interface"], false);
     let rules = v["route"]["rules"].as_array().unwrap();
     assert_eq!(rules[0]["action"], "sniff");
+    assert!(
+        rules[0]["protocol"]
+            .as_array()
+            .map(|p| p.iter().any(|x| x == "dns"))
+            .unwrap_or(false),
+        "sniff must detect dns so protocol-based rules can match"
+    );
     assert_eq!(rules[1]["action"], "resolve");
+    assert!(
+        rules.iter().any(|r| {
+            r["action"] == "hijack-dns"
+                && r["port"].as_array().map(|p| p.iter().any(|x| x == 53)).unwrap_or(false)
+        }),
+        "tunrelay DNS (plain UDP to port 53) must be hijacked by port, not only by sniffed protocol"
+    );
     // The selector outbound and every referenced tag must exist.
     let outbounds = v["outbounds"].as_array().unwrap();
     let tags: Vec<&str> = outbounds.iter().filter_map(|o| o["tag"].as_str()).collect();

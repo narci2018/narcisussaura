@@ -99,11 +99,12 @@ fn android_smart_group_config_is_valid_json_structure() {
     let rules = v["route"]["rules"].as_array().unwrap();
     assert_eq!(rules[0]["action"], "sniff");
     assert!(
-        rules[0]["protocol"]
-            .as_array()
-            .map(|p| p.iter().any(|x| x == "dns"))
-            .unwrap_or(false),
-        "sniff must detect dns so protocol-based rules can match"
+        rules[0]["protocol"].is_null()
+            || rules[0]["protocol"]
+                .as_array()
+                .map(|p| p.iter().any(|x| x == "dns"))
+                .unwrap_or(false),
+        "sniff must cover dns (either unrestricted or with dns listed)"
     );
     assert_eq!(rules[1]["action"], "resolve");
     assert!(

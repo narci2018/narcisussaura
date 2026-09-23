@@ -588,8 +588,23 @@ impl SingBoxAdapter {
 
         // Assemble routing rules
         let mut rules = vec![
+            // Sniff (all protocols, incl. dns) + resolve must precede any
+            // protocol/domain rule: without them `protocol: "dns"` never
+            // matches and raw DNS is forwarded into proxy nodes that RST it.
+            json!({
+                "action": "sniff"
+            }),
+            json!({
+                "action": "resolve"
+            }),
             json!({
                 "protocol": "dns",
+                "action": "hijack-dns"
+            }),
+            // Backstop for transports without sniffed protocol (TUN raw IPs,
+            // Android's SOCKS bridge): DNS to port 53/853 is answered locally.
+            json!({
+                "port": [53, 853],
                 "action": "hijack-dns"
             }),
         ];

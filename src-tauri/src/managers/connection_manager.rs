@@ -2231,9 +2231,7 @@ rules:
     /// Android TUN mode: a standalone sing-box process cannot open /dev/net/tun
     /// (SELinux) and has no fd-based tun option. Strip the tun inbound entirely
     /// and let the tunrelay child process bridge the VpnService fd to the
-    /// SOCKS5 mixed port. Sniff/resolve rule actions (sing-box 1.13+ replacement
-    /// for the removed inbound `sniff` fields) recover domains from the raw-IP
-    /// tun destinations so domain rules keep working.
+    /// SOCKS5 mixed port.
     ///
     /// `auto_detect_interface` must also be off: it forces sing-box to open a
     /// netlink socket at startup, which Android SELinux bans for app uids and
@@ -2254,32 +2252,8 @@ rules:
                 "auto_detect_interface".to_string(),
                 serde_json::json!(false),
             );
-            if let Some(rules) = route.get_mut("rules").and_then(|v| v.as_array_mut()) {
-                // The shared config hijacks DNS only by `protocol: "dns"`, which
-                // requires sniff to recognize the traffic first. Over the
-                // tunrelay SOCKS bridge DNS arrives as plain UDP to the
-                // VpnService nameservers (1.1.1.1 / 8.8.8.8) on port 53; if the
-                // protocol match is missed the query is forwarded raw to the
-                // proxy node, which RSTs it, and every domain fails to resolve.
-                // Answer port 53/853 locally unconditionally as a backstop.
-                let port_hijack = serde_json::json!({"port": [53, 853], "action": "hijack-dns"});
-                match rules.iter().position(|r| {
-                    r.get("action").and_then(|v| v.as_str()) == Some("hijack-dns")
-                }) {
-                    Some(pos) => rules.insert(pos + 1, port_hijack),
-                    None => rules.insert(0, port_hijack),
-                }
-                rules.insert(
-                    0,
-                    serde_json::json!({"action": "resolve"}),
-                );
-                rules.insert(
-                    0,
-                    serde_json::json!({"action": "sniff", "protocol": ["tls", "http", "quic", "dns"]}),
-                );
-            }
         }
-        log::info!("Android: stripped tun inbound, disabled auto_detect_interface, added sniff/resolve rules + port-based hijack-dns");
+        log::info!("Android: stripped tun inbound, disabled auto_detect_interface");
 
         serde_json::to_string(&config).map_err(|e| format!("Failed to serialize patched config: {}", e))
     }

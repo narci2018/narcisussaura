@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Square } from 'lucide-react';
-import { api } from '../services/api';
-import { useAppStore } from '../stores/appStore';
-import { UnifiedNode } from '../types';
+import { api } from '../../../services/api';
+import { useAppStore } from '../../../stores/appStore';
+import { UnifiedNode } from '../../../types';
 import { RelayBar } from './RelayBar';
 
-import { matchNodeKeywords } from './SimpleMode/countries';
+import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
 export const VPNGateView: React.FC = () => {
   const { status, connectedNode, connect, disconnect, testLatency, testingLatencyIds, refreshNodes, nodes, errorMessage, setErrorMessage } = useAppStore();

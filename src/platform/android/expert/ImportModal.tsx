@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { PlusCircle, Link, AlertCircle, ArrowLeft, Copy, Check } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
+import { useAppStore } from '../../../stores/appStore';
 
 export const ImportModal: React.FC = () => {
   const { importLink, setActiveTab, errorMessage, setErrorMessage } = useAppStore();

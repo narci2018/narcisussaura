@@ -10,7 +10,19 @@
 - `src-tauri/src/core/` — sing-box / mihomo 配置生成、协议适配
 - `src-tauri/src/managers/` — 连接、节点、订阅等管理流程
 - `src-tauri/src/models.rs`、`src-tauri/src/lib.rs` — 数据模型、命令注册
-- `src/components/`、`src/stores/`、`src/services/` — 前端共享层
+- `src/stores/`、`src/services/`、`src/types/` — 前端状态与 IPC 层(逻辑共享,UI 不在此列)
+- `src/components/TitleBar.tsx`、`src/components/SimpleMode/` — 跨端共享 UI(小白模式三端同布局)
+
+### 专家模式视图层:PC 与 Android 物理隔离(用户拍板的方案 B,不再共享)
+- `src/platform/pc/expert/` — Windows + macOS 共用的专家模式全部视图
+  (Navigation / Dashboard / ServerList / ChainedProxyView / PsiphonView / VPNGateView /
+  ResidentialView / MegaVView / SubscriptionsView / ImportModal / SettingsView / QuoteBar / RelayBar)。
+- `src/platform/android/expert/` — Android 独立同一套视图的拷贝;移动端 UI 适配只改这里。
+- 两侧各有一份 `index.ts` 注册为 `ExpertLayer { Navigation, views: Record<ActiveTab, FC> }`,
+  经 `PlatformProfile.expert` 由 App.tsx 消费。**改任何一侧,另一侧零影响;**
+  同一 bug 两端都要修时,分别提交、分别前缀,禁止"顺手"跨拷。
+- PC 端(win+mac)如两家出现分叉,再在 `src/platform/windows/`、`src/platform/macos/`
+  里 spread 覆盖 `pcProfile`(现有做法),不另起第三份拷贝。
 
 ### 平台专属目录(该平台的问题只允许改这里)
 | 平台 | Rust | 前端 | 其它 |

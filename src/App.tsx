@@ -1,18 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { AlertCircle, X, Copy, Check } from 'lucide-react';
 import { TitleBar } from './components/TitleBar';
-import { Navigation } from './components/Navigation';
-import { Dashboard } from './components/Dashboard';
-import { ServerList } from './components/ServerList';
-import { PsiphonView } from './components/PsiphonView';
-import { VPNGateView } from './components/VPNGateView';
-import { ResidentialView } from './components/ResidentialView';
-import { MegaVView } from './components/MegaVView';
-import { SubscriptionsView } from './components/SubscriptionsView';
-import { ImportModal } from './components/ImportModal';
-import { SettingsView } from './components/SettingsView';
-import { ChainedProxyView } from './components/ChainedProxyView';
 import { SimpleDashboard } from './components/SimpleMode';
+import { currentProfile } from './platform';
 import { useAppStore } from './stores/appStore';
 import './App.css';
 
@@ -20,6 +10,9 @@ const APP_MODE_KEY = 'app_mode';
 
 export const App: React.FC = () => {
   const { activeTab, init, errorMessage, setErrorMessage, settings } = useAppStore();
+  // 专家模式视图层按平台 profile 分发(pc/ 与 android/expert/ 物理隔离,见 AGENTS.md §1)。
+  const { expert } = currentProfile();
+  const ActiveView = expert.views[activeTab];
   
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme || 'dark';
@@ -81,7 +74,7 @@ export const App: React.FC = () => {
       <TitleBar onSwitchToSimple={switchToSimple} />
 
       {/* Main Navigation */}
-      <Navigation />
+      <expert.Navigation />
 
       {/* Global Error Floating Banner */}
       {errorMessage && (
@@ -121,16 +114,7 @@ export const App: React.FC = () => {
 
       {/* View Container */}
       <main className="flex-1 flex overflow-hidden">
-        {activeTab === 'dashboard' && <Dashboard />}
-        {activeTab === 'servers' && <ServerList />}
-        {activeTab === 'chains' && <ChainedProxyView />}
-        {activeTab === 'psiphon' && <PsiphonView />}
-        {activeTab === 'vpngate' && <VPNGateView />}
-        {activeTab === 'residential' && <ResidentialView />}
-        {activeTab === 'megav' && <MegaVView />}
-        {activeTab === 'subscriptions' && <SubscriptionsView />}
-        {activeTab === 'import' && <ImportModal />}
-        {activeTab === 'settings' && <SettingsView />}
+        <ActiveView />
       </main>
     </div>
   );

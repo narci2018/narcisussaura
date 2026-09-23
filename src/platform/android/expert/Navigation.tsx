@@ -1,6 +1,6 @@
 import { LayoutDashboard, Server, FolderSync, PlusCircle, Settings as SettingsIcon, Globe, Shield, Zap, Link2, Home } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
-import { ActiveTab } from '../types';
+import { useAppStore } from '../../../stores/appStore';
+import { ActiveTab } from '../../../types';
 
 export const Navigation: React.FC = () => {
   const { activeTab, setActiveTab, residentialSubUrl } = useAppStore();

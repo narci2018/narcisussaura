@@ -17,9 +17,9 @@ import {
   ChevronRight,
   Square,
 } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
-import { UnifiedNode } from '../types';
-import { matchNodeKeywords } from './SimpleMode/countries';
+import { useAppStore } from '../../../stores/appStore';
+import { UnifiedNode } from '../../../types';
+import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
 function formatSpeed(bytesPerSec?: number | null): string {
   if (!bytesPerSec || bytesPerSec <= 0) return '';

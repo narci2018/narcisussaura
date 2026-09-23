@@ -15,8 +15,8 @@ import {
   Save,
   X,
 } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
-import { Subscription } from '../types';
+import { useAppStore } from '../../../stores/appStore';
+import { Subscription } from '../../../types';
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

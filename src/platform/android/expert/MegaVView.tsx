@@ -1,41 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Home, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Building2, Square } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
-import { UnifiedNode } from '../types';
+import { Zap, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, AlertCircle, X, Copy, Check, Square } from 'lucide-react';
+import { api } from '../../../services/api';
+import { useAppStore } from '../../../stores/appStore';
+import { UnifiedNode } from '../../../types';
 import { RelayBar } from './RelayBar';
-import { matchNodeKeywords } from './SimpleMode/countries';
 
-export const ResidentialView: React.FC = () => {
-  const {
-    status,
-    connectedNode,
-    connect,
-    disconnect,
-    testLatency,
-    testingLatencyIds,
-    nodes,
-    errorMessage,
-    setErrorMessage,
-    loadResidentialNodes,
-    residentialSubUrl,
-    relayEnabled,
-    setRelayEnabled,
-  } = useAppStore();
+import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
-  const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'Residential'), [nodes]);
-  const [residentialNodes, setResidentialNodes] = useState<UnifiedNode[]>([]);
+export const MegaVView: React.FC = () => {
+  const { status, connectedNode, connect, disconnect, testLatency, testingLatencyIds, refreshNodes, nodes, errorMessage, setErrorMessage } = useAppStore();
+  const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'MegaV'), [nodes]);
+  const [megaNodes, setMegaNodes] = useState<UnifiedNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [copiedError, setCopiedError] = useState(false);
 
-  // Requirement #2: Default enable relay proxy for residential broadband nodes
-  useEffect(() => {
-    if (!relayEnabled) {
-      setRelayEnabled(true);
-    }
-  }, []);
-
-  const displayNodes = residentialNodes.length > 0 ? residentialNodes : storeNodes;
+  const displayNodes = megaNodes.length > 0 ? megaNodes : storeNodes;
 
   const handleCopyError = () => {
     if (!errorMessage) return;
@@ -44,26 +24,22 @@ export const ResidentialView: React.FC = () => {
     setTimeout(() => setCopiedError(false), 2000);
   };
 
-  const handleSync = async () => {
-    if (!residentialSubUrl) return;
+  const loadMegaV = async () => {
     setLoading(true);
     try {
-      const fetched = await loadResidentialNodes();
-      if (fetched && fetched.length > 0) {
-        setResidentialNodes(fetched);
-      }
+      const fetched = await api.fetchMegaVNodes();
+      setMegaNodes(fetched);
+      await refreshNodes();
     } catch (e) {
-      console.error('Failed to sync residential nodes:', e);
+      console.error('Failed to load MegaV nodes:', e);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    if (storeNodes.length === 0 && residentialSubUrl) {
-      handleSync();
-    }
-  }, [residentialSubUrl]);
+    loadMegaV();
+  }, []);
 
   const handleTestAllPing = async () => {
     for (const n of displayNodes) {
@@ -80,15 +56,15 @@ export const ResidentialView: React.FC = () => {
         <div>
           <div className="flex items-center gap-2.5">
             <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-              <Home className="w-4 h-4" />
+              <Zap className="w-4 h-4" />
             </div>
-            <h1 className="text-lg font-bold tracking-tight text-gray-100">Premium Residential IP Network</h1>
+            <h1 className="text-lg font-bold tracking-tight text-gray-100">MegaV High-Speed Fleet</h1>
             <span className="px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-              优质住宅IP
+              Romaxa55/MegaV
             </span>
           </div>
           <p className="text-xs text-gray-400 mt-1">
-            Authentic global residential broadband and ISP dynamic endpoints for maximum anonymity and anti-censorship.
+            Optimized, decentralized VLESS Reality, Trojan, and Shadowsocks nodes curated from the MegaV Public repository.
           </p>
         </div>
 
@@ -101,12 +77,12 @@ export const ResidentialView: React.FC = () => {
             <span>Test Latency</span>
           </button>
           <button
-            onClick={handleSync}
+            onClick={loadMegaV}
             disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-amber-600/30"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-blue-600/30"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>{loading ? 'Fetching...' : 'Sync Residential'}</span>
+            <span>{loading ? 'Fetching...' : 'Sync MegaV'}</span>
           </button>
         </div>
       </div>
@@ -119,17 +95,17 @@ export const ResidentialView: React.FC = () => {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filter by country, ISP, server IP, region..."
+            placeholder="Search MegaV nodes by country, city, protocol..."
             className="w-full bg-[#131620] border border-[#222738] rounded-xl pl-9 pr-3 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-amber-500/50"
           />
         </div>
         <div className="text-xs text-gray-500 font-mono">
-          {filtered.length} residential nodes available
+          {filtered.length} nodes available
         </div>
       </div>
 
       {/* Relay Proxy Toolbar */}
-      <RelayBar description="优质住宅IP为真实家庭/商业宽带，国内直连易受 GFW 封锁。开启链式中转将通过您的翻墙节点中继访问，保障 100% 成功建联。" />
+      <RelayBar description="MegaV 公开节点入口 IP 及 workers.dev 域名在国内被全面阻断。开启链式中转将通过您的翻墙节点中继访问，保障 100% 成功建联。" />
 
       {/* Connection Failure Notice */}
       {errorMessage && (
@@ -160,17 +136,17 @@ export const ResidentialView: React.FC = () => {
         </div>
       )}
 
-      {/* Relays List */}
+      {/* Nodes Cards Grid */}
       <div className="flex-1 overflow-y-auto p-6">
         {filtered.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-gray-500">
-            <Globe2 className="w-10 h-10 mb-2 opacity-30 text-amber-400" />
-            <p className="text-sm">No residential nodes found.</p>
+            <Zap className="w-10 h-10 mb-2 opacity-30 text-amber-400" />
+            <p className="text-sm">No MegaV nodes found.</p>
             <button
-              onClick={handleSync}
-              className="mt-3 text-xs text-amber-400 hover:underline flex items-center gap-1"
+              onClick={loadMegaV}
+              className="mt-3 text-xs text-blue-400 hover:underline flex items-center gap-1"
             >
-              <RefreshCw className="w-3 h-3" /> Click to fetch nodes
+              <RefreshCw className="w-3 h-3" /> Click to re-sync
             </button>
           </div>
         ) : (
@@ -179,28 +155,27 @@ export const ResidentialView: React.FC = () => {
               const isConnected = connectedNode?.id === node.id && status === 'connected';
               const isConnecting = connectedNode?.id === node.id && status === 'connecting';
               const isPinging = testingLatencyIds.includes(node.id);
-              const ispName = (node.config as any)?.isp || node.city || 'Residential ISP';
 
               return (
                 <div
                   key={node.id}
                   className={`relative flex flex-col justify-between p-4 rounded-2xl border transition-all ${
                     isConnected
-                      ? 'bg-gradient-to-br from-amber-950/30 to-[#141108] border-amber-500/40 shadow-lg shadow-amber-950/20'
+                      ? 'bg-gradient-to-br from-emerald-950/30 to-[#0e1713] border-emerald-500/40 shadow-lg shadow-emerald-950/20'
                       : 'bg-[#11141e] border-[#1d2232] hover:border-[#2e3650] hover:bg-[#141824]'
                   }`}
                 >
                   <div>
-                    <div className="flex items-start justify-between gap-2 mb-2">
+                    <div className="flex items-start justify-between gap-2 mb-2.5">
                       <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-xl bg-[#1b2030] flex items-center justify-center text-xs font-bold text-amber-400">
-                          {node.country_code}
+                        <div className="w-8 h-8 rounded-xl bg-[#1b2030] flex items-center justify-center text-sm shadow-inner font-bold text-gray-300">
+                          {node.country_code || '🌐'}
                         </div>
                         <div>
                           <div className="text-xs font-semibold text-gray-100 flex items-center gap-1.5">
-                            <span>{node.country_name || 'Residential Node'}</span>
+                            <span>{node.city || node.country_name || 'MegaV Node'}</span>
                             {isConnected && (
-                              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                             )}
                           </div>
                           <div className="text-[11px] text-gray-500 font-mono">
@@ -209,21 +184,20 @@ export const ResidentialView: React.FC = () => {
                         </div>
                       </div>
 
-                      <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded bg-amber-500/10 text-amber-300 border border-amber-500/20">
-                        Residential
+                      <span className="px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded bg-purple-500/10 text-purple-300 border border-purple-500/20">
+                        {node.protocol}
                       </span>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 my-3">
-                      <span className="flex items-center gap-1 px-1.5 py-0.5 bg-[#171b28] text-amber-300/90 rounded text-[10px] border border-[#23293d]">
-                        <Building2 className="w-3 h-3 text-amber-400" />
-                        <span className="max-w-[140px] truncate">{ispName}</span>
-                      </span>
-                      {node.speed_bps && node.speed_bps > 0 && (
-                        <span className="px-1.5 py-0.5 bg-[#171b28] text-emerald-400 rounded text-[10px] border border-[#23293d] font-mono">
-                          {Math.round(node.speed_bps / (1024 * 1024))} Mbps
+                      {node.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="px-1.5 py-0.5 bg-[#171b28] text-gray-400 rounded text-[10px] border border-[#23293d]"
+                        >
+                          {tag}
                         </span>
-                      )}
+                      ))}
                     </div>
                   </div>
 
@@ -243,7 +217,7 @@ export const ResidentialView: React.FC = () => {
                     {isConnected ? (
                       <button
                         onClick={() => disconnect()}
-                        className="px-3 py-1.5 bg-amber-600/20 hover:bg-red-600/30 text-amber-400 hover:text-red-400 border border-amber-500/40 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5"
+                        className="px-3 py-1.5 bg-emerald-600/20 hover:bg-red-600/30 text-emerald-400 hover:text-red-400 border border-emerald-500/40 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>Connected</span>
@@ -251,7 +225,7 @@ export const ResidentialView: React.FC = () => {
                     ) : isConnecting ? (
                       <button
                         onClick={() => disconnect()}
-                        className="px-3 py-1.5 bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 rounded-xl text-xs font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
+                        className="px-3.5 py-1.5 bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 rounded-xl text-xs font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
                         title="点击终止连接"
                       >
                         <Square className="w-3.5 h-3.5 fill-red-400 text-red-400 animate-pulse" />
@@ -260,7 +234,7 @@ export const ResidentialView: React.FC = () => {
                     ) : (
                       <button
                         onClick={() => connect(node.id)}
-                        className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-amber-600/20 flex items-center gap-1.5 active:scale-95"
+                        className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-blue-600/20 flex items-center gap-1.5 active:scale-95"
                       >
                         <ArrowUpRight className="w-3.5 h-3.5" />
                         <span>Connect</span>

@@ -17,8 +17,8 @@ import {
   Minimize2,
   Filter,
 } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
-import { ProxyChain } from '../types';
+import { useAppStore } from '../../../stores/appStore';
+import { ProxyChain } from '../../../types';
 
 export const ChainedProxyView: React.FC = () => {
   const {

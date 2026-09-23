@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Shield, Network, Cpu, Save, Check, Layers, Plus, Edit3, Trash2, X, RotateCcw } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
-import { AppSettings, ProxyMode, RoutingRuleSet } from '../types';
+import { useAppStore } from '../../../stores/appStore';
+import { AppSettings, ProxyMode, RoutingRuleSet } from '../../../types';
 
 const DEFAULT_RECOMMENDED_RULE_SET: RoutingRuleSet = {
   id: 'default',

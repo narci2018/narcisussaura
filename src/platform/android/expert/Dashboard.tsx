@@ -11,8 +11,8 @@ import {
   Check,
   Square,
 } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
-import { api } from '../services/api';
+import { useAppStore } from '../../../stores/appStore';
+import { api } from '../../../services/api';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { QuoteBar } from './QuoteBar';
 

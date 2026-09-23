@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Zap, RefreshCw, ChevronDown } from 'lucide-react';
-import { useAppStore } from '../stores/appStore';
+import { useAppStore } from '../../../stores/appStore';
 
 interface RelayBarProps {
   description?: string;

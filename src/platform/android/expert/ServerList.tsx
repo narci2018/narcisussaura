@@ -250,7 +250,7 @@ export const ServerList: React.FC = () => {
             </div>
             <button 
               onClick={closeInspectReport}
-              className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/10 text-gray-400 transition-colors"
+              className="w-8 h-8 flex items-center justify-center rounded-full active:bg-white/10 text-gray-400 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
@@ -313,7 +313,7 @@ export const ServerList: React.FC = () => {
           <div className="mt-6 flex justify-end">
             <button
               onClick={closeInspectReport}
-              className="px-6 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-xl transition-colors shadow-lg shadow-indigo-600/20"
+              className="px-6 py-2 bg-indigo-600 active:bg-indigo-500 text-white font-medium rounded-xl transition-colors shadow-lg shadow-indigo-600/20"
             >
               完成并关闭
             </button>
@@ -390,7 +390,7 @@ export const ServerList: React.FC = () => {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
                 sortMode === 'latency'
                   ? 'bg-blue-600/30 text-blue-300 font-semibold border border-blue-500/40 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-200 border border-transparent'
+                  : 'text-gray-400 active:text-gray-200 border border-transparent'
               }`}
               title="按延迟从小到大排序 (Lowest Ping First)"
             >
@@ -403,7 +403,7 @@ export const ServerList: React.FC = () => {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all ${
                 sortMode === 'speed'
                   ? 'bg-indigo-600/30 text-indigo-300 font-semibold border border-indigo-500/40 shadow-sm'
-                  : 'text-gray-400 hover:text-gray-200 border border-transparent'
+                  : 'text-gray-400 active:text-gray-200 border border-transparent'
               }`}
               title="按真实下载速度从高到低排序 (Fastest Download First)"
             >
@@ -418,7 +418,7 @@ export const ServerList: React.FC = () => {
           <button
             onClick={() => testAllNodes()}
             disabled={isTestingAll}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] hover:bg-[#1d2233] text-gray-300 hover:text-white text-[13px] font-medium border border-[#242a3d] transition-all disabled:opacity-50 shadow-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] active:bg-[#1d2233] text-gray-300 active:text-white text-[13px] font-medium border border-[#242a3d] transition-all disabled:opacity-50 shadow-sm"
             title="对所有节点批量测试延迟 (Ping Latency)"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isTestingAll ? 'animate-spin text-blue-400' : 'text-blue-400'}`} />
@@ -429,7 +429,7 @@ export const ServerList: React.FC = () => {
           <button
             onClick={() => startDeepInspection(filteredAndSortedNodes)}
             disabled={!!inspectProgress || filteredAndSortedNodes.length === 0}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 hover:text-purple-300 text-[13px] font-medium border border-purple-500/30 transition-all disabled:opacity-50 shadow-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-purple-500/10 active:bg-purple-500/20 text-purple-400 active:text-purple-300 text-[13px] font-medium border border-purple-500/30 transition-all disabled:opacity-50 shadow-sm"
           >
             <Rocket className="w-3.5 h-3.5" />
             <span>深度质检</span>
@@ -438,7 +438,7 @@ export const ServerList: React.FC = () => {
           <button
             onClick={() => testAllSpeeds()}
             disabled={isTestingAllSpeed}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] hover:bg-[#1d2233] text-indigo-300 hover:text-indigo-200 text-[13px] font-medium border border-indigo-500/30 transition-all disabled:opacity-50 shadow-sm"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#151824] active:bg-[#1d2233] text-indigo-300 active:text-indigo-200 text-[13px] font-medium border border-indigo-500/30 transition-all disabled:opacity-50 shadow-sm"
             title="对所有节点批量测真实带宽速度 (Test Speed)"
           >
             <Gauge className={`w-3.5 h-3.5 ${isTestingAllSpeed ? 'animate-spin text-indigo-400' : 'text-indigo-400'}`} />
@@ -448,7 +448,7 @@ export const ServerList: React.FC = () => {
           {/* Add Server */}
           <button
             onClick={() => setActiveTab('import')}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-medium shadow-sm shadow-blue-500/20 transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-medium shadow-sm shadow-blue-500/20 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Server</span>
@@ -488,7 +488,7 @@ export const ServerList: React.FC = () => {
                 className={`px-3 py-1 rounded-lg text-[13px] font-medium border shrink-0 transition-all flex items-center gap-1.5 ${
                   isSelected
                     ? 'bg-blue-600/25 text-blue-300 border-blue-500/50 font-semibold shadow-sm shadow-blue-500/10'
-                    : 'bg-[#111420] text-gray-400 border-[#1f2538] hover:border-[#2f3854] hover:text-gray-200'
+                    : 'bg-[#111420] text-gray-400 border-[#1f2538] active:border-[#2f3854] active:text-gray-200'
                 }`}
               >
                 <span>{grp === 'all' ? 'All Subscriptions' : grp}</span>
@@ -519,7 +519,7 @@ export const ServerList: React.FC = () => {
           className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-[13px] font-medium border transition-all ${
             filterFavorite
               ? 'bg-amber-500/10 text-amber-300 border-amber-500/30'
-              : 'bg-[#12151e] text-gray-400 border-[#222736] hover:text-gray-200'
+              : 'bg-[#12151e] text-gray-400 border-[#222736] active:text-gray-200'
           }`}
         >
           <Star className={`w-3.5 h-3.5 ${filterFavorite ? 'fill-amber-400 text-amber-400' : ''}`} />
@@ -539,7 +539,7 @@ export const ServerList: React.FC = () => {
                   : proto === 'wireguard'
                   ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50 font-bold shadow-sm shadow-cyan-500/20'
                   : 'bg-blue-500/15 text-blue-400 border-blue-500/40 font-semibold'
-                : 'bg-[#12151e] text-gray-400 border-[#222736] hover:text-gray-200'
+                : 'bg-[#12151e] text-gray-400 border-[#222736] active:text-gray-200'
             }`}
           >
             {proto === 'all'
@@ -578,7 +578,7 @@ export const ServerList: React.FC = () => {
                     ? 'bg-emerald-500/5 border-emerald-500/40 shadow-sm shadow-emerald-500/10'
                     : isSelected
                     ? 'bg-[#151926] border-blue-500/50 shadow-sm shadow-blue-500/10'
-                    : 'bg-[#11131c] border-[#1f2433] hover:border-[#2b3348] hover:bg-[#141722]'
+                    : 'bg-[#11131c] border-[#1f2433] active:border-[#2b3348] active:bg-[#141722]'
                 }`}
               >
                 {/* Left: Info */}
@@ -661,7 +661,7 @@ export const ServerList: React.FC = () => {
                   <button
                     onClick={() => testLatency(node.id)}
                     disabled={isTestingLat}
-                    className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-blue-400 transition-colors disabled:opacity-50"
+                    className="p-1.5 rounded-lg active:bg-gray-800 text-gray-400 active:text-blue-400 transition-colors disabled:opacity-50"
                     title="Ping latency (TCP Handshake)"
                   >
                     <Zap className={`w-3.5 h-3.5 ${isTestingLat ? 'animate-bounce text-blue-400' : ''}`} />
@@ -671,7 +671,7 @@ export const ServerList: React.FC = () => {
                   <button
                     onClick={() => testSpeed(node.id)}
                     disabled={isTestingSpd}
-                    className="p-1.5 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-indigo-400 transition-colors disabled:opacity-50"
+                    className="p-1.5 rounded-lg active:bg-gray-800 text-gray-400 active:text-indigo-400 transition-colors disabled:opacity-50"
                     title="Test real download bandwidth"
                   >
                     <Gauge className={`w-3.5 h-3.5 ${isTestingSpd ? 'animate-spin text-indigo-400' : ''}`} />
@@ -680,14 +680,14 @@ export const ServerList: React.FC = () => {
                   {/* Favorite toggle */}
                   <button
                     onClick={() => toggleFavorite(node.id)}
-                    className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors"
+                    className="p-1.5 rounded-lg active:bg-gray-800 transition-colors"
                     title={node.favorite ? 'Remove favorite' : 'Add favorite'}
                   >
                     <Star
                       className={`w-3.5 h-3.5 ${
                         node.favorite
                           ? 'fill-amber-400 text-amber-400'
-                          : 'text-gray-500 hover:text-gray-300'
+                          : 'text-gray-500 active:text-gray-300'
                       }`}
                     />
                   </button>
@@ -711,7 +711,7 @@ export const ServerList: React.FC = () => {
                         e.stopPropagation();
                         disconnect();
                       }}
-                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 text-[13px] font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95"
+                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 text-[13px] font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95"
                       title="点击终止当前连接"
                     >
                       <Square className="w-3 h-3 fill-red-400 text-red-400 animate-pulse" />
@@ -723,7 +723,7 @@ export const ServerList: React.FC = () => {
                         setSelectedNodeId(node.id);
                         connect(node.id);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-[13px] font-medium transition-all active:scale-95"
+                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 active:bg-blue-600 text-white text-[13px] font-medium transition-all active:scale-95"
                     >
                       Connect
                     </button>
@@ -732,7 +732,7 @@ export const ServerList: React.FC = () => {
                   {/* Delete button */}
                   <button
                     onClick={() => deleteNode(node.id)}
-                    className="p-1.5 rounded-lg hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition-colors"
+                    className="p-1.5 rounded-lg active:bg-red-500/20 text-gray-500 active:text-red-400 transition-colors"
                     title="Delete node"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

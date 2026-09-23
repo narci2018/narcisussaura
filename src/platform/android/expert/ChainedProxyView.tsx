@@ -236,7 +236,7 @@ export const ChainedProxyView: React.FC = () => {
           <button
             onClick={() => testAllChains()}
             disabled={chains.length === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#141722] hover:bg-[#1c2233] text-gray-300 hover:text-white text-[13px] font-medium border border-[#23293a] transition-all disabled:opacity-40 shadow-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#141722] active:bg-[#1c2233] text-gray-300 active:text-white text-[13px] font-medium border border-[#23293a] transition-all disabled:opacity-40 shadow-sm"
             title="对所有链式代理测速"
           >
             <Zap className="w-3.5 h-3.5 text-amber-400" />
@@ -246,7 +246,7 @@ export const ChainedProxyView: React.FC = () => {
           {/* Create Chain Button */}
           <button
             onClick={handleOpenCreate}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-medium shadow-sm shadow-blue-500/20 transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-medium shadow-sm shadow-blue-500/20 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>新建链式代理</span>
@@ -272,7 +272,7 @@ export const ChainedProxyView: React.FC = () => {
             {chains.length === 0 && (
               <button
                 onClick={handleOpenCreate}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-medium shadow-md shadow-blue-500/20 transition-all"
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-medium shadow-md shadow-blue-500/20 transition-all"
               >
                 <Plus className="w-4 h-4" />
                 <span>创建第一个链式代理</span>
@@ -299,7 +299,7 @@ export const ChainedProxyView: React.FC = () => {
                     ? 'bg-emerald-950/15 border-emerald-500/40 shadow-lg shadow-emerald-500/5'
                     : isConnecting
                     ? 'bg-blue-950/15 border-blue-500/40 shadow-lg shadow-blue-500/5'
-                    : 'bg-[#10131d] border-[#1d2232] hover:border-[#2b334a]'
+                    : 'bg-[#10131d] border-[#1d2232] active:border-[#2b334a]'
                 }`}
               >
                 {/* Card Top Row: Name, Badges & Actions */}
@@ -345,7 +345,7 @@ export const ChainedProxyView: React.FC = () => {
                     {/* Latency badge */}
                     <div
                       onClick={() => testChainLatency(chain.id)}
-                      className="cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#161a26] hover:bg-[#1e2436] border border-[#252b3d] text-[13px] transition-colors"
+                      className="cursor-pointer flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#161a26] active:bg-[#1e2436] border border-[#252b3d] text-[13px] transition-colors"
                       title="点击对本链测速"
                     >
                       {isTesting ? (
@@ -378,7 +378,7 @@ export const ChainedProxyView: React.FC = () => {
                     <button
                       onClick={() => testChainLatency(chain.id)}
                       disabled={isTesting}
-                      className="p-1.5 rounded-lg bg-[#161a26] hover:bg-[#1e2436] text-gray-300 hover:text-amber-300 border border-[#252b3d] transition-colors disabled:opacity-40"
+                      className="p-1.5 rounded-lg bg-[#161a26] active:bg-[#1e2436] text-gray-300 active:text-amber-300 border border-[#252b3d] transition-colors disabled:opacity-40"
                       title="测试链路延迟"
                     >
                       <Zap className={`w-3.5 h-3.5 ${isTesting ? 'animate-spin text-amber-400' : ''}`} />
@@ -387,7 +387,7 @@ export const ChainedProxyView: React.FC = () => {
                     {/* Edit button */}
                     <button
                       onClick={() => handleOpenEdit(chain)}
-                      className="p-1.5 rounded-lg bg-[#161a26] hover:bg-[#1e2436] text-gray-300 hover:text-white border border-[#252b3d] transition-colors"
+                      className="p-1.5 rounded-lg bg-[#161a26] active:bg-[#1e2436] text-gray-300 active:text-white border border-[#252b3d] transition-colors"
                       title="编辑代理链"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
@@ -396,7 +396,7 @@ export const ChainedProxyView: React.FC = () => {
                     {/* Delete button */}
                     <button
                       onClick={() => setDeletingChainId(chain.id)}
-                      className="p-1.5 rounded-lg bg-[#161a26] hover:bg-red-500/20 text-gray-400 hover:text-red-400 border border-[#252b3d] hover:border-red-500/30 transition-colors"
+                      className="p-1.5 rounded-lg bg-[#161a26] active:bg-red-500/20 text-gray-400 active:text-red-400 border border-[#252b3d] active:border-red-500/30 transition-colors"
                       title="删除代理链"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -406,7 +406,7 @@ export const ChainedProxyView: React.FC = () => {
                     {isConnected ? (
                       <button
                         onClick={() => disconnect()}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 text-[13px] font-semibold transition-all shadow-sm"
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-600/20 active:bg-amber-600/30 text-amber-300 border border-amber-500/40 text-[13px] font-semibold transition-all shadow-sm"
                       >
                         <span>断开连接</span>
                       </button>
@@ -414,7 +414,7 @@ export const ChainedProxyView: React.FC = () => {
                       <button
                         onClick={() => connectChain(chain.id)}
                         disabled={isConnecting}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/25 transition-all disabled:opacity-50"
+                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/25 transition-all disabled:opacity-50"
                       >
                         {isConnecting ? (
                           <>
@@ -518,7 +518,7 @@ export const ChainedProxyView: React.FC = () => {
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => setIsModalOpen(false)}
-                  className="text-gray-400 hover:text-white p-1.5 rounded-lg hover:bg-gray-800 transition-colors"
+                  className="text-gray-400 active:text-white p-1.5 rounded-lg active:bg-gray-800 transition-colors"
                   title="关闭"
                 >
                   <X className="w-4 h-4" />
@@ -620,7 +620,7 @@ export const ChainedProxyView: React.FC = () => {
                               type="button"
                               onClick={() => handleMoveUp(idx)}
                               disabled={isFirst}
-                              className="p-1 rounded-lg bg-[#1e2333] hover:bg-[#283046] text-gray-300 hover:text-white disabled:opacity-20 transition-colors"
+                              className="p-1 rounded-lg bg-[#1e2333] active:bg-[#283046] text-gray-300 active:text-white disabled:opacity-20 transition-colors"
                               title="上移此跳"
                             >
                               <ArrowUp className="w-3.5 h-3.5" />
@@ -629,7 +629,7 @@ export const ChainedProxyView: React.FC = () => {
                               type="button"
                               onClick={() => handleMoveDown(idx)}
                               disabled={isLast}
-                              className="p-1 rounded-lg bg-[#1e2333] hover:bg-[#283046] text-gray-300 hover:text-white disabled:opacity-20 transition-colors"
+                              className="p-1 rounded-lg bg-[#1e2333] active:bg-[#283046] text-gray-300 active:text-white disabled:opacity-20 transition-colors"
                               title="下移此跳"
                             >
                               <ArrowDown className="w-3.5 h-3.5" />
@@ -637,7 +637,7 @@ export const ChainedProxyView: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleRemoveNode(idx)}
-                              className="p-1 rounded-lg bg-[#1e2333] hover:bg-red-500/20 text-gray-400 hover:text-red-400 transition-colors ml-1"
+                              className="p-1 rounded-lg bg-[#1e2333] active:bg-red-500/20 text-gray-400 active:text-red-400 transition-colors ml-1"
                               title="移除此跳"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -710,7 +710,7 @@ export const ChainedProxyView: React.FC = () => {
                       type="button"
                       onClick={handleAddNodeToChain}
                       disabled={!selectedAddNodeId}
-                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[#1e2333] hover:bg-[#283046] text-blue-400 border border-blue-500/30 text-[13px] font-medium transition-colors shrink-0 disabled:opacity-40 shadow-sm"
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-[#1e2333] active:bg-[#283046] text-blue-400 border border-blue-500/30 text-[13px] font-medium transition-colors shrink-0 disabled:opacity-40 shadow-sm"
                       title="添加所选节点到跳板序列"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -736,14 +736,14 @@ export const ChainedProxyView: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-[#161a26] hover:bg-[#1e2333] text-gray-300 text-[13px] font-medium border border-[#252b3d] transition-colors"
+                  className="px-4 py-2 rounded-xl bg-[#161a26] active:bg-[#1e2333] text-gray-300 text-[13px] font-medium border border-[#252b3d] transition-colors"
                 >
                   取消
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveChain}
-                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/25 transition-all"
+                  className="px-4 py-2 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/25 transition-all"
                 >
                   保存链式代理
                 </button>
@@ -767,13 +767,13 @@ export const ChainedProxyView: React.FC = () => {
             <div className="flex items-center justify-end gap-2.5">
               <button
                 onClick={() => setDeletingChainId(null)}
-                className="px-3.5 py-1.5 rounded-xl bg-[#161a26] hover:bg-[#1e2333] text-gray-300 text-[13px] font-medium border border-[#252b3d] transition-colors"
+                className="px-3.5 py-1.5 rounded-xl bg-[#161a26] active:bg-[#1e2333] text-gray-300 text-[13px] font-medium border border-[#252b3d] transition-colors"
               >
                 取消
               </button>
               <button
                 onClick={handleConfirmDelete}
-                className="px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-[13px] font-semibold shadow-sm shadow-red-500/20 transition-all"
+                className="px-3.5 py-1.5 rounded-xl bg-red-600 active:bg-red-500 text-white text-[13px] font-semibold shadow-sm shadow-red-500/20 transition-all"
               >
                 确认删除
               </button>

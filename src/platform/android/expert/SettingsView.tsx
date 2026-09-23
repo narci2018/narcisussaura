@@ -111,7 +111,7 @@ export const SettingsView: React.FC = () => {
           </div>
           <button
             onClick={handleSave}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/20 transition-all"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/20 transition-all"
           >
             {saved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
             <span>{saved ? 'Saved!' : 'Save Changes'}</span>
@@ -151,7 +151,7 @@ export const SettingsView: React.FC = () => {
                   className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
                     isSelected
                       ? 'bg-blue-500/10 border-blue-500/40 text-blue-400'
-                      : 'bg-[#0f1118] border-[#222736] text-gray-400 hover:border-[#2e3447]'
+                      : 'bg-[#0f1118] border-[#222736] text-gray-400 active:border-[#2e3447]'
                   }`}
                 >
                   <div className="text-[13px] font-semibold text-gray-200 mb-1">{mode.title}</div>
@@ -190,7 +190,7 @@ export const SettingsView: React.FC = () => {
                   className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
                     isSelected
                       ? 'bg-purple-500/10 border-purple-500/40 text-purple-400'
-                      : 'bg-[#0f1118] border-[#222736] text-gray-400 hover:border-[#2e3447]'
+                      : 'bg-[#0f1118] border-[#222736] text-gray-400 active:border-[#2e3447]'
                   }`}
                 >
                   <div className="text-[13px] font-semibold text-gray-200 mb-1">{mode.title}</div>
@@ -268,7 +268,7 @@ export const SettingsView: React.FC = () => {
                   className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
                     isSelected
                       ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
-                      : 'bg-[#0f1118] border-[#222736] text-gray-400 hover:border-[#2e3447]'
+                      : 'bg-[#0f1118] border-[#222736] text-gray-400 active:border-[#2e3447]'
                   }`}
                 >
                   <div className="text-[13px] font-semibold text-gray-200 mb-1">{route.title}</div>
@@ -365,7 +365,7 @@ export const SettingsView: React.FC = () => {
               <button
                 type="button"
                 onClick={handleOpenCreateNew}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c2233] hover:bg-[#252c42] text-cyan-400 text-[13px] font-medium border border-cyan-500/20 hover:border-cyan-500/40 transition-all shadow-sm"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#1c2233] active:bg-[#252c42] text-cyan-400 text-[13px] font-medium border border-cyan-500/20 active:border-cyan-500/40 transition-all shadow-sm"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>新建规则集</span>
@@ -373,7 +373,7 @@ export const SettingsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => handleOpenEdit()}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/90 hover:bg-blue-600 text-white text-[13px] font-medium shadow-sm transition-all"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600/90 active:bg-blue-600 text-white text-[13px] font-medium shadow-sm transition-all"
               >
                 <Edit3 className="w-3.5 h-3.5" />
                 <span>编辑当前规则集</span>
@@ -488,7 +488,7 @@ export const SettingsView: React.FC = () => {
               </div>
               <button
                 onClick={() => setModalOpen(false)}
-                className="p-1 rounded-lg text-gray-400 hover:text-gray-100 hover:bg-gray-800 transition-colors"
+                className="p-1 rounded-lg text-gray-400 active:text-gray-100 active:bg-gray-800 transition-colors"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -525,7 +525,7 @@ export const SettingsView: React.FC = () => {
                   <button
                     type="button"
                     onClick={handleOpenCreateNew}
-                    className="flex items-center gap-1 text-[12px] text-cyan-400 hover:text-cyan-300 font-medium px-2 py-1 rounded-lg hover:bg-cyan-500/10 transition-colors"
+                    className="flex items-center gap-1 text-[12px] text-cyan-400 active:text-cyan-300 font-medium px-2 py-1 rounded-lg active:bg-cyan-500/10 transition-colors"
                   >
                     <Plus className="w-3 h-3" />
                     <span>新建规则集</span>
@@ -540,7 +540,7 @@ export const SettingsView: React.FC = () => {
                         block_rules: ['geosite:category-ads-all'],
                       });
                     }}
-                    className="flex items-center gap-1 text-[12px] text-gray-400 hover:text-gray-200 px-2 py-1 rounded-lg hover:bg-gray-800 transition-colors"
+                    className="flex items-center gap-1 text-[12px] text-gray-400 active:text-gray-200 px-2 py-1 rounded-lg active:bg-gray-800 transition-colors"
                     title="恢复推荐默认规则"
                   >
                     <RotateCcw className="w-3 h-3" />
@@ -563,7 +563,7 @@ export const SettingsView: React.FC = () => {
                           setModalOpen(false);
                         }
                       }}
-                      className="flex items-center gap-1 text-[12px] text-rose-400 hover:text-rose-300 px-2 py-1 rounded-lg hover:bg-rose-500/10 transition-colors"
+                      className="flex items-center gap-1 text-[12px] text-rose-400 active:text-rose-300 px-2 py-1 rounded-lg active:bg-rose-500/10 transition-colors"
                     >
                       <Trash2 className="w-3 h-3" />
                       <span>删除</span>
@@ -673,14 +673,14 @@ export const SettingsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setModalOpen(false)}
-                className="px-4 py-2 rounded-xl bg-[#1c2233] hover:bg-[#252c42] text-gray-300 text-[13px] font-medium transition-colors"
+                className="px-4 py-2 rounded-xl bg-[#1c2233] active:bg-[#252c42] text-gray-300 text-[13px] font-medium transition-colors"
               >
                 取消
               </button>
               <button
                 type="button"
                 onClick={handleSaveRuleSet}
-                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/20 transition-all"
+                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/20 transition-all"
               >
                 <Save className="w-3.5 h-3.5" />
                 <span>保存并应用</span>

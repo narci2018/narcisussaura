@@ -124,7 +124,7 @@ export const SubscriptionsView: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => updateAllSubscriptions()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#171b26] hover:bg-[#202536] text-gray-200 hover:text-white text-[13px] font-medium border border-[#242b3d] shadow-sm transition-all"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#171b26] active:bg-[#202536] text-gray-200 active:text-white text-[13px] font-medium border border-[#242b3d] shadow-sm transition-all"
             title="Fetch latest nodes from all subscriptions"
           >
             <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
@@ -133,7 +133,7 @@ export const SubscriptionsView: React.FC = () => {
 
           <button
             onClick={() => setIsAdding(!isAdding)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/20 transition-all"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-blue-600 active:bg-blue-500 text-white text-[13px] font-semibold shadow-sm shadow-blue-500/20 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Custom</span>
@@ -149,7 +149,7 @@ export const SubscriptionsView: React.FC = () => {
             className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
               updateSubViaProxy
                 ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 shadow-sm shadow-blue-500/10'
-                : 'bg-[#151924] text-gray-400 border-[#262e42] hover:text-gray-200'
+                : 'bg-[#151924] text-gray-400 border-[#262e42] active:text-gray-200'
             }`}
           >
             <div className={`w-3.5 h-3.5 rounded flex items-center justify-center border ${
@@ -229,13 +229,13 @@ export const SubscriptionsView: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsAdding(false)}
-              className="px-3 py-1.5 rounded-lg text-[13px] text-gray-400 hover:text-gray-200 hover:bg-[#1a1e2b]"
+              className="px-3 py-1.5 rounded-lg text-[13px] text-gray-400 active:text-gray-200 active:bg-[#1a1e2b]"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-[13px] font-medium"
+              className="px-4 py-1.5 rounded-lg bg-blue-600 active:bg-blue-500 text-white text-[13px] font-medium"
             >
               Save & Fetch
             </button>
@@ -266,7 +266,7 @@ export const SubscriptionsView: React.FC = () => {
             return (
               <div
                 key={sub.id}
-                className="bg-[#12151f] border border-[#212637] rounded-2xl p-5 hover:border-[#2b3348] transition-all space-y-4 shadow-sm"
+                className="bg-[#12151f] border border-[#212637] rounded-2xl p-5 active:border-[#2b3348] transition-all space-y-4 shadow-sm"
               >
                 {/* Main Row */}
                 <div className="flex items-start justify-between gap-4">
@@ -315,7 +315,7 @@ export const SubscriptionsView: React.FC = () => {
                       <button
                         onClick={() => startEditing(sub)}
                         disabled={isUpdating || editingId === sub.id}
-                        className="p-2 rounded-xl hover:bg-blue-500/10 text-gray-500 hover:text-blue-400 transition-colors disabled:opacity-40"
+                        className="p-2 rounded-xl active:bg-blue-500/10 text-gray-500 active:text-blue-400 transition-colors disabled:opacity-40"
                         title="编辑订阅名称和URL"
                       >
                         <Pencil className="w-3.5 h-3.5" />
@@ -328,7 +328,7 @@ export const SubscriptionsView: React.FC = () => {
                       className={`p-2 rounded-xl transition-colors ${
                         isUpdating
                           ? 'bg-blue-500/10 text-blue-400 cursor-not-allowed'
-                          : 'hover:bg-[#202535] text-gray-400 hover:text-gray-200'
+                          : 'active:bg-[#202535] text-gray-400 active:text-gray-200'
                       }`}
                       title="Update nodes"
                     >
@@ -339,7 +339,7 @@ export const SubscriptionsView: React.FC = () => {
                       <button
                         onClick={() => deleteSubscription(sub.id)}
                         disabled={isUpdating}
-                        className="p-2 rounded-xl hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors disabled:opacity-40"
+                        className="p-2 rounded-xl active:bg-red-500/10 text-gray-500 active:text-red-400 transition-colors disabled:opacity-40"
                         title="Delete subscription"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -389,7 +389,7 @@ export const SubscriptionsView: React.FC = () => {
                     <div className="flex justify-end gap-2 pt-1">
                       <button
                         onClick={cancelEditing}
-                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[13px] text-gray-400 hover:text-gray-200 hover:bg-[#1a1e2b] transition-colors"
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[13px] text-gray-400 active:text-gray-200 active:bg-[#1a1e2b] transition-colors"
                       >
                         <X className="w-3.5 h-3.5" />
                         取消
@@ -397,7 +397,7 @@ export const SubscriptionsView: React.FC = () => {
                       <button
                         onClick={saveEditing}
                         disabled={editSaving || !editName.trim() || !editUrl.trim()}
-                        className="flex items-center gap-1 px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-[13px] font-medium transition-colors"
+                        className="flex items-center gap-1 px-4 py-1.5 rounded-lg bg-blue-600 active:bg-blue-500 disabled:opacity-50 text-white text-[13px] font-medium transition-colors"
                       >
                         <Save className="w-3.5 h-3.5" />
                         {editSaving ? '保存中...' : '保存'}
@@ -452,7 +452,7 @@ export const SubscriptionsView: React.FC = () => {
                         e.stopPropagation();
                         navigator.clipboard.writeText(sub.error_message || '');
                       }}
-                      className="px-2 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-300 text-[12px] shrink-0 border border-red-500/30 transition-colors"
+                      className="px-2 py-0.5 rounded bg-red-500/20 active:bg-red-500/30 text-red-300 text-[12px] shrink-0 border border-red-500/30 transition-colors"
                       title="拷贝错误信息"
                     >
                       拷贝

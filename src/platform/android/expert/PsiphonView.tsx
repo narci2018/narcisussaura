@@ -77,7 +77,7 @@ export const PsiphonView: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={handleTestAllPing}
-            className="px-3 py-1.5 bg-[#171b28] hover:bg-[#202638] text-gray-300 border border-[#262c3e] rounded-xl text-[13px] font-medium transition-all flex items-center gap-1.5"
+            className="px-3 py-1.5 bg-[#171b28] active:bg-[#202638] text-gray-300 border border-[#262c3e] rounded-xl text-[13px] font-medium transition-all flex items-center gap-1.5"
             title="测试所有节点延迟"
           >
             <Activity className="w-3.5 h-3.5 text-indigo-400" />
@@ -86,7 +86,7 @@ export const PsiphonView: React.FC = () => {
           <button
             onClick={loadPsiphon}
             disabled={loading}
-            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-indigo-600/20 flex items-center gap-1.5 disabled:opacity-50"
+            className="px-3 py-1.5 bg-indigo-600 active:bg-indigo-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-indigo-600/20 flex items-center gap-1.5 disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>{loading ? '同步中...' : '刷新出境池'}</span>
@@ -133,7 +133,7 @@ export const PsiphonView: React.FC = () => {
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               onClick={handleCopyError}
-              className="flex items-center gap-1 text-[12px] px-2 py-1 rounded-lg bg-red-900/70 hover:bg-red-800 text-red-200 border border-red-500/50 transition-colors shadow-sm"
+              className="flex items-center gap-1 text-[12px] px-2 py-1 rounded-lg bg-red-900/70 active:bg-red-800 text-red-200 border border-red-500/50 transition-colors shadow-sm"
               title="拷贝错误信息到剪贴板"
             >
               {copiedError ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -141,7 +141,7 @@ export const PsiphonView: React.FC = () => {
             </button>
             <button
               onClick={() => setErrorMessage(null)}
-              className="text-red-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+              className="text-red-400 active:text-white p-1 rounded-lg active:bg-white/10 transition-colors"
               title="关闭"
             >
               <X className="w-4 h-4" />
@@ -165,7 +165,7 @@ export const PsiphonView: React.FC = () => {
                 className={`relative flex flex-col justify-between p-4 rounded-2xl border transition-all ${
                   isConnected
                     ? 'bg-gradient-to-br from-emerald-950/30 to-[#0e1713] border-emerald-500/40 shadow-lg shadow-emerald-950/20'
-                    : 'bg-[#11141e] border-[#1d2232] hover:border-[#2e3650] hover:bg-[#141824]'
+                    : 'bg-[#11141e] border-[#1d2232] active:border-[#2e3650] active:bg-[#141824]'
                 }`}
               >
                 <div>
@@ -211,7 +211,7 @@ export const PsiphonView: React.FC = () => {
                   <button
                     onClick={() => testLatency(node.id)}
                     disabled={isPinging}
-                    className="flex items-center gap-1.5 text-[12px] font-mono text-gray-400 hover:text-gray-200 transition-colors"
+                    className="flex items-center gap-1.5 text-[12px] font-mono text-gray-400 active:text-gray-200 transition-colors"
                     title="Test latency"
                   >
                     <Signal className={`w-3.5 h-3.5 ${isPinging ? 'animate-pulse text-amber-400' : 'text-gray-500'}`} />
@@ -223,7 +223,7 @@ export const PsiphonView: React.FC = () => {
                   {isConnected ? (
                     <button
                       onClick={() => disconnect()}
-                      className="px-3 py-1.5 bg-emerald-600/20 hover:bg-red-600/30 text-emerald-400 hover:text-red-400 border border-emerald-500/40 rounded-xl text-[13px] font-medium transition-all flex items-center gap-1.5"
+                      className="px-3 py-1.5 bg-emerald-600/20 active:bg-red-600/30 text-emerald-400 active:text-red-400 border border-emerald-500/40 rounded-xl text-[13px] font-medium transition-all flex items-center gap-1.5"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       <span>Connected</span>
@@ -231,7 +231,7 @@ export const PsiphonView: React.FC = () => {
                   ) : isConnecting ? (
                     <button
                       onClick={() => disconnect()}
-                      className="px-3.5 py-1.5 bg-red-600/25 hover:bg-red-600/40 border border-red-500/40 text-red-300 hover:text-red-100 rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
+                      className="px-3.5 py-1.5 bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
                       title="点击终止连接"
                     >
                       <Square className="w-3.5 h-3.5 fill-red-400 text-red-400 animate-pulse" />
@@ -240,7 +240,7 @@ export const PsiphonView: React.FC = () => {
                   ) : (
                     <button
                       onClick={() => connect(node.id)}
-                      className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-blue-600/20 flex items-center gap-1.5 active:scale-95"
+                      className="px-3.5 py-1.5 bg-blue-600 active:bg-blue-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-blue-600/20 flex items-center gap-1.5 active:scale-95"
                     >
                       <ArrowUpRight className="w-3.5 h-3.5" />
                       <span>Connect</span>

@@ -125,7 +125,7 @@ export const Dashboard: React.FC = () => {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
                 copiedError
                   ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-500/20'
-                  : 'bg-red-600/20 hover:bg-red-600/30 text-red-200 hover:text-white border-red-500/40'
+                  : 'bg-red-600/20 active:bg-red-600/30 text-red-200 active:text-white border-red-500/40'
               }`}
               title="复制错误信息到剪贴板以便反馈与排查"
             >
@@ -146,7 +146,7 @@ export const Dashboard: React.FC = () => {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
                 copiedLogs
                   ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-500/20'
-                  : 'bg-sky-600/20 hover:bg-sky-600/30 text-sky-200 hover:text-white border-sky-500/40'
+                  : 'bg-sky-600/20 active:bg-sky-600/30 text-sky-200 active:text-white border-sky-500/40'
               }`}
               title="拷贝 sing-box / tunrelay / 崩溃日志全文到剪贴板"
             >
@@ -169,7 +169,7 @@ export const Dashboard: React.FC = () => {
             </button>
             <button
               onClick={() => setErrorMessage(null)}
-              className="px-2.5 py-1.5 rounded-xl text-[13px] text-gray-400 hover:text-white hover:bg-gray-800/60 transition-colors border border-transparent"
+              className="px-2.5 py-1.5 rounded-xl text-[13px] text-gray-400 active:text-white active:bg-gray-800/60 transition-colors border border-transparent"
               title="关闭错误提示"
             >
               Dismiss
@@ -210,13 +210,13 @@ export const Dashboard: React.FC = () => {
                 isConnected
                   ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-emerald-500/25'
                   : isConnecting
-                  ? 'bg-gradient-to-br from-[#271018] to-[#170a11] hover:from-red-950/90 hover:to-red-900/70 text-red-300 border border-red-500/40 shadow-red-500/15 cursor-pointer group'
-                  : 'bg-gradient-to-br from-[#1b1f2d] to-[#121520] hover:from-[#212638] hover:to-[#171b29] text-gray-200 border border-[#2b3145]'
+                  ? 'bg-gradient-to-br from-[#271018] to-[#170a11] active:from-red-950/90 active:to-red-900/70 text-red-300 border border-red-500/40 shadow-red-500/15 cursor-pointer group'
+                  : 'bg-gradient-to-br from-[#1b1f2d] to-[#121520] active:from-[#212638] active:to-[#171b29] text-gray-200 border border-[#2b3145]'
               }`}
               title={isConnecting ? "点击终止连接" : undefined}
             >
               {isConnecting ? (
-                <Square className="w-8 h-8 text-red-400 fill-red-400 animate-pulse group-hover:scale-110 transition-transform" />
+                <Square className="w-8 h-8 text-red-400 fill-red-400 animate-pulse group-active:scale-110 transition-transform" />
               ) : (
                 <Power
                   className={`w-9 h-9 transition-transform duration-300 ${
@@ -255,7 +255,7 @@ export const Dashboard: React.FC = () => {
             <div className="mt-2.5 flex justify-center">
               <button
                 onClick={() => disconnect()}
-                className="px-4 py-1.5 rounded-full bg-red-500/15 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-red-100 text-[13px] font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-red-500/10 active:scale-95"
+                className="px-4 py-1.5 rounded-full bg-red-500/15 active:bg-red-500/30 border border-red-500/40 text-red-300 active:text-red-100 text-[13px] font-semibold flex items-center gap-1.5 transition-all shadow-sm shadow-red-500/10 active:scale-95"
               >
                 <Square className="w-3 h-3 fill-red-400 text-red-400" />
                 <span>终止当前连接</span>
@@ -278,7 +278,7 @@ export const Dashboard: React.FC = () => {
       {/* Selected Server Card & Quick Change */}
       <div className="w-full grid grid-cols-1 gap-4 mt-6">
         {/* Server Card */}
-        <div className="bg-[#12151f] border border-[#212637] rounded-2xl p-4 flex items-center justify-between hover:border-[#2f364d] transition-all">
+        <div className="bg-[#12151f] border border-[#212637] rounded-2xl p-4 flex items-center justify-between active:border-[#2f364d] transition-all">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#1a1e2d] border border-[#282f45] flex items-center justify-center text-blue-400">
               <Globe className="w-5 h-5" />
@@ -303,7 +303,7 @@ export const Dashboard: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('servers')}
-            className="flex items-center gap-1 text-[13px] text-blue-400 hover:text-blue-300 font-medium px-3 py-1.5 rounded-lg hover:bg-blue-500/10 transition-colors"
+            className="flex items-center gap-1 text-[13px] text-blue-400 active:text-blue-300 font-medium px-3 py-1.5 rounded-lg active:bg-blue-500/10 transition-colors"
           >
             <span>Change</span>
             <ChevronRight className="w-3.5 h-3.5" />

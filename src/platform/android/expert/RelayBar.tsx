@@ -76,7 +76,7 @@ export const RelayBar: React.FC<RelayBarProps> = ({
               <select
                 value={selectedRelayNodeId}
                 onChange={(e) => setSelectedRelayNodeId(e.target.value)}
-                className="appearance-none bg-[#191d2c] hover:bg-[#1f2437] text-gray-200 text-[13px] font-medium pl-3 pr-8 py-1.5 rounded-xl border border-[#2e354e] focus:outline-none focus:border-blue-500 transition-colors max-w-[240px] truncate"
+                className="appearance-none bg-[#191d2c] active:bg-[#1f2437] text-gray-200 text-[13px] font-medium pl-3 pr-8 py-1.5 rounded-xl border border-[#2e354e] focus:outline-none focus:border-blue-500 transition-colors max-w-[240px] truncate"
               >
                 <option value="auto">
                   ⚡ 自动优选最快节点 {bestCandidate ? `(${bestCandidate.country_code} · ${bestCandidate.latency_ms ?? '~'}ms)` : ''}
@@ -93,7 +93,7 @@ export const RelayBar: React.FC<RelayBarProps> = ({
             <button
               onClick={() => fetchRelayCandidates()}
               title="刷新可用中转候选节点"
-              className="p-1.5 rounded-lg bg-[#191d2c] hover:bg-[#22283d] text-gray-400 hover:text-gray-200 border border-[#2e354e] transition-colors"
+              className="p-1.5 rounded-lg bg-[#191d2c] active:bg-[#22283d] text-gray-400 active:text-gray-200 border border-[#2e354e] transition-colors"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>

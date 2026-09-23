@@ -19,7 +19,7 @@ The light they fought for will travel across the ages, illuminating the lives of
   };
 
   return (
-    <div className="w-full max-w-3xl mx-auto my-3.5 px-5 py-3 rounded-2xl bg-gradient-to-r from-[#0b0f1e]/95 via-[#121930]/95 to-[#0b0f1e]/95 border border-[#212b48] hover:border-cyan-500/50 shadow-xl shadow-black/40 backdrop-blur-md flex items-center justify-between gap-4 relative overflow-hidden group select-text transition-all duration-300">
+    <div className="w-full max-w-3xl mx-auto my-3.5 px-5 py-3 rounded-2xl bg-gradient-to-r from-[#0b0f1e]/95 via-[#121930]/95 to-[#0b0f1e]/95 border border-[#212b48] active:border-cyan-500/50 shadow-xl shadow-black/40 backdrop-blur-md flex items-center justify-between gap-4 relative overflow-hidden group select-text transition-all duration-300">
       {/* Background Cyber Glow & Accent Lines */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_75%_55%_at_50%_0%,rgba(56,189,248,0.1),transparent_70%)] pointer-events-none" />
       <div className="absolute top-0 left-1/6 right-1/6 h-[1px] bg-gradient-to-r from-transparent via-cyan-400/40 to-transparent pointer-events-none" />
@@ -73,7 +73,7 @@ The light they fought for will travel across the ages, illuminating the lives of
       <div className="flex items-center shrink-0 select-none">
         <button
           onClick={handleCopy}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#141b2f]/90 hover:bg-[#1e2744] text-gray-400 hover:text-cyan-300 border border-[#232f50] hover:border-cyan-500/50 transition-all text-[12px] font-mono shadow-sm group/btn"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-[#141b2f]/90 active:bg-[#1e2744] text-gray-400 active:text-cyan-300 border border-[#232f50] active:border-cyan-500/50 transition-all text-[12px] font-mono shadow-sm group/btn"
           title="复制中英文名言至剪贴板"
         >
           {copied ? (

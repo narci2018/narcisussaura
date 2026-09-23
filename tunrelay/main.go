@@ -38,6 +38,9 @@ var (
 	tcpForwarder  *tcp.Forwarder
 	activeTCP     atomic.Int64
 	activeUDP     atomic.Int64
+	tcpFlows      atomic.Int64
+	udpFlows      atomic.Int64
+	socksErrs     atomic.Int64
 )
 
 type udpSession struct {
@@ -74,6 +77,13 @@ func main() {
 		FDs:            []int{*fd},
 		MTU:            uint32(*mtu),
 		EthernetHeader: false, // Android VpnService delivers raw IP packets
+		// Without this, gVisor silently stops the read dispatcher on any fd
+		// error (EBADF from a stale inherited fd) and the relay sits alive
+		// moving zero packets — the exact "connected but 0 B/s" black hole.
+		// Fail loudly instead so the parent can surface the reason in-app.
+		ClosedFunc: func(err tcpip.Error) {
+			log.Fatalf("tunrelay: tun fd dispatcher stopped: %v", err)
+		},
 	})
 	if err != nil {
 		log.Fatalf("tunrelay: fdbased: %v", err)
@@ -134,12 +144,24 @@ func main() {
 	s.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
 
 	go reapUDPSessions()
+	go logStats()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	log.Printf("tunrelay ready: fd=%d mtu=%d addr=%s socks=%s", *fd, *mtu, *address, socksServer)
 	<-sig
 	log.Printf("tunrelay: terminating")
+}
+
+// logStats gives the parent process (and ultimately the in-app diagnostics)
+// a heartbeat to distinguish "relay alive and seeing flows" from "relay alive
+// but the tunnel carries nothing".
+func logStats() {
+	for {
+		time.Sleep(2 * time.Second)
+		log.Printf("stats tcp_flows=%d udp_flows=%d active_tcp=%d active_udp=%d socks_errs=%d",
+			tcpFlows.Load(), udpFlows.Load(), activeTCP.Load(), activeUDP.Load(), socksErrs.Load())
+	}
 }
 
 func endpointAddr(addr tcpip.Address, port uint16) string {
@@ -153,6 +175,9 @@ func endpointAddr(addr tcpip.Address, port uint16) string {
 func handleTCP(r *tcp.ForwarderRequest) {
 	id := r.ID()
 	target := endpointAddr(id.LocalAddress, id.LocalPort)
+	if n := tcpFlows.Add(1); n <= 20 {
+		log.Printf("flow tcp#%d -> %s", n, target)
+	}
 
 	var wq waiter.Queue
 	ep, err := r.CreateEndpoint(&wq)
@@ -167,6 +192,7 @@ func handleTCP(r *tcp.ForwarderRequest) {
 		defer conn.Close()
 		remote, err := socksConnect(target)
 		if err != nil {
+			socksErrs.Add(1)
 			log.Printf("tcp %s: socks: %v", target, err)
 			return
 		}
@@ -192,6 +218,9 @@ func handleUDP(r *udp.ForwarderRequest) {
 	dst := endpointAddr(id.LocalAddress, id.LocalPort)
 	src := endpointAddr(id.RemoteAddress, id.RemotePort)
 	key := src + "->" + dst
+	if n := udpFlows.Add(1); n <= 20 {
+		log.Printf("flow udp#%d -> %s", n, dst)
+	}
 
 	udpMu.Lock()
 	if _, exists := udpSessions[key]; exists {
@@ -210,6 +239,7 @@ func handleUDP(r *udp.ForwarderRequest) {
 
 	scx, aerr := socksAssociate(dst)
 	if aerr != nil {
+		socksErrs.Add(1)
 		log.Printf("udp %s: socks associate: %v", dst, aerr)
 		uc.Close()
 		return

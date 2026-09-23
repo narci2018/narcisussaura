@@ -600,7 +600,7 @@ impl ConnectionManager {
         // 5.2 Android TUN: start the tun2socks relay bridging the VpnService fd
         #[cfg(target_os = "android")]
         if let Some(fd) = android_tun_fd {
-            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port, settings.clash_api_port).await {
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
@@ -879,7 +879,7 @@ impl ConnectionManager {
 
         #[cfg(target_os = "android")]
         if let Some(fd) = android_tun_fd_chain {
-            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+            if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port, settings.clash_api_port).await {
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
@@ -2002,7 +2002,7 @@ rules:
         // captured packets simply black-hole and the probe stays truthful.
         #[cfg(target_os = "android")]
         {
-            if let Err(e) = self.start_tunrelay(&app, android_tun_fd, settings.mixed_port).await {
+            if let Err(e) = self.start_tunrelay(&app, android_tun_fd, settings.mixed_port, settings.clash_api_port).await {
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
@@ -2270,12 +2270,56 @@ rules:
         serde_json::to_string(&config).map_err(|e| format!("Failed to serialize patched config: {}", e))
     }
 
+    /// Query the core's cumulative byte counters (Clash API /connections).
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    async fn clash_total_bytes(clash_port: u16) -> u64 {
+        let url = format!("http://127.0.0.1:{}/connections", clash_port);
+        let Ok(client) = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(800))
+            .build() else { return 0 };
+        let Ok(resp) = client.get(&url).send().await else { return 0 };
+        match resp.json::<serde_json::Value>().await {
+            Ok(j) => {
+                let g = |k: &str| j.get(k)
+                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                    .unwrap_or(0);
+                g("downloadTotal") + g("uploadTotal")
+            }
+            Err(_) => 0,
+        }
+    }
+
     /// Spawn the tunrelay helper (Android-only): a static-Go gVisor netstack
     /// that terminates TCP/UDP on the inherited VpnService fd and forwards all
     /// flows into sing-box's SOCKS5 mixed port.
     #[cfg(target_os = "android")]
-    async fn start_tunrelay(&self, app: &AppHandle, tun_fd: i32, mixed_port: u16) -> Result<(), String> {
+    async fn start_tunrelay(&self, app: &AppHandle, tun_fd: i32, mixed_port: u16, clash_port: u16) -> Result<(), String> {
         let relay_path = self.locate_binary(app, "tunrelay")?;
+
+        // The service may have re-established the tunnel since
+        // wait_for_android_tun_fd ran (MIUI loves restarting services); the fd
+        // number read back then can now point at a closed pipe. Re-read the
+        // handshake file and prefer its value.
+        let tun_fd = match std::fs::read_to_string(self.app_data_dir.join("tun_fd"))
+            .ok()
+            .and_then(|s| s.trim().parse::<i32>().ok())
+        {
+            Some(fresh) if fresh > 0 && fresh != tun_fd => {
+                log::warn!("Android: tun fd changed {} -> {}", tun_fd, fresh);
+                fresh
+            }
+            _ => tun_fd,
+        };
+
+        // Validate the fd before spawning. gVisor's fdbased used to stop its
+        // read dispatcher silently on a bad fd — relay alive, zero packets.
+        if unsafe { libc::fcntl(tun_fd, libc::F_GETFD) } == -1 {
+            let errno = std::io::Error::last_os_error();
+            return Err(format!(
+                "隧道 fd {} 已失效（{}），VPN 服务可能重建了隧道，请重新点击连接",
+                tun_fd, errno
+            ));
+        }
 
         // The child inherits the tun fd across exec only if FD_CLOEXEC is clear.
         unsafe {
@@ -2322,32 +2366,51 @@ rules:
             let _ = guard.assign_process(&child);
         }
 
-        // Verify it stays alive past init (bad fd / missing binary exit instantly).
+        // Verify the bridge actually moves traffic. Baseline the core's byte
+        // counters, then watch for growth: the OS and apps fire DNS /
+        // connectivity chatter the instant a VPN interface comes up, so five
+        // seconds of total silence means the bridge is dead. A relay that dies
+        // (gVisor now hard-exits on fd errors via ClosedFunc) is caught the
+        // same moment, with its log attached.
         tokio::time::sleep(std::time::Duration::from_millis(400)).await;
-        let exited = {
-            let mut lock = self.tunrelay_process.lock();
-            *lock = Some(child);
-            if let Some(ref mut c) = *lock {
-                match c.try_wait() {
-                    Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
-                    _ => None,
+        *self.tunrelay_process.lock() = Some(child);
+        let baseline = Self::clash_total_bytes(clash_port).await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            let exited = {
+                let mut lock = self.tunrelay_process.lock();
+                if let Some(ref mut c) = *lock {
+                    match c.try_wait() {
+                        Ok(Some(status)) => {
+                            *lock = None;
+                            Some(status.code().unwrap_or(-1))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
                 }
-            } else {
-                None
+            };
+            let tail = || std::fs::read_to_string(self.app_data_dir.join("tunrelay.log")).unwrap_or_default();
+            if let Some(code) = exited {
+                return Err(format!(
+                    "tunrelay exited during tunnel verification (code {}):\n{}",
+                    code,
+                    tail().trim()
+                ));
             }
-        };
-        if let Some(code) = exited {
-            let tail = std::fs::read_to_string(self.app_data_dir.join("tunrelay.log"))
-                .unwrap_or_default();
-            *self.tunrelay_process.lock() = None;
-            return Err(format!(
-                "tunrelay exited on startup (code {}):\n{}",
-                code,
-                tail.trim()
-            ));
+            if Self::clash_total_bytes(clash_port).await > baseline {
+                log::info!("Android: tunrelay bridge verified (core traffic flowing)");
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "隧道桥接无流量：tunrelay 存活（fd={}）但核心 5s 内未收到任何新流量。tunrelay 日志：\n{}",
+                    tun_fd,
+                    tail().trim()
+                ));
+            }
         }
-
-        log::info!("Android: tunrelay running (pid {})", self.tunrelay_process.lock().as_ref().map(|c| c.id()).unwrap_or(0));
-        Ok(())
     }
 }

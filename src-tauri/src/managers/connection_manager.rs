@@ -212,15 +212,18 @@ impl ConnectionManager {
                 if let Some(ref mut c) = *proc_lock {
                     if let Ok(Some(exit_status)) = c.try_wait() {
                         let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                        log::warn!("Mihomo OpenVPN startup failed ({}):\n{}", exit_status, err_log.trim());
                         let _ = PlatformProxy::disable_proxy();
                         *self.status.lock() = ConnectionStatus::Error;
                         *self.connected_node.lock() = None;
                         let _ = app.emit("core:status-changed", ConnectionStatus::Error);
                         *proc_lock = None;
+                        #[cfg(target_os = "android")]
+                        crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                         return Err(format!(
-                            "Mihomo OpenVPN startup failed ({}):\n{}",
+                            "Mihomo 核心启动失败（{}）：{}",
                             exit_status,
-                            err_log.trim()
+                            Self::brief_log_line(&err_log)
                         ));
                     }
                 }
@@ -231,16 +234,30 @@ impl ConnectionManager {
             #[cfg(target_os = "android")]
             if let Some(fd) = android_tun_fd {
                 if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+                    // Core is still alive for one last controller test of the
+                    // relay hop before we tear everything down.
+                    let relay_verdict = if relay_node.is_some() {
+                        Self::probe_relay_via_controller(settings.clash_api_port).await
+                    } else {
+                        None
+                    };
+                    log::warn!("Android mihomo bridge failed: {}", e);
                     if let Some(mut c) = self.process.lock().take() {
                         let _ = c.kill();
                         let _ = c.wait();
                     }
                     Self::force_kill_all_cores();
                     let _ = PlatformProxy::disable_proxy();
+                    crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                    return Err(e);
+                    return Err(Self::bridge_failure_message(
+                        if is_residential { "优质住宅IP" } else { "VPNGate" },
+                        relay_node.as_ref().map(|r| r.name.as_str()).unwrap_or(""),
+                        relay_verdict,
+                        &e,
+                    ));
                 }
             }
             #[cfg(not(target_os = "android"))]
@@ -279,6 +296,8 @@ impl ConnectionManager {
                 }
                 Self::force_kill_all_cores();
                 let _ = PlatformProxy::disable_proxy();
+                #[cfg(target_os = "android")]
+                crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
@@ -632,15 +651,18 @@ impl ConnectionManager {
             if let Some(ref mut c) = *proc_lock {
                 if let Ok(Some(exit_status)) = c.try_wait() {
                     let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                    log::warn!("Core startup failed ({}):\n{}", exit_status, err_log.trim());
                     let _ = PlatformProxy::disable_proxy();
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     let _ = app.emit("core:status-changed", ConnectionStatus::Error);
                     *proc_lock = None;
+                    #[cfg(target_os = "android")]
+                    crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                     return Err(format!(
-                        "Core startup failed ({}):\n{}",
+                        "代理核心启动失败（{}）：{}",
                         exit_status,
-                        err_log.trim()
+                        Self::brief_log_line(&err_log)
                     ));
                 }
             }
@@ -650,16 +672,27 @@ impl ConnectionManager {
         #[cfg(target_os = "android")]
         if let Some(fd) = android_tun_fd {
             if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+                let relay_verdict = match effective_relay {
+                    Some(r) => Some(!Self::tcp_reachable(&r.address, r.port).await),
+                    None => None,
+                };
+                log::warn!("Android sing-box bridge failed: {}", e);
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
                 let _ = PlatformProxy::disable_proxy();
+                crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(e);
+                return Err(Self::bridge_failure_message(
+                    "出口",
+                    effective_relay.map(|r| r.name.as_str()).unwrap_or(""),
+                    relay_verdict,
+                    &e,
+                ));
             }
         }
 
@@ -715,6 +748,8 @@ impl ConnectionManager {
             }
             Self::force_kill_all_cores();
             let _ = PlatformProxy::disable_proxy();
+            #[cfg(target_os = "android")]
+            crate::platform::android::vpn_teardown_files(&self.app_data_dir);
             // The relay lives inside this core with no per-proxy API, so the
             // strongest signal available is raw TCP reachability of its server.
             let relay_dead = match effective_relay {
@@ -786,41 +821,53 @@ impl ConnectionManager {
 
         self.is_traffic_running.store(false, Ordering::Relaxed);
 
-        // Kill Core processes (sing-box, mihomo, aether, or psiphon)
-        let mut proc_lock = self.process.lock();
-        if let Some(mut child) = proc_lock.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+        // Kill Core processes (sing-box, mihomo, aether, or psiphon). Each
+        // guard is scoped so no parking_lot MutexGuard (non-Send) is alive
+        // across the android_teardown_tunnel_settled await below.
+        {
+            let mut proc_lock = self.process.lock();
+            if let Some(mut child) = proc_lock.take() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
         }
 
-        let mut aproc_lock = self.aether_process.lock();
-        if let Some(mut achild) = aproc_lock.take() {
-            let _ = achild.kill();
-            let _ = achild.wait();
+        {
+            let mut aproc_lock = self.aether_process.lock();
+            if let Some(mut achild) = aproc_lock.take() {
+                let _ = achild.kill();
+                let _ = achild.wait();
+            }
         }
 
-        let mut pproc_lock = self.psiphon_process.lock();
-        if let Some(mut pchild) = pproc_lock.take() {
-            let _ = pchild.kill();
-            let _ = pchild.wait();
+        {
+            let mut pproc_lock = self.psiphon_process.lock();
+            if let Some(mut pchild) = pproc_lock.take() {
+                let _ = pchild.kill();
+                let _ = pchild.wait();
+            }
         }
 
-        let mut rproc_lock = self.relay_process.lock();
-        if let Some(mut rchild) = rproc_lock.take() {
-            let _ = rchild.kill();
-            let _ = rchild.wait();
+        {
+            let mut rproc_lock = self.relay_process.lock();
+            if let Some(mut rchild) = rproc_lock.take() {
+                let _ = rchild.kill();
+                let _ = rchild.wait();
+            }
         }
 
-        let mut tproc_lock = self.tunrelay_process.lock();
-        if let Some(mut tchild) = tproc_lock.take() {
-            let _ = tchild.kill();
-            let _ = tchild.wait();
+        {
+            let mut tproc_lock = self.tunrelay_process.lock();
+            if let Some(mut tchild) = tproc_lock.take() {
+                let _ = tchild.kill();
+                let _ = tchild.wait();
+            }
         }
 
         Self::force_kill_all_cores();
 
         #[cfg(target_os = "android")]
-        crate::platform::android::vpn_teardown_files(&self.app_data_dir);
+        self.android_teardown_tunnel_settled().await;
 
         // Always restore Windows System Proxy
         let _ = PlatformProxy::disable_proxy();
@@ -932,16 +979,19 @@ impl ConnectionManager {
             if let Some(ref mut c) = *proc_lock {
                 if let Ok(Some(exit_status)) = c.try_wait() {
                     let err_log = std::fs::read_to_string(&log_file_path).unwrap_or_default();
+                    log::warn!("Chain core startup failed ({}):\n{}", exit_status, err_log.trim());
                     let _ = PlatformProxy::disable_proxy();
                     *self.status.lock() = ConnectionStatus::Error;
                     *self.connected_node.lock() = None;
                     *self.connected_chain.lock() = None;
                     let _ = app.emit("core:status-changed", ConnectionStatus::Error);
                     *proc_lock = None;
+                    #[cfg(target_os = "android")]
+                    crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                     return Err(format!(
-                        "Chain core startup failed ({}):\n{}",
+                        "链式核心启动失败（{}）：{}",
                         exit_status,
-                        err_log.trim()
+                        Self::brief_log_line(&err_log)
                     ));
                 }
             }
@@ -950,17 +1000,19 @@ impl ConnectionManager {
         #[cfg(target_os = "android")]
         if let Some(fd) = android_tun_fd_chain {
             if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+                log::warn!("Android chain bridge failed: {}", e);
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
                 let _ = PlatformProxy::disable_proxy();
+                crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 *self.connected_chain.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(e);
+                return Err(Self::bridge_failure_message("链式代理", "", None, &e));
             }
         }
 
@@ -990,13 +1042,15 @@ impl ConnectionManager {
             }
             Self::force_kill_all_cores();
             let _ = PlatformProxy::disable_proxy();
+            #[cfg(target_os = "android")]
+            crate::platform::android::vpn_teardown_files(&self.app_data_dir);
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
             *self.connected_chain.lock() = None;
             let _ = app.emit("core:status-changed", ConnectionStatus::Error);
 
             return Err(format!(
-                "外网连通性验证失败：链式代理未能成功转发外网流量（可能链中节点失效或被阻断）。\n已自动断开以防浏览器断网。\n详细原因: {}",
+                "[出口节点不可用]\n链式代理未能成功转发外网流量（链中节点失效或被阻断）。\n详细原因: {}",
                 probe_err
             ));
         }
@@ -1736,6 +1790,55 @@ rules:
         .unwrap_or(false)
     }
 
+    /// Last non-empty line of a core log, capped to one short line. The full
+    /// log is always available through 「拷贝完整日志」 — the inline error must
+    /// stay short enough to send in chat (v0.2.103 field complaint).
+    fn brief_log_line(log: &str) -> String {
+        let line = log.trim().lines().last().unwrap_or("").trim();
+        const MAX: usize = 160;
+        if line.is_empty() {
+            "无日志输出".to_string()
+        } else if line.chars().count() > MAX {
+            format!("{}…", line.chars().take(MAX).collect::<String>())
+        } else {
+            line.to_string()
+        }
+    }
+
+    /// Turn a raw tunrelay bridge error (see platform::android::start_tunrelay
+    /// tags) plus a relay verdict into a short attributed user message.
+    #[cfg(target_os = "android")]
+    fn bridge_failure_message(
+        node_kind: &str,
+        relay_name: &str,
+        relay_verdict: Option<bool>,
+        raw: &str,
+    ) -> String {
+        if raw.starts_with("[系统隧道无流量]") {
+            return "VPN 隧道未被系统选为默认网络，本机流量没有进入隧道。\n请重新点击连接；若反复出现请重启手机后重试。".to_string();
+        }
+        if raw.starts_with("[核心端口未就绪]") || raw.starts_with("[桥接进程退出]") {
+            return format!(
+                "[出口节点不可用]\n{} 出口节点的核心未能就绪（启动失败或上游握手卡死）。\n请更换出口节点或更换中转节点。",
+                node_kind
+            );
+        }
+        match relay_verdict {
+            Some(false) => format!(
+                "[中转节点不可用]\n中转节点「{}」已确认无法连通，出口节点尚未验证。\n系统正在自动更换其他中转节点重试。",
+                relay_name
+            ),
+            Some(true) => format!(
+                "[出口节点不可用]\n中转节点连通正常，但该 {} 出口节点无法建立数据通道。\n请更换其他出口节点。",
+                node_kind
+            ),
+            None => format!(
+                "[出口节点不可用]\n该 {} 出口节点无法建立数据通道（中转状态未能确认）。\n请更换出口节点，或更换中转节点后重试。",
+                node_kind
+            ),
+        }
+    }
+
     /// Bare TCP reachability of a node's server:port — used for the sing-box
     /// chained path where the relay lives inside the core and has no per-proxy
     /// API to test.
@@ -2114,27 +2217,29 @@ rules:
                     format!(
                         "代理核心启动后崩溃（端口 {} 未监听，尚未测试任何节点）。核心日志: {}",
                         settings.mixed_port,
-                        Self::panic_excerpt(&core_log)
+                        Self::brief_log_line(&Self::panic_excerpt(&core_log))
                     )
                 } else {
                     let s = core_log.trim();
                     // Byte-slicing can panic mid-UTF8-char; take the tail by char.
-                    let core_tail = s.chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect::<String>();
+                    let core_tail = s.chars().rev().take(160).collect::<Vec<_>>().into_iter().rev().collect::<String>();
                     format!(
-                        "外网连通性校验失败: 全部 {} 个候选节点均无法建立有效数据通道。探测明细: {}{}｜核心日志: {}",
+                        "[出口节点不可用]\n全部 {} 个候选节点均无法建立有效数据通道。探测明细: {}{}｜核心日志: {}",
                         members.len(),
-                        probe_diag.iter().take(8).cloned().collect::<Vec<_>>().join("; "),
-                        if probe_diag.len() > 8 { " …" } else { "" },
+                        probe_diag.iter().take(3).cloned().collect::<Vec<_>>().join("; "),
+                        if probe_diag.len() > 3 { " …" } else { "" },
                         core_tail
                     )
                 };
-                log::warn!("Smart group connect failed: {}", err_msg);
+                log::warn!("Smart group connect failed: {} | full core log:\n{}", err_msg, core_log.trim());
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
                 let _ = PlatformProxy::disable_proxy();
+                #[cfg(target_os = "android")]
+                crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 *self.connected_chain.lock() = None;
@@ -2150,17 +2255,19 @@ rules:
         #[cfg(target_os = "android")]
         {
             if let Err(e) = self.start_tunrelay(&app, android_tun_fd, settings.mixed_port).await {
+                log::warn!("Android smart-group bridge failed: {}", e);
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
                 }
                 Self::force_kill_all_cores();
                 let _ = PlatformProxy::disable_proxy();
+                crate::platform::android::vpn_teardown_files(&self.app_data_dir);
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 *self.connected_chain.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(e);
+                return Err(Self::bridge_failure_message("智能组网出口", "", None, &e));
             }
         }
 

@@ -195,6 +195,28 @@ mod android_only {
                 .unwrap_or(0)
         }
 
+        /// Count packets the OS pushed into the tunnel: prefer the newest stats
+        /// line's flow counters, fall back to the per-connection `flow` lines
+        /// (which appear before the first 2s stats tick).
+        fn relay_total_flows(log_text: &str) -> u64 {
+            let parse = |hay: &str, key: &str| -> u64 {
+                hay.split_once(key)
+                    .map(|(_, rest)| rest.split_whitespace().next().unwrap_or("0").parse().unwrap_or(0))
+                    .unwrap_or(0)
+            };
+            let stats_flows = log_text
+                .lines()
+                .rev()
+                .find(|l| l.contains("stats ") && l.contains("tcp_flows="))
+                .map(|l| parse(l, "tcp_flows=") + parse(l, "udp_flows="))
+                .unwrap_or(0);
+            let line_flows = log_text
+                .lines()
+                .filter(|l| l.contains(" flow ") || l.contains("flow udp#") || l.contains("flow tcp#"))
+                .count() as u64;
+            stats_flows.max(line_flows)
+        }
+
         /// Spawn the tunrelay helper (Android-only): a static-Go gVisor netstack
         /// that terminates TCP/UDP on the inherited VpnService fd and forwards all
         /// flows into sing-box's SOCKS5 mixed port.
@@ -231,7 +253,10 @@ mod android_only {
                 libc::fcntl(tun_fd, libc::F_SETFD, 0);
             }
 
-            // Wait for sing-box's mixed port to accept connections (up to 10s).
+            // Wait for the core's mixed/SOCKS port to accept connections (up to
+            // 10s). If it never listens, tunrelay would forward into nothing and
+            // the bridge check below could only report a misleading "no traffic"
+            // — fail here with the real reason instead.
             let mut ready = false;
             for _ in 0..40 {
                 if std::net::TcpStream::connect(("127.0.0.1", mixed_port)).is_ok() {
@@ -241,7 +266,10 @@ mod android_only {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
             if !ready {
-                log::warn!("Android: mixed port {} not listening before relay start", mixed_port);
+                return Err(format!(
+                    "[核心端口未就绪] 代理核心未在 10 秒内监听本地端口 {}（核心启动失败或上游握手卡死）",
+                    mixed_port
+                ));
             }
 
             let log_out = std::fs::File::create(self.app_data_dir.join("tunrelay.log"))
@@ -301,10 +329,11 @@ mod android_only {
                 };
                 let tail = || std::fs::read_to_string(self.app_data_dir.join("tunrelay.log")).unwrap_or_default();
                 if let Some(code) = exited {
+                    let log_now = tail();
+                    log::warn!("Android: tunrelay exited (code {}), log tail:\n{}", code, log_now.trim());
                     return Err(format!(
-                        "tunrelay exited during tunnel verification (code {}):\n{}",
-                        code,
-                        tail().trim()
+                        "[桥接进程退出] tunrelay 桥接进程异常退出（退出码 {}），完整日志请用「拷贝完整日志」",
+                        code
                     ));
                 }
                 if Self::relay_total_bytes(&tail()) > baseline {
@@ -312,13 +341,47 @@ mod android_only {
                     return Ok(());
                 }
                 if tokio::time::Instant::now() >= deadline {
-                    return Err(format!(
-                        "隧道桥接无流量：tunrelay 存活（fd={}）但 5s 内未转发任何字节。tunrelay 日志：\n{}",
-                        tun_fd,
-                        tail().trim()
-                    ));
+                    let log_now = tail();
+                    let flows = Self::relay_total_flows(&log_now);
+                    log::warn!("Android: bridge silent after 5s (flows={}), log tail:\n{}", flows, log_now.trim());
+                    // flows>0 with zero bytes: the OS routed into the tunnel but
+                    // the core never forwarded anything — a node problem.
+                    // flows==0: the OS never used this tunnel at all — a system
+                    // routing problem, NOT the node's fault; don't mislabel it.
+                    return Err(if flows > 0 {
+                        "[核心未转发流量] 系统已向隧道发送数据包，但代理核心 5 秒内未转发任何字节".to_string()
+                    } else {
+                        "[系统隧道无流量] 5 秒内系统未向 VPN 隧道发送任何数据包（隧道未被选为默认网络）".to_string()
+                    });
                 }
             }
+        }
+
+        /// Tear the VpnService tunnel down and wait for the service to confirm
+        /// "standby" before returning. Without this settle gap the next connect's
+        /// establish() can land within milliseconds of the old tunnel's close (the
+        /// 400ms watchdog dispatches both signals back-to-back) and Android leaves
+        /// the fresh tunnel off the default route — tunrelay then sees zero system
+        /// flows for its whole 5s window, exactly the v0.2.103 field failure where
+        /// one residential/VPNGate error poisoned every later connect.
+        pub(crate) async fn android_teardown_tunnel_settled(&self) {
+            let dir = &self.app_data_dir;
+            let _ = std::fs::remove_file(dir.join("vpn_status"));
+            vpn_teardown_files(dir);
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(1500);
+            loop {
+                if let Ok(s) = std::fs::read_to_string(dir.join("vpn_status")) {
+                    if s.trim() == "standby" {
+                        break;
+                    }
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            // Extra grace for the OS to finish deprovisioning the old network.
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
     }
 

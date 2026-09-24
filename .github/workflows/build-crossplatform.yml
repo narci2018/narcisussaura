@@ -68,7 +68,7 @@ jobs:
           Download-WithRetry $sbUrl "sing-box.zip"
           Expand-Archive sing-box.zip -DestinationPath sb_temp
           Get-ChildItem -Path sb_temp -Filter "sing-box.exe" -Recurse | Copy-Item -Destination src-tauri/binaries/sing-box.exe -Force
-          $mhUrl = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.2/mihomo-windows-amd64-compatible-v1.19.2.zip"
+          $mhUrl = "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-windows-amd64-compatible-v1.19.31.zip"
           Download-WithRetry $mhUrl "mihomo.zip"
           Expand-Archive mihomo.zip -DestinationPath mh_temp
           Get-ChildItem -Path mh_temp -Filter "*.exe" -Recurse | Copy-Item -Destination src-tauri/binaries/mihomo.exe -Force
@@ -124,7 +124,7 @@ jobs:
           tar -xzf sing-box.tar.gz
           cp sing-box-*/sing-box src-tauri/binaries/sing-box
           chmod +x src-tauri/binaries/sing-box
-          curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.2/mihomo-darwin-arm64-v1.19.2.gz" -o mihomo.gz
+          curl -sL "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-darwin-arm64-v1.19.31.gz" -o mihomo.gz
           gzip -d mihomo.gz
           mv mihomo src-tauri/binaries/mihomo
           chmod +x src-tauri/binaries/mihomo

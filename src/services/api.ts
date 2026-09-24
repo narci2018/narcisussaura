@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { AppSettings, ConnectionStatus, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
+import { AppSettings, ConnectionStatus, LivenessProgress, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
 
 export const api = {
   getConnectionStatus: () => invoke<ConnectionStatus>('get_connection_status'),
@@ -75,6 +75,10 @@ export const api = {
 
   onRelayPreferred: (callback: (ranking: RelayRanking) => void): Promise<UnlistenFn> => {
     return listen<RelayRanking>('relay:preferred', (event) => callback(event.payload));
+  },
+
+  onNodesLiveness: (callback: (progress: LivenessProgress) => void): Promise<UnlistenFn> => {
+    return listen<LivenessProgress>('nodes:liveness', (event) => callback(event.payload));
   },
 
   getCrashReport: () => invoke<string | null>('get_crash_report'),

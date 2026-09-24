@@ -3,7 +3,7 @@ pub mod managers;
 pub mod models;
 pub mod platform;
 
-use crate::managers::{relay_selector, vpngate_sources, ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};
+use crate::managers::{liveness, relay_selector, vpngate_sources, ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};
 use crate::models::{AppSettings, ConnectionStatus, ProxyChain, Subscription, UnifiedNode};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -593,13 +593,15 @@ async fn fetch_vpngate_nodes(
     state: State<'_, AppState>,
 ) -> Result<Vec<UnifiedNode>, String> {
     let preferred = state.settings.read().preferred_relay_id.clone();
-    vpngate_sources::sync(
+    let nodes = vpngate_sources::sync(
         &app,
         &state.node_manager,
         &state.connection_manager,
         preferred.as_deref(),
     )
-    .await
+    .await?;
+    spawn_liveness(&app);
+    Ok(nodes)
 }
 
 #[tauri::command]
@@ -608,8 +610,37 @@ async fn fetch_psiphon_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNo
 }
 
 #[tauri::command]
-async fn fetch_residential_nodes(url: Option<String>, state: State<'_, AppState>) -> Result<Vec<UnifiedNode>, String> {
-    crate::managers::SpecialSources::fetch_residential_nodes(&state.node_manager, url).await.map_err(|e| e.to_string())
+async fn fetch_residential_nodes(
+    app: AppHandle,
+    url: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<UnifiedNode>, String> {
+    let nodes = crate::managers::SpecialSources::fetch_residential_nodes(&state.node_manager, url)
+        .await
+        .map_err(|e| e.to_string())?;
+    spawn_liveness(&app);
+    Ok(nodes)
+}
+
+/// Dial the freshly listed public servers for real, in the background. A sweep
+/// that is already running is asked to redo the lists instead, so a manual
+/// "更新节点" is never lost and never doubles the work on a phone.
+fn spawn_liveness(app: &AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = handle.state::<AppState>();
+        let preferred = state.settings.read().preferred_relay_id.clone();
+        if let Err(e) = liveness::run_pass(
+            &handle,
+            &state.node_manager,
+            &state.connection_manager,
+            preferred.as_deref(),
+        )
+        .await
+        {
+            log::info!("liveness: {e}");
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -716,6 +747,20 @@ pub fn run() {
                             log::info!("startup: VPNGate list refreshed to {} servers", nodes.len())
                         }
                         Err(e) => log::warn!("startup: VPNGate list refresh failed: {}", e),
+                    }
+                    // Then every public server in those lists gets dialled for
+                    // real through the same relay, batch by batch, so the tabs
+                    // can say 可用 / 不可用 instead of repeating what a list claimed.
+                    match liveness::run_pass(
+                        &handle,
+                        &state.node_manager,
+                        &state.connection_manager,
+                        preferred.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(()) => log::info!("startup: liveness sweep finished"),
+                        Err(e) => log::warn!("startup: liveness sweep did not run: {}", e),
                     }
                 });
             }

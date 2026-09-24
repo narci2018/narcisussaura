@@ -111,6 +111,20 @@ export interface RelayRanking {
   aborted: boolean;
 }
 
+// 后台真连接测活的进度:每测完一批(50 个)推送一次
+export interface LivenessProgress {
+  // 名单名:'VPNGate' | 'Residential'
+  group: string;
+  tested: number;
+  total: number;
+  alive: number;
+  running: boolean;
+  done: boolean;
+  // 提前结束(用户已建立真实隧道,或核心起不来),不等于剩下的节点都不可用
+  aborted: boolean;
+}
+
+
 export interface SubscriptionTraffic {  upload: number;
   download: number;
   total: number;

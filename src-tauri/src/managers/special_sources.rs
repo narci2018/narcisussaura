@@ -253,10 +253,11 @@ impl SpecialSources {
         let default_cert = "-----BEGIN CERTIFICATE-----\nMIICxjCCAa4CAQAwDQYJKoZIhvcNAQEFBQAwKTEaMBgGA1UEAxMRVlBOR2F0ZUNs\naWVudENlcnQxCzAJBgNVBAYTAkpQMB4XDTEzMDIxMTAzNDk0OVoXDTM3MDExOTAz\nMTQwN1owKTEaMBgGA1UEAxMRVlBOR2F0ZUNsaWVudENlcnQxCzAJBgNVBAYTAkpQ\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5h2lgQQYUjwoKYJbzVZA\n5VcIGd5otPc/qZRMt0KItCFA0s9RwReNVa9fDRFLRBhcITOlv3FBcW3E8h1Us7RD\n4W8GmJe8zapJnLsD39OSMRCzZJnczW4OCH1PZRZWKqDtjlNca9AF8a65jTmlDxCQ\nCjntLIWk5OLLVkFt9/tScc1GDtci55ofhaNAYMPiH7V8+1g66pGHXAoWK6AQVH67\nXCKJnGB5nlQ+HsMYPV/O49Ld91ZN/2tHkcaLLyNtywxVPRSsRh480jju0fcCsv6h\np/0yXnTB//mWutBGpdUlIbwiITbAmrsbYnjigRvnPqX1RNJUbi9Fp6C2c/HIFJGD\nywIDAQABMA0GCSqGSIb3DQEBBQUAA4IBAQChO5hgcw/4oWfoEFLu9kBa1B//kxH8\nhQkChVNn8BRC7Y0URQitPl3DKEed9URBDdg2KOAz77bb6ENPiliD+a38UJHIRMqe\nUBHhllOHIzvDhHFbaovALBQceeBzdkQxsKQESKmQmR832950UCovoyRB61UyAV7h\n+mZhYPGRKXKSJI6s0Egg/Cri+Cwk4bjJfrb5hVse11yh4D9MHhwSfCOH+0z4hPUT\nFku7dGavURO5SVxMn/sL6En5D+oSeXkadHpDs+Airym2YHh15h0+jPSOoR6yiVp/\n6zZeZkrN43kuS73KpKDFjfFPh8t4r1gOIjttkNcQqBccusnplQ7HJpsk\n-----END CERTIFICATE-----";
         let default_key = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA5h2lgQQYUjwoKYJbzVZA5VcIGd5otPc/qZRMt0KItCFA0s9R\nwReNVa9fDRFLRBhcITOlv3FBcW3E8h1Us7RD4W8GmJe8zapJnLsD39OSMRCzZJnc\nzW4OCH1PZRZWKqDtjlNca9AF8a65jTmlDxCQCjntLIWk5OLLVkFt9/tScc1GDtci\n55ofhaNAYMPiH7V8+1g66pGHXAoWK6AQVH67XCKJnGB5nlQ+HsMYPV/O49Ld91ZN\n/2tHkcaLLyNtywxVPRSsRh480jju0fcCsv6hp/0yXnTB//mWutBGpdUlIbwiITbA\nmrsbYnjigRvnPqX1RNJUbi9Fp6C2c/HIFJGDywIDAQABAoIBAERV7X5AvxA8uRiK\nk8SIpsD0dX1pJOMIwakUVyvc4EfN0DhKRNb4rYoSiEGTLyzLpyBc/A28Dlkm5eOY\nfjzXfYkGtYi/Ftxkg3O9vcrMQ4+6i+uGHaIL2rL+s4MrfO8v1xv6+Wky33EEGCou\nQiwVGRFQXnRoQ62NBCFbUNLhmXwdj1akZzLU4p5R4zA3QhdxwEIatVLt0+7owLQ3\nlP8sfXhppPOXjTqMD4QkYwzPAa8/zF7acn4kryrUP7Q6PAfd0zEVqNy9ZCZ9ffho\nzXedFj486IFoc5gnTp2N6jsnVj4LCGIhlVHlYGozKKFqJcQVGsHCqq1oz2zjW6LS\noRYIHgECgYEA8zZrkCwNYSXJuODJ3m/hOLVxcxgJuwXoiErWd0E42vPanjjVMhnt\nKY5l8qGMJ6FhK9LYx2qCrf/E0XtUAZ2wVq3ORTyGnsMWre9tLYs55X+ZN10Tc75z\n4hacbU0hqKN1HiDmsMRY3/2NaZHoy7MKnwJJBaG48l9CCTlVwMHocIECgYEA8jby\ndGjxTH+6XHWNizb5SRbZxAnyEeJeRwTMh0gGzwGPpH/sZYGzyu0SySXWCnZh3Rgq\n5uLlNxtrXrljZlyi2nQdQgsq2YrWUs0+zgU+22uQsZpSAftmhVrtvet6MjVjbByY\nDADciEVUdJYIXk+qnFUJyeroLIkTj7WYKZ6RjksCgYBoCFIwRDeg42oK89RFmnOr\nLymNAq4+2oMhsWlVb4ejWIWeAk9nc+GXUfrXszRhS01mUnU5r5ygUvRcarV/T3U7\nTnMZ+I7Y4DgWRIDd51znhxIBtYV5j/C/t85HjqOkH+8b6RTkbchaX3mau7fpUfds\nFq0nhIq42fhEO8srfYYwgQKBgQCyhi1N/8taRwpk+3/IDEzQwjbfdzUkWWSDk9Xs\nH/pkuRHWfTMP3flWqEYgW/LW40peW2HDq5imdV8+AgZxe/XMbaji9Lgwf1RY005n\nKxaZQz7yqHupWlLGF68DPHxkZVVSagDnV/sztWX6SFsCqFVnxIXifXGC4cW5Nm9g\nva8q4QKBgQCEhLVeUfdwKvkZ94g/GFz731Z2hrdVhgMZaU/u6t0V95+YezPNCQZB\nwmE9Mmlbq1emDeROivjCfoGhR3kZXW1pTKlLh6ZMUQUOpptdXva8XxfoqQwa3enA\nM7muBbF0XN7VO80iJPv+PmIZdEIAkpwKfi201YB+BafCIuGxIF50Vg==\n-----END RSA PRIVATE KEY-----";
 
-        // Verified active SoftEther relay servers (always-on, fast connect)
+        // Fleet we fall back to when no list source answered. Not a claim about
+        // them working — the liveness pass decides that.
         let tsukuba_servers = vec![
-            ("175.119.93.174", 995u16,  "KR", "Korea", "SoftEther 995 (Verified)"),
-            ("27.126.5.202",  1712,    "JP", "Japan", "SoftEther 1712 (Verified)"),
+            ("175.119.93.174", 995u16,  "KR", "Korea", "SoftEther 995"),
+            ("27.126.5.202",  1712,    "JP", "Japan", "SoftEther 1712"),
             ("219.100.37.96",  443,     "JP", "Japan", "Tsukuba (SoftEther 443)"),
             ("153.205.147.86", 1936,    "JP", "Japan", "Tsukuba (SoftEther 1936)"),
             ("219.100.37.221", 443,     "JP", "Japan", "Tsukuba (SoftEther 443 #2)"),
@@ -278,10 +279,12 @@ impl SpecialSources {
                 group: "VPNGate".to_string(),
                 tags: vec!["VPNGate".to_string(), "SoftEther".to_string(), "Tsukuba".to_string()],
                 favorite: false,
-                latency_ms: Some(38),
-                speed_bps: Some(100_000_000),
+                // The offline fallback: nothing here has been dialled, so it says
+                // nothing about latency or reachability.
+                latency_ms: None,
+                speed_bps: None,
                 last_checked: None,
-                status: NodeStatus::Alive,
+                status: NodeStatus::Unknown,
                 config: json!({
                     "proto": "tcp",
                     "cipher": "AES-128-CBC",
@@ -567,20 +570,6 @@ impl SpecialSources {
                             .or_else(|| s.get("isp"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("Residential ISP");
-                        let ping = s.get("ping_ms").and_then(|v| v.as_i64()).unwrap_or(30);
-
-                        // Residential nodes bandwidth scale fix: 5101.57 Mbps is scaled by 10x, actual bandwidth is 400-500 Mbps
-                        let speed_raw = s.get("speed_mbps").and_then(|v| v.as_f64())
-                            .or_else(|| s.get("speed_bps").and_then(|v| v.as_f64()).map(|b| b / 1_000_000.0))
-                            .unwrap_or(0.0);
-                        let speed_mbps = if speed_raw > 1000.0 {
-                            speed_raw / 10.0
-                        } else if speed_raw > 0.0 {
-                            speed_raw
-                        } else {
-                            50.0
-                        };
-                        let speed_bps = (speed_mbps * 1_000_000.0) as u64;
 
                         let node_id = format!("residential-{}", host.replace('.', "-"));
 
@@ -602,10 +591,14 @@ impl SpecialSources {
                             group: "Residential".to_string(),
                             tags: vec!["Residential".to_string(), "优质住宅IP".to_string(), isp.to_string(), country_code.to_string()],
                             favorite: false,
-                            latency_ms: if ping > 0 { Some(ping) } else { Some(35) },
-                            speed_bps: if speed_bps > 0 { Some(speed_bps) } else { Some(50_000_000) },
+                            // ping_ms / speed_mbps in the source file are what somebody
+                            // else measured, at the time they published the file. Showing
+                            // them as ours would be the same lie the VPNGate list used to
+                            // tell; the liveness pass owns these three fields.
+                            latency_ms: None,
+                            speed_bps: None,
                             last_checked: None,
-                            status: NodeStatus::Alive,
+                            status: NodeStatus::Unknown,
                             config: json!({
                                 "proto": proto,
                                 "cipher": cipher,

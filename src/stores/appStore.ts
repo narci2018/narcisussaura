@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../services/api';
 import { invoke } from '@tauri-apps/api/core';
-import { ActiveTab, AppSettings, ConnectionStatus, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
+import { ActiveTab, AppSettings, ConnectionStatus, LivenessProgress, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
 
 
 export interface InspectReportItem {
@@ -73,6 +73,8 @@ interface AppStore {
   relayCandidates: UnifiedNode[];
   preferredRelay: RelayRanking | null;
   isRankingRelays: boolean;
+  // 后台真连接测活进度,键是名单名(VPNGate / Residential)
+  livenessProgress: Record<string, LivenessProgress>;
   fetchRelayCandidates: () => Promise<void>;
   rankRelays: () => Promise<void>;
   setRelayEnabled: (enabled: boolean) => void;
@@ -261,6 +263,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   relayCandidates: [],
   preferredRelay: null,
   isRankingRelays: false,
+  livenessProgress: {},
   setRelayEnabled: (enabled) => set({ relayEnabled: enabled }),
   setSelectedRelayNodeId: (id) => set({ selectedRelayNodeId: id }),
   fetchRelayCandidates: async () => {
@@ -361,6 +364,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       // 后台采集/测活写回的节点列表(启动流水线会分批发这个)
       api.onNodesUpdated(() => {
+        get().refreshNodes().catch(() => {});
+      }).catch(() => {});
+
+      // 真连接测活:每测完一批(50 个)刷新一次,可用/不可用徽标随批次增多
+      api.onNodesLiveness((progress) => {
+        set({
+          livenessProgress: { ...get().livenessProgress, [progress.group]: progress },
+        });
         get().refreshNodes().catch(() => {});
       }).catch(() => {});
 

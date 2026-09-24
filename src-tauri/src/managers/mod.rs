@@ -6,6 +6,7 @@ pub mod speedtest;
 pub mod subscription_manager;
 pub mod inspector_manager;
 pub mod lane_core;
+pub mod liveness;
 pub mod relay_selector;
 pub mod url_fallback;
 pub mod vpngate_sources;

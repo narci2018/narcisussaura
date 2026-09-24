@@ -582,6 +582,24 @@ impl NodeManager {
         }
     }
 
+    /// Replace a whole batch of records with one write. The liveness pass uses
+    /// this because `update_node` rewrites the store per node, and a batch is
+    /// fifty nodes of several-hundred-kilobyte OpenVPN configs.
+    pub fn update_nodes(&self, nodes: &[UnifiedNode]) -> Result<(), String> {
+        if nodes.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<&str> = nodes.iter().map(|n| n.id.as_str()).collect();
+        let mut lock = self.nodes.write();
+        for existing in lock.iter_mut() {
+            if let Some(i) = ids.iter().position(|id| *id == existing.id) {
+                *existing = nodes[i].clone();
+            }
+        }
+        drop(lock);
+        self.save()
+    }
+
     pub fn delete_node(&self, id: &str) -> Result<(), String> {
         let mut lock = self.nodes.write();
         lock.retain(|n| n.id != id);
@@ -1173,6 +1191,56 @@ mod tests {
         assert_eq!(again.len(), 3, "重写已有节点是覆盖,不是追加");
 
         drop(manager);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 测活一批 50 个节点要一次性落盘,且只改这批节点。
+    #[test]
+    fn a_batch_of_verdicts_replaces_only_those_nodes() {
+        let dir = std::env::temp_dir().join(format!("aura-nm-batch-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manager = NodeManager::new(&dir);
+
+        let a = manager
+            .add_node(group_node("VPNGate", "a-443", NodeStatus::Unknown, None))
+            .unwrap();
+        let b = manager
+            .add_node(group_node("VPNGate", "b-443", NodeStatus::Unknown, None))
+            .unwrap();
+        let other = manager
+            .add_node(group_node("Residential", "r-443", NodeStatus::Unknown, None))
+            .unwrap();
+        let phantom = {
+            let mut n = a.clone();
+            n.id = "not-in-the-store".to_string();
+            n
+        };
+        let phantom_id = phantom.id.clone();
+
+        let mut alive = a.clone();
+        alive.status = NodeStatus::Alive;
+        alive.latency_ms = Some(210);
+        let mut dead = b.clone();
+        dead.status = NodeStatus::Dead;
+        manager.update_nodes(&[alive, dead, phantom]).expect("batch write");
+
+        let stored = manager.get_all();
+        let stored_a = stored.iter().find(|n| n.id == a.id).unwrap();
+        assert_eq!(stored_a.status, NodeStatus::Alive);
+        assert_eq!(stored_a.latency_ms, Some(210));
+        assert_eq!(
+            stored.iter().find(|n| n.id == b.id).unwrap().status,
+            NodeStatus::Dead
+        );
+        assert_eq!(
+            stored.iter().find(|n| n.id == other.id).unwrap().status,
+            NodeStatus::Unknown,
+            "没测的节点不能被一批结果顺手改掉"
+        );
+        assert!(
+            !stored.iter().any(|n| n.id == phantom_id),
+            "测活是覆盖已有记录,不是往库里插新行"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

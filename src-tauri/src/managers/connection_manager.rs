@@ -132,6 +132,26 @@ impl ConnectionManager {
         // Specialized handling for OpenVPN (VPNGate SoftEther / Residential) via Mihomo core
         if node.protocol == crate::models::ProtocolType::Openvpn {
             let binary_path = self.locate_mihomo(&app)?;
+
+            // Android mirrors the sing-box path below: VpnService is the only
+            // tunnel, so grab its fd before starting the core. mihomo's openvpn
+            // type uses a userspace gVisor stack (no /dev/net/tun), and
+            // tunrelay feeds the fd into mihomo's SOCKS mixed port.
+            #[cfg(target_os = "android")]
+            let android_tun_fd: Option<i32> = match self.wait_for_android_tun_fd(current_gen, &app).await {
+                Some(fd) => Some(fd),
+                None => {
+                    if self.connect_generation.load(Ordering::SeqCst) != current_gen {
+                        return Err("Connection cancelled by user".to_string());
+                    }
+                    *self.status.lock() = ConnectionStatus::Error;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    return Err(self.android_vpn_consent_error());
+                }
+            };
+            #[cfg(not(target_os = "android"))]
+            let android_tun_fd: Option<i32> = None;
+
             let config_str = Self::generate_mihomo_openvpn_config(&node, relay_node.as_ref(), &settings);
             let config_path = self.app_data_dir.join("current_config.yaml");
             std::fs::write(&config_path, config_str)
@@ -199,6 +219,26 @@ impl ConnectionManager {
                     }
                 }
             }
+
+            // Android TUN: bridge the VpnService fd into mihomo's mixed port,
+            // same seam shape as the sing-box path below (5.2).
+            #[cfg(target_os = "android")]
+            if let Some(fd) = android_tun_fd {
+                if let Err(e) = self.start_tunrelay(&app, fd, settings.mixed_port).await {
+                    if let Some(mut c) = self.process.lock().take() {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
+                    Self::force_kill_all_cores();
+                    let _ = PlatformProxy::disable_proxy();
+                    *self.status.lock() = ConnectionStatus::Error;
+                    *self.connected_node.lock() = None;
+                    let _ = app.emit("core:status-changed", ConnectionStatus::Error);
+                    return Err(e);
+                }
+            }
+            #[cfg(not(target_os = "android"))]
+            let _ = android_tun_fd;
 
             log::info!("Probing real internet connectivity through proxy port {}...", settings.mixed_port);
             if let Err(probe_err) = Self::verify_internet_connectivity(

@@ -201,6 +201,14 @@ jobs:
           tar -xzf sing-box.tar.gz
           cp sing-box-*/sing-box src-tauri/binaries/sing-box
           chmod +x src-tauri/binaries/sing-box
+          # Residential/VPNGate nodes are OpenVPN and run on the mihomo core.
+          # openvpn proxy type only exists from v1.19.x-with-stack (verified in
+          # v1.19.31); android arm64 release builds carry the with_gvisor tag,
+          # so the stack is userspace and needs no /dev/net/tun.
+          curl -sL --retry 4 --retry-delay 5 --fail "https://github.com/MetaCubeX/mihomo/releases/download/v1.19.31/mihomo-android-arm64-v8-v1.19.31.gz" -o mihomo.gz
+          gzip -d mihomo.gz
+          mv mihomo src-tauri/binaries/mihomo
+          chmod +x src-tauri/binaries/mihomo
 
       - name: Setup Go
         uses: actions/setup-go@v5

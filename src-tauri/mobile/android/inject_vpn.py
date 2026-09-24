@@ -195,6 +195,9 @@ def inject_vpn_components():
     binaries_dir = os.path.join(project_root, "src-tauri", "binaries")
     jni_abi_dir = os.path.join(android_app_dir, "src", "main", "jniLibs", "arm64-v8a")
     os.makedirs(jni_abi_dir, exist_ok=True)
+    # mihomo is NOT optional: Residential/VPNGate nodes are OpenVPN and run on
+    # the mihomo core, so a missing libmihomo.so ships an APK whose residential
+    # connect always fails with "mihomo core binary not found" (v0.2.100).
     for bin_name in ["sing-box", "mihomo"]:
         bin_src = os.path.join(binaries_dir, bin_name)
         if os.path.exists(bin_src):
@@ -202,7 +205,7 @@ def inject_vpn_components():
             shutil.copy2(bin_src, dst)
             print(f"[Android Inject] Packaged {bin_name} as {dst}")
         else:
-            print(f"[Android Inject] WARNING: {bin_name} not found at {bin_src}")
+            raise RuntimeError(f"{bin_name} binary not found at {bin_src}; download it in CI before injection")
 
     # tunrelay (Go gVisor netstack bridging the VpnService fd to sing-box's
     # SOCKS5 port) is mandatory for Android TUN mode — fail loudly if missing.

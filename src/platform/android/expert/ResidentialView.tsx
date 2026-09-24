@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Home, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, Building2, Square } from 'lucide-react';
+import { Home, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, Building2, Square, Zap } from 'lucide-react';
+import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
 import { RelayBar } from './RelayBar';
 import { LivenessBadge, LivenessProgressTag, byLiveness } from './liveness';
@@ -17,12 +18,15 @@ export const ResidentialView: React.FC = () => {
     relayEnabled,
     setRelayEnabled,
     livenessProgress,
+    refreshNodes,
+    setErrorMessage,
   } = useAppStore();
 
-  // 只用 store 里的节点:后台每测完一批都会 refreshNodes,本地再存一份快照
-  // 就会把"未测"永远留在卡片上。
+  // 只用 store 里的节点:测活每写回一批结论都会 refreshNodes,本地再存一份快照
+  // 就会把"未测"永远留在卡片上。清单本身由启动任务采集一次,进页面不再拉。
   const residentialNodes = React.useMemo(() => nodes.filter((n) => n.group === 'Residential'), [nodes]);
   const [loading, setLoading] = useState(false);
+  const [probing, setProbing] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   // Requirement #2: Default enable relay proxy for residential broadband nodes
@@ -32,12 +36,11 @@ export const ResidentialView: React.FC = () => {
     }
   }, []);
 
-  const handleSync = async (force = false) => {
+  const handleSync = async () => {
     if (!residentialSubUrl) return;
     setLoading(true);
     try {
-      // 手动同步 = 重新拉取 + 全部重测;打开标签页只补齐过期结论
-      await loadResidentialNodes(force);
+      await loadResidentialNodes();
     } catch (e) {
       console.error('Failed to sync residential nodes:', e);
     } finally {
@@ -45,11 +48,28 @@ export const ResidentialView: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    if (residentialNodes.length === 0 && residentialSubUrl) {
-      handleSync();
+  const measuring = !!livenessProgress['Residential']?.running;
+
+  // 手机端资源有限,一个节点实测约 5 秒,整轮只能由用户主动发起。
+  const measureAll = async () => {
+    try {
+      await api.measureGroupNodes('Residential');
+    } catch (e) {
+      setErrorMessage(`无法开始测活: ${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [residentialSubUrl]);
+  };
+
+  const measureOne = async (id: string) => {
+    setProbing(id);
+    try {
+      await api.measureNode(id);
+      await refreshNodes();
+    } catch (e) {
+      setErrorMessage(`该节点无法测活: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setProbing(null);
+    }
+  };
 
   const filtered = residentialNodes.filter((n) => matchNodeKeywords(n, search)).sort(byLiveness);
 
@@ -74,13 +94,22 @@ export const ResidentialView: React.FC = () => {
 
         <div className="flex items-center gap-2.5">
           <button
-            onClick={() => handleSync(true)}
+            onClick={handleSync}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 active:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-amber-600/30"
-            title="重新拉取住宅节点清单,并排队一轮真连接测活"
+            title="重新拉取住宅节点清单(不会自动测活)"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>{loading ? 'Fetching...' : 'Sync Residential'}</span>
+          </button>
+          <button
+            onClick={measureAll}
+            disabled={measuring || residentialNodes.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 active:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-emerald-600/30"
+            title="通过当前中转节点逐个真连接测试整份名单,一个节点约 5 秒"
+          >
+            <Zap className={`w-3.5 h-3.5 ${measuring ? 'animate-pulse' : ''}`} />
+            <span>{measuring ? '测活中...' : '测活全部节点'}</span>
           </button>
         </div>
       </div>
@@ -115,7 +144,7 @@ export const ResidentialView: React.FC = () => {
             <Globe2 className="w-10 h-10 mb-2 opacity-30 text-amber-400" />
             <p className="text-sm">No residential nodes found.</p>
             <button
-              onClick={() => handleSync(true)}
+              onClick={handleSync}
               className="mt-3 text-[13px] text-amber-400 active:underline flex items-center gap-1"
             >
               <RefreshCw className="w-3 h-3" /> Click to fetch nodes
@@ -176,12 +205,23 @@ export const ResidentialView: React.FC = () => {
                   </div>
 
                   <div className="pt-3 border-t border-[#1c2133] flex items-center justify-between gap-3">
-                    <div
-                      className="flex items-center gap-1.5 text-[12px] font-mono text-gray-400"
-                      title="后台经中转真连接测得的往返延迟"
-                    >
-                      <Signal className={`w-3.5 h-3.5 ${node.latency_ms && node.latency_ms > 0 ? 'text-emerald-400' : 'text-gray-500'}`} />
-                      <span>{node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : '未测'}</span>
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="flex items-center gap-1.5 text-[12px] font-mono text-gray-400"
+                        title="经中转真连接测得的往返延迟"
+                      >
+                        <Signal className={`w-3.5 h-3.5 ${node.latency_ms && node.latency_ms > 0 ? 'text-emerald-400' : 'text-gray-500'}`} />
+                        <span>{node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : '未测'}</span>
+                      </div>
+                      <button
+                        onClick={() => measureOne(node.id)}
+                        disabled={probing !== null}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[#2a3145] text-[12px] text-gray-300 active:border-emerald-500/50 active:text-emerald-300 disabled:opacity-40 transition-colors"
+                        title="只测这一个节点:经当前中转建立一次真实连接"
+                      >
+                        <Zap className={`w-3.5 h-3.5 ${probing === node.id ? 'animate-pulse text-emerald-400' : ''}`} />
+                        <span>{probing === node.id ? '测活中' : '测活'}</span>
+                      </button>
                     </div>
 
                     {isConnected ? (

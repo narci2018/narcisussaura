@@ -23,7 +23,6 @@ enum CoreStartup {
 pub struct ConnectionManager {
     status: Arc<Mutex<ConnectionStatus>>,
     connected_node: Arc<Mutex<Option<UnifiedNode>>>,
-    process: Arc<Mutex<Option<Child>>>,
     aether_process: Arc<Mutex<Option<Child>>>,
     psiphon_process: Arc<Mutex<Option<Child>>>,
     relay_process: Arc<Mutex<Option<Child>>>,
@@ -36,6 +35,10 @@ pub struct ConnectionManager {
     connect_time: Arc<Mutex<Option<Instant>>>,
     connected_chain: Arc<Mutex<Option<String>>>,
     pub(crate) connect_generation: Arc<AtomicU64>,
+    /// The active proxy core (sing-box or mihomo). pub(crate) for the same
+    /// reason as the two fields above: Android's bridge startup asks it whether
+    /// the core died before its port came up.
+    pub(crate) process: Arc<Mutex<Option<Child>>>,
 }
 
 impl ConnectionManager {
@@ -152,7 +155,12 @@ impl ConnectionManager {
             #[cfg(not(target_os = "android"))]
             let android_tun_fd: Option<i32> = None;
 
-            let config_str = Self::generate_mihomo_openvpn_config(&node, relay_node.as_ref(), &settings);
+            let config_str = Self::generate_mihomo_openvpn_config(
+                &node,
+                relay_node.as_ref(),
+                &settings,
+                self.mihomo_geo_rules_usable(),
+            );
             let config_path = self.app_data_dir.join("current_config.yaml");
             std::fs::write(&config_path, config_str)
                 .map_err(|e| format!("Failed to write core config file: {}", e))?;
@@ -170,11 +178,11 @@ impl ConnectionManager {
                 .current_dir(&self.app_data_dir)
                 .stdout(std::process::Stdio::from(log_out))
                 .stderr(std::process::Stdio::from(log_err));
-            // Without -d, mihomo defaults to os.UserConfigDir()/mihomo; on
-            // Android HOME resolves to /sdcard and mkdir fails (v0.2.101 field
-            // error: "can't create config directory /sdcard/.config/mihomo").
-            // Pin the writable app data dir instead.
-            #[cfg(target_os = "android")]
+            // Pin mihomo's data dir on every platform. Without -d it defaults to
+            // os.UserConfigDir()/mihomo, which on Android resolves under /sdcard and
+            // mkdir fails (v0.2.101 field error: "can't create config directory
+            // /sdcard/.config/mihomo"); and the geo-database check below has to look
+            // in exactly the directory the core will read from.
             cmd.arg("-d").arg(&self.app_data_dir);
             hide_window_std(&mut cmd);
 
@@ -1397,10 +1405,34 @@ r#"  - name: {}
         )
     }
 
+    /// Are mihomo's GEOSITE/GEOIP rules usable at all right now?
+    ///
+    /// The core resolves them from `geosite.dat`/`geoip.dat` in its data dir, and
+    /// when a file is missing it does not degrade — it downloads it from
+    /// github.com, and in exactly the networks this app exists for that download
+    /// stalls ~20s and then exits **fatal**, so the mixed port never listens and
+    /// the user is told the exit node is dead (reproduced locally with the
+    /// bundled core: `Parse config error: rules[0] [GEOSITE,cn,DIRECT] error:
+    /// can't download GeoSite.dat`). Split-routing is worth much less than a
+    /// core that starts, so without the databases the geo rules are left out.
+    fn mihomo_geo_rules_usable(&self) -> bool {
+        let usable = ["geosite.dat", "geoip.dat"]
+            .iter()
+            .all(|f| self.app_data_dir.join(f).is_file());
+        if !usable {
+            log::info!(
+                "mihomo: geosite.dat/geoip.dat 不在 {}，本次配置跳过 GEOSITE/GEOIP 规则(否则核心会因下载失败而拒绝启动)",
+                self.app_data_dir.display()
+            );
+        }
+        usable
+    }
+
     fn generate_mihomo_openvpn_config(
         node: &UnifiedNode,
         relay_node: Option<&UnifiedNode>,
         settings: &AppSettings,
+        geo_rules_usable: bool,
     ) -> String {
         // A relay mihomo cannot express (unhandled protocol) must not leave the
         // openvpn entry pointing at a dialer-proxy that is absent from the config.
@@ -1426,8 +1458,14 @@ r#"  - name: {}
         let format_rule = |item: &str, action: &str| -> String {
             let r = item.trim();
             if let Some(cat) = r.strip_prefix("geosite:") {
+                if !geo_rules_usable {
+                    return String::new();
+                }
                 format!("  - GEOSITE,{},{}\n", cat, action)
             } else if let Some(cat) = r.strip_prefix("geoip:") {
+                if !geo_rules_usable {
+                    return String::new();
+                }
                 format!("  - GEOIP,{},{},no-resolve\n", cat, action)
             } else if r.contains('/') || r.parse::<std::net::IpAddr>().is_ok() {
                 format!("  - IP-CIDR,{},{},no-resolve\n", r, action)
@@ -1821,7 +1859,7 @@ rules:
     /// Last non-empty line of a core log, capped to one short line. The full
     /// log is always available through 「拷贝完整日志」 — the inline error must
     /// stay short enough to send in chat (v0.2.103 field complaint).
-    fn brief_log_line(log: &str) -> String {
+    pub(crate) fn brief_log_line(log: &str) -> String {
         let line = log.trim().lines().last().unwrap_or("").trim();
         const MAX: usize = 160;
         if line.is_empty() {
@@ -1844,6 +1882,11 @@ rules:
     ) -> String {
         if raw.starts_with("[系统隧道无流量]") {
             return "VPN 隧道未被系统选为默认网络，本机流量没有进入隧道。\n请重新点击连接；若反复出现请重启手机后重试。".to_string();
+        }
+        // The core itself told us why it refused to come up; blaming the exit node
+        // for that is how a config bug got mistaken for dead servers.
+        if raw.starts_with("[核心已退出]") {
+            return raw.to_string();
         }
         if raw.starts_with("[核心端口未就绪]") || raw.starts_with("[桥接进程退出]") {
             return format!(
@@ -2394,4 +2437,60 @@ rules:
         log.trim().chars().take(1000).collect::<String>()
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn openvpn_node() -> UnifiedNode {
+        UnifiedNode {
+            id: "v1".to_string(),
+            name: "Japan".to_string(),
+            protocol: crate::models::ProtocolType::Openvpn,
+            address: "219.100.37.202".to_string(),
+            port: 443,
+            country_code: "JP".to_string(),
+            country_name: "Japan".to_string(),
+            city: String::new(),
+            group: "VPNGate".to_string(),
+            tags: vec![],
+            favorite: false,
+            latency_ms: Some(163),
+            speed_bps: None,
+            last_checked: None,
+            status: crate::models::NodeStatus::Unknown,
+            config: json!({ "ca": "AAAA", "proto": "tcp" }),
+        }
+    }
+
+    /// The core refuses to start at all when a GEOSITE/GEOIP rule cannot be
+    /// resolved offline — it downloads the database from github.com, which is the
+    /// one thing this app's networks guarantee will not finish. So the rules have
+    /// to disappear with the databases, not take the tunnel down with them.
+    #[test]
+    fn geo_rules_are_dropped_when_the_databases_are_absent() {
+        let settings = AppSettings::default();
+        let set = settings.get_active_rule_set();
+        assert!(
+            set.direct_rules.iter().any(|r| r.starts_with("geosite:")),
+            "默认分流规则必须含 geosite,否则这个测试什么都没测到"
+        );
+
+        let with_geo = ConnectionManager::generate_mihomo_openvpn_config(&openvpn_node(), None, &settings, true);
+        assert!(with_geo.contains("GEOSITE,") && with_geo.contains("GEOIP,"));
+
+        let without_geo = ConnectionManager::generate_mihomo_openvpn_config(&openvpn_node(), None, &settings, false);
+        assert!(
+            !without_geo.contains("GEOSITE,") && !without_geo.contains("GEOIP,"),
+            "{without_geo}"
+        );
+        assert!(
+            without_geo.contains("MATCH,proxy"),
+            "没有分流规则也要把流量交给出口节点,不能留下空 rules"
+        );
+        assert!(without_geo.contains("type: openvpn"));
+        assert!(without_geo.contains("AND,((NETWORK,udp),(DST-PORT,443)),REJECT"));
+    }
 }

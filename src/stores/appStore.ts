@@ -55,7 +55,7 @@ interface AppStore {
   authDisplayText: string | null;
   isAuthorized: boolean;
   residentialSubUrl: string | null;
-  loadResidentialNodes: (force?: boolean) => Promise<UnifiedNode[]>;
+  loadResidentialNodes: () => Promise<UnifiedNode[]>;
 
   // Actions
   init: () => Promise<void>;
@@ -242,13 +242,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   authDisplayText: null,
   isAuthorized: false,
   residentialSubUrl: null,
-  loadResidentialNodes: async (force = false) => {
+  loadResidentialNodes: async () => {
     const url = get().residentialSubUrl;
     if (!url || !url.trim()) {
       return [];
     }
     try {
-      const fetched = await api.fetchResidentialNodes(url.trim(), force);
+      const fetched = await api.fetchResidentialNodes(url.trim());
       await get().refreshNodes();
       return fetched;
     } catch (e) {

@@ -40,11 +40,13 @@ export const api = {
   updateAllSubscriptions: (useProxy?: boolean) => invoke<Subscription[]>('update_all_subscriptions', { useProxy }),
 
   fetchMegaVNodes: () => invoke<UnifiedNode[]>('fetch_megav_nodes'),
-  // force=true 只用于用户主动点"更新节点":它会重测所有节点。打开标签页时不要传,
-  // 否则一轮上百个节点(每个约 5 秒)的测活会被反复清零,永远跑不完。
-  fetchVPNGateNodes: (force = false) => invoke<UnifiedNode[]>('fetch_vpngate_nodes', { force }),
+  fetchVPNGateNodes: () => invoke<UnifiedNode[]>('fetch_vpngate_nodes'),
   fetchPsiphonNodes: () => invoke<UnifiedNode[]>('fetch_psiphon_nodes'),
-  fetchResidentialNodes: (url?: string, force = false) => invoke<UnifiedNode[]>('fetch_residential_nodes', { url: url || null, force }),
+  fetchResidentialNodes: (url?: string) => invoke<UnifiedNode[]>('fetch_residential_nodes', { url: url || null }),
+
+  // 测活只由用户点按钮触发:一轮上百个节点、每个约 5 秒,启动自动跑在手机上太重。
+  measureGroupNodes: (group: string) => invoke<void>('measure_group_nodes', { group }),
+  measureNode: (nodeId: string) => invoke<UnifiedNode>('measure_node', { nodeId }),
   
   getMachineId: () => invoke<string>('get_machine_id'),
   requestAuth: (machineId: string) => invoke<string>('request_auth', { machineId }),

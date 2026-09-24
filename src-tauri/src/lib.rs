@@ -587,22 +587,23 @@ async fn fetch_megav_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNode
 
 /// Rebuild the VPNGate list from every source (mirror direct, official endpoints
 /// through the preferred relay) and publish it.
+///
+/// Collecting a list and measuring it are separate commands now: a sweep dials
+/// every server in it, which is a phone's worth of work nobody asked for just
+/// because a tab was opened.
 #[tauri::command]
 async fn fetch_vpngate_nodes(
     app: AppHandle,
     state: State<'_, AppState>,
-    force: Option<bool>,
 ) -> Result<Vec<UnifiedNode>, String> {
     let preferred = state.settings.read().preferred_relay_id.clone();
-    let nodes = vpngate_sources::sync(
+    vpngate_sources::sync(
         &app,
         &state.node_manager,
         &state.connection_manager,
         preferred.as_deref(),
     )
-    .await?;
-    spawn_liveness(&app, force.unwrap_or(false));
-    Ok(nodes)
+    .await
 }
 
 #[tauri::command]
@@ -612,24 +613,48 @@ async fn fetch_psiphon_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNo
 
 #[tauri::command]
 async fn fetch_residential_nodes(
-    app: AppHandle,
     url: Option<String>,
-    force: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<UnifiedNode>, String> {
-    let nodes = crate::managers::SpecialSources::fetch_residential_nodes(&state.node_manager, url)
+    crate::managers::SpecialSources::fetch_residential_nodes(&state.node_manager, url)
         .await
-        .map_err(|e| e.to_string())?;
-    spawn_liveness(&app, force.unwrap_or(false));
-    Ok(nodes)
+        .map_err(|e| e.to_string())
 }
 
-/// Dial the freshly listed public servers for real, in the background.
+/// Measure a whole public list for real, through the preferred relay.
+#[tauri::command]
+async fn measure_group_nodes(
+    app: AppHandle,
+    group: String,
+) -> Result<(), String> {
+    let group = liveness::known_group(&group).ok_or("该名单不需要真连接测活")?;
+    spawn_liveness(&app, Some(group));
+    Ok(())
+}
+
+/// Measure one server the user pointed at, and come back with its verdict.
+#[tauri::command]
+async fn measure_node(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    node_id: String,
+) -> Result<UnifiedNode, String> {
+    let preferred = state.settings.read().preferred_relay_id.clone();
+    liveness::measure_one(
+        &app,
+        &state.node_manager,
+        &state.connection_manager,
+        &node_id,
+        preferred.as_deref(),
+    )
+    .await
+}
+
+/// Dial the listed public servers for real, in the background.
 ///
-/// `force` is the user pressing 更新节点: everything gets dialled again. Opening
-/// a tab is not, because a sweep that restarts from zero on every mount of a
-/// 100-server list never finishes (each dead server costs ~5s).
-fn spawn_liveness(app: &AppHandle, force: bool) {
+/// `scope` names one list; `None` covers every public list. Only a button press
+/// gets here.
+fn spawn_liveness(app: &AppHandle, scope: Option<&'static str>) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = handle.state::<AppState>();
@@ -639,7 +664,7 @@ fn spawn_liveness(app: &AppHandle, force: bool) {
             &state.node_manager,
             &state.connection_manager,
             preferred.as_deref(),
-            force,
+            scope,
         )
         .await
         {
@@ -753,23 +778,11 @@ pub fn run() {
                         }
                         Err(e) => log::warn!("startup: VPNGate list refresh failed: {}", e),
                     }
-                    // Then the public servers without a recent verdict get dialled
-                    // for real through the same relay, one at a time, so the tabs
-                    // can say 可用 / 不可用 instead of repeating what a list
-                    // claimed. A restart inside the verdict window dials nothing:
-                    // those conclusions are already on disk.
-                    match liveness::run_pass(
-                        &handle,
-                        &state.node_manager,
-                        &state.connection_manager,
-                        preferred.as_deref(),
-                        false,
-                    )
-                    .await
-                    {
-                        Ok(()) => log::info!("startup: liveness sweep finished"),
-                        Err(e) => log::warn!("startup: liveness sweep did not run: {}", e),
-                    }
+                    // Measuring those servers for real is deliberately not part of
+                    // startup: a sweep dials every server in the list (~5s each,
+                    // measured) and a phone should only pay that when the user
+                    // presses 测活全部节点.
+                    log::info!("startup: public node lists ready");
                 });
             }
 
@@ -852,6 +865,8 @@ pub fn run() {
             fetch_vpngate_nodes,
             fetch_psiphon_nodes,
             fetch_residential_nodes,
+            measure_group_nodes,
+            measure_node,
             get_relay_candidates,
             rank_relays,
             get_settings,

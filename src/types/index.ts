@@ -111,11 +111,11 @@ export interface RelayRanking {
   aborted: boolean;
 }
 
-// 后台真连接测活的进度:每拨完一个节点推送一次
+// 真连接测活的进度:每拨完一个节点推送一次
 export interface LivenessProgress {
   // 名单名:'VPNGate' | 'Residential'
   group: string;
-  // 已有结论的数量(本轮拨完的 + 还在有效期内、这次跳过的),不会倒退
+  // 本轮已拨完的节点数,不会倒退
   tested: number;
   total: number;
   alive: number;

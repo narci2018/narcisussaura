@@ -24,6 +24,7 @@ export const VPNGateView: React.FC = () => {
   const gateNodes = React.useMemo(() => nodes.filter((n) => n.group === 'VPNGate'), [nodes]);
   const [loading, setLoading] = useState(false);
   const [probing, setProbing] = useState<string | null>(null);
+  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
   const [search, setSearch] = useState('');
   const [copiedError, setCopiedError] = useState(false);
 
@@ -58,11 +59,18 @@ export const VPNGateView: React.FC = () => {
 
   const measureOne = async (id: string) => {
     setProbing(id);
+    setProbeErrors((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
     try {
       await api.measureNode(id);
       await refreshNodes();
     } catch (e) {
-      setErrorMessage(`该节点无法测活: ${e instanceof Error ? e.message : String(e)}`);
+      // 结论留在这张卡片上:横幅会被下一条错误顶掉,而用户刚点的就是这张。
+      setProbeErrors((prev) => ({ ...prev, [id]: e instanceof Error ? e.message : String(e) }));
     } finally {
       setProbing(null);
     }
@@ -275,6 +283,12 @@ export const VPNGateView: React.FC = () => {
                       </button>
                     )}
                   </div>
+
+                  {probeErrors[node.id] && (
+                    <div className="mt-2 text-[11px] leading-snug text-red-300">
+                      {`这个节点没能测活：${probeErrors[node.id]}`}
+                    </div>
+                  )}
                 </div>
               );
             })}

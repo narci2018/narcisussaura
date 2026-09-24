@@ -28,11 +28,27 @@ export const byLiveness = (a: UnifiedNode, b: UnifiedNode) => rank(a.status) - r
 const rank = (status: NodeStatus) => (status === 'alive' ? 0 : status === 'dead' ? 2 : 1);
 
 /**
- * 测活进度标签。后台一轮都没开始时不显示;跑完整个名单时明确告诉用户
- * "全部完成测活",中途让路给真实隧道时说明还剩多少没测。
+ * 测活进度标签。一轮跑完、跑不完、或者根本没能开始,都要留下一句话:
+ * "未测"加上沉默和按钮失灵没有区别,所以后端每条终止路径都带 message,
+ * 这里优先把它显示出来。
  */
 export const LivenessProgressTag: React.FC<{ progress?: LivenessProgress }> = ({ progress }) => {
-  if (!progress || progress.total === 0) return null;
+  if (!progress) return null;
+  if (progress.message) {
+    const ok = !progress.aborted;
+    const Icon = ok ? CircleCheck : CircleX;
+    return (
+      <span
+        className={`flex items-start gap-1.5 text-[11px] font-medium text-right max-w-[420px] ${
+          ok ? 'text-emerald-300' : 'text-red-300'
+        }`}
+      >
+        <Icon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        <span>{progress.message}</span>
+      </span>
+    );
+  }
+  if (progress.total === 0) return null;
   const counts = `已测 ${progress.tested}/${progress.total} · 可用 ${progress.alive}`;
   if (progress.done && !progress.aborted) {
     return (

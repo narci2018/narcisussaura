@@ -1,10 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Zap, RefreshCw, ChevronDown, Check } from 'lucide-react';
+import { Zap, RefreshCw, ChevronDown, Check, Activity } from 'lucide-react';
 import { useAppStore } from '../../../stores/appStore';
 
 interface RelayBarProps {
   description?: string;
 }
+
+/** 实测带宽是字节/秒,换算成看得懂的 MB/s */
+const formatBandwidth = (bytesPerSecond?: number | null): string | null => {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return null;
+  return `${(bytesPerSecond / 1048576).toFixed(1)}MB/s`;
+};
 
 export const RelayBar: React.FC<RelayBarProps> = ({
   description = '国内网络直连该网络易受 GFW 阻断，开启链式中转将通过您的翻墙节点中继加速，保障 100% 成功建联。',
@@ -16,6 +22,9 @@ export const RelayBar: React.FC<RelayBarProps> = ({
     setSelectedRelayNodeId,
     relayCandidates,
     fetchRelayCandidates,
+    preferredRelay,
+    isRankingRelays,
+    rankRelays,
   } = useAppStore();
 
   useEffect(() => {
@@ -24,7 +33,20 @@ export const RelayBar: React.FC<RelayBarProps> = ({
     }
   }, []);
 
-  const bestCandidate = relayCandidates.length > 0 ? relayCandidates[0] : null;
+  // 「自动优选」不再等于列表第一个:启动期实测出的胜者才算数。
+  // 没实测过之前退回启发式首位,且不显示带宽(那是握手延迟而已)。
+  const measured = preferredRelay?.preferred_id
+    ? relayCandidates.find((n) => n.id === preferredRelay.preferred_id) ?? null
+    : null;
+  const bestCandidate = measured ?? (relayCandidates.length > 0 ? relayCandidates[0] : null);
+  const autoDetail = bestCandidate
+    ? [
+        bestCandidate.country_code,
+        bestCandidate.latency_ms != null ? `${bestCandidate.latency_ms}ms` : null,
+        measured ? formatBandwidth(preferredRelay?.speed_bps ?? bestCandidate.speed_bps) : null,
+      ].filter(Boolean).join(' · ')
+    : '';
+  const autoLabel = `⚡ 自动优选${measured ? '（已实测）' : ''}${autoDetail ? ` (${autoDetail})` : ''}`;
 
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -46,9 +68,7 @@ export const RelayBar: React.FC<RelayBarProps> = ({
   }, [open]);
 
   const current = selectedRelayNodeId === 'auto' ? null : relayCandidates.find((n) => n.id === selectedRelayNodeId);
-  const triggerLabel = current
-    ? `[${current.country_code}] ${current.name}`
-    : `⚡ 自动优选最快节点 ${bestCandidate ? `(${bestCandidate.country_code} · ${bestCandidate.latency_ms ?? '~'}ms)` : ''}`;
+  const triggerLabel = current ? `[${current.country_code}] ${current.name}` : autoLabel;
 
   const pick = (id: string) => {
     setSelectedRelayNodeId(id);
@@ -124,9 +144,7 @@ export const RelayBar: React.FC<RelayBarProps> = ({
                       selectedRelayNodeId === 'auto' ? 'bg-blue-500/15 text-blue-300' : 'text-gray-200 active:bg-[#1f2437]'
                     }`}
                   >
-                    <span className="truncate">
-                      ⚡ 自动优选最快节点 {bestCandidate ? `(${bestCandidate.country_code} · ${bestCandidate.latency_ms ?? '~'}ms)` : ''}
-                    </span>
+                    <span className="truncate">{autoLabel}</span>
                     {selectedRelayNodeId === 'auto' && <Check className="w-3.5 h-3.5 shrink-0" />}
                   </button>
                   <div className="my-1.5 border-t border-[#232a3d]" />
@@ -143,7 +161,8 @@ export const RelayBar: React.FC<RelayBarProps> = ({
                         <span className="truncate">
                           [{node.country_code}] {node.name}
                           <span className="text-gray-500 ml-1.5">
-                            ({node.protocol.toUpperCase()} · {node.latency_ms ? `${node.latency_ms}ms` : 'Alive'})
+                            ({node.protocol.toUpperCase()} · {node.latency_ms ? `${node.latency_ms}ms` : '未测'}
+                            {formatBandwidth(node.speed_bps) ? ` · ${formatBandwidth(node.speed_bps)}` : ''})
                           </span>
                         </span>
                         {active && <Check className="w-3.5 h-3.5 shrink-0" />}
@@ -153,6 +172,20 @@ export const RelayBar: React.FC<RelayBarProps> = ({
                   {relayCandidates.length === 0 && (
                     <div className="px-3.5 py-2.5 text-[12px] text-gray-500">暂无候选节点，点右侧按钮刷新</div>
                   )}
+                  <div className="my-1.5 border-t border-[#232a3d]" />
+                  <button
+                    onClick={() => {
+                      setOpen(false);
+                      rankRelays();
+                    }}
+                    disabled={isRankingRelays}
+                    className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left text-[13px] text-gray-300 active:bg-[#1f2437] transition-colors disabled:opacity-60"
+                  >
+                    <Activity className={`w-3.5 h-3.5 shrink-0 ${isRankingRelays ? 'animate-pulse text-blue-400' : 'text-blue-400'}`} />
+                    <span className="truncate">
+                      {isRankingRelays ? '正在真实建联测速…' : '重新实测延迟与带宽'}
+                    </span>
+                  </button>
                 </div>
               )}
             </div>

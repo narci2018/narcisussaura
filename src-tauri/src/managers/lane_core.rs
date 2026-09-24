@@ -201,7 +201,10 @@ impl Lane {
         self.app_data_dir.join(format!("lane_{}.log", self.index))
     }
 
-    fn tail_log(&self, lines: usize) -> String {
+    /// Last `lines` lines of the core's own log, joined on one line. Callers use
+    /// this to explain a whole batch that refused to connect — the phone is only
+    /// ever diagnosed through the log the user copies out of the app.
+    pub fn tail_log(&self, lines: usize) -> String {
         match std::fs::read_to_string(self.log_path()) {
             Ok(s) => {
                 let all: Vec<&str> = s.lines().collect();

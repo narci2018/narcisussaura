@@ -111,10 +111,11 @@ export interface RelayRanking {
   aborted: boolean;
 }
 
-// 后台真连接测活的进度:每测完一批(50 个)推送一次
+// 后台真连接测活的进度:每拨完一个节点推送一次
 export interface LivenessProgress {
   // 名单名:'VPNGate' | 'Residential'
   group: string;
+  // 已有结论的数量(本轮拨完的 + 还在有效期内、这次跳过的),不会倒退
   tested: number;
   total: number;
   alive: number;
@@ -122,6 +123,8 @@ export interface LivenessProgress {
   done: boolean;
   // 提前结束(用户已建立真实隧道,或核心起不来),不等于剩下的节点都不可用
   aborted: boolean;
+  // 这批结论是否已写回节点库;只有 true(或 running=false)时才重拉整份列表
+  persisted: boolean;
 }
 
 

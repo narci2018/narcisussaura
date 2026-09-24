@@ -55,7 +55,7 @@ interface AppStore {
   authDisplayText: string | null;
   isAuthorized: boolean;
   residentialSubUrl: string | null;
-  loadResidentialNodes: () => Promise<UnifiedNode[]>;
+  loadResidentialNodes: (force?: boolean) => Promise<UnifiedNode[]>;
 
   // Actions
   init: () => Promise<void>;
@@ -242,13 +242,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   authDisplayText: null,
   isAuthorized: false,
   residentialSubUrl: null,
-  loadResidentialNodes: async () => {
+  loadResidentialNodes: async (force = false) => {
     const url = get().residentialSubUrl;
     if (!url || !url.trim()) {
       return [];
     }
     try {
-      const fetched = await api.fetchResidentialNodes(url.trim());
+      const fetched = await api.fetchResidentialNodes(url.trim(), force);
       await get().refreshNodes();
       return fetched;
     } catch (e) {
@@ -367,12 +367,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
         get().refreshNodes().catch(() => {});
       }).catch(() => {});
 
-      // 真连接测活:每测完一批(50 个)刷新一次,可用/不可用徽标随批次增多
+      // 真连接测活:后台每拨一个节点就推一次进度(计数会动),但只有它把结论
+      // 写回节点库时(persisted)才值得重拉整份列表 —— 一轮上百次拨号,不能每次
+      // 都全量刷新。
       api.onNodesLiveness((progress) => {
         set({
           livenessProgress: { ...get().livenessProgress, [progress.group]: progress },
         });
-        get().refreshNodes().catch(() => {});
+        if (progress.persisted || !progress.running) {
+          get().refreshNodes().catch(() => {});
+        }
       }).catch(() => {});
 
       // Surface a captured crash from the previous run (Android only; the

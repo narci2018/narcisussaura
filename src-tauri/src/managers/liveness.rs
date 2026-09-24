@@ -2,16 +2,18 @@
 //!
 //! A list can only say that somebody registered a server; only a handshake says
 //! whether it works. Startup ranks the relays, `vpngate_sources` assembles the
-//! candidate exits, and this module dials every one of them through the winning
-//! relay for real: a server that completes a round trip becomes Alive, one that
-//! does not becomes Dead, and the ones not reached yet stay Unknown so the UI
-//! shows "未测" instead of a guess.
+//! candidate exits, and this module dials them through the winning relay for
+//! real: a server that completes a round trip becomes Alive, one that does not
+//! becomes Dead, and the ones not reached yet stay Unknown so the UI shows
+//! "未测" instead of a guess.
 //!
 //! The shape of the sweep is a resource decision, not an implementation detail:
 //! one lane at a time, [`BATCH_SIZE`] servers per lane (a lane is a full mihomo
-//! process holding that many OpenVPN configs), verdicts written back and
-//! published after each batch so the list fills in progressively, and the whole
-//! pass gives up the moment a real tunnel takes the device.
+//! process holding that many OpenVPN configs), a progress beat after every dial
+//! so the count moves within seconds, verdicts written back every
+//! [`PERSIST_EVERY`] dials, servers measured within [`VERDICT_TTL_SECS`] left
+//! alone, and the whole pass giving up the moment a real tunnel takes the
+//! device.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,6 +30,19 @@ use crate::models::{ConnectionStatus, NodeStatus, ProtocolType, UnifiedNode};
 /// the background: 50 configs is the largest set measured to start cleanly.
 pub const BATCH_SIZE: usize = 50;
 
+/// Verdicts are stored this often. One lane batch costs ~50 x 5s, and a phone
+/// user needs to see the count move inside seconds, while rewriting a list of
+/// hundred-plus OpenVPN configs every five seconds is I/O the flash does not
+/// need — so the counter is published per node and written back per ten.
+pub const PERSIST_EVERY: usize = 10;
+
+/// How long a verdict is worth believing before the background sweep dials that
+/// server again. Volunteer relays churn on a scale of hours, but the same list
+/// is re-fetched every time a tab opens, and re-dialling 100 servers for that
+/// would keep the sweep from ever finishing (measured: ~5s per server, so a
+/// full pass of the VPNGate list costs most of ten minutes).
+pub const VERDICT_TTL_SECS: i64 = 2 * 60 * 60;
+
 /// Lists made of other people's volunteer servers, where "registered" says
 /// nothing about "working".
 pub const LIVENESS_GROUPS: [&str; 2] = ["VPNGate", "Residential"];
@@ -41,12 +56,14 @@ fn lane_index_for(batch: usize) -> usize {
     LANE_LIVENESS_FIRST + batch % LANE_WINDOW
 }
 
-/// One progress beat. Emitted per batch while the sweep runs and once more when
-/// it ends, so each tab can show where its own list stands.
+/// One progress beat. Emitted per probed server while the sweep runs and once
+/// more when it ends, so each tab can show where its own list stands.
 #[derive(Debug, Clone, Serialize)]
 pub struct LivenessProgress {
     /// The list this beat describes.
     pub group: String,
+    /// Servers that now carry a verdict — dialled in this sweep plus the ones
+    /// skipped as still fresh. Never decreases within a sweep.
     pub tested: usize,
     pub total: usize,
     pub alive: usize,
@@ -57,6 +74,10 @@ pub struct LivenessProgress {
     /// The sweep stopped before the end: a real tunnel took the device, or no
     /// lane could be started. Never "the remaining servers are dead".
     pub aborted: bool,
+    /// Whether these verdicts have reached the node store. The UI reloads the
+    /// list on this flag rather than on every beat, so a hundred dials do not
+    /// mean a hundred full list transfers.
+    pub persisted: bool,
 }
 
 fn emit_progress(app: &AppHandle, p: &LivenessProgress) {
@@ -69,6 +90,9 @@ static IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// Set when someone asks for a pass while one is already running — the running
 /// sweep redoes the lists from scratch, which is what a manual node update wants.
 static RERUN_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// Set by the caller that asked for every server to be dialled again, ignoring
+/// verdicts that are still fresh (the "更新节点" button).
+static RERUN_FORCED: AtomicBool = AtomicBool::new(false);
 
 pub struct PassGuard;
 
@@ -78,7 +102,13 @@ impl Drop for PassGuard {
     }
 }
 
-fn claim() -> Option<PassGuard> {
+/// Take the sweep, or queue the request behind the one already running.
+/// `force` means "re-dial everything", which is what an explicit user update
+/// asks for; opening a tab does not.
+fn claim(force: bool) -> Option<PassGuard> {
+    if force {
+        RERUN_FORCED.store(true, Ordering::SeqCst);
+    }
     if IN_PROGRESS.swap(true, Ordering::SeqCst) {
         RERUN_REQUESTED.store(true, Ordering::SeqCst);
         return None;
@@ -95,6 +125,28 @@ pub fn liveness_candidates(all: &[UnifiedNode], group: &str) -> Vec<UnifiedNode>
         .cloned()
         .collect()
 }
+
+/// Does this server need dialling? A verdict nobody asked to redo is believed
+/// for [`VERDICT_TTL_SECS`]; without that, every tab open and every auth refresh
+/// re-dials the whole list, and the sweep is forever back at zero.
+pub fn needs_dialling(node: &UnifiedNode, now: i64, force: bool) -> bool {
+    if force {
+        return true;
+    }
+    match node.last_checked {
+        Some(at) => now - at >= VERDICT_TTL_SECS,
+        None => true,
+    }
+}
+
+/// The subset of a list to dial now, given what was measured recently.
+pub fn stale_candidates(rows: &[UnifiedNode], now: i64, force: bool) -> Vec<UnifiedNode> {
+    rows.iter()
+        .filter(|n| needs_dialling(n, now, force))
+        .cloned()
+        .collect()
+}
+
 
 /// Write one handshake outcome back onto a node record. Bandwidth is left
 /// alone: this pass answers "does it connect", not "how fast".
@@ -121,15 +173,17 @@ struct GroupStats {
 
 /// Run the whole sweep: every list, in batches, publishing as it goes.
 ///
-/// Returns `Err` only when another sweep already holds the lanes — that one has
-/// been told to redo these lists, so the caller's request is not lost.
+/// `force` re-dials servers that were measured recently — the user pressed
+/// 更新节点. Returns `Err` only when another sweep already holds the lanes; that
+/// one has been told to redo these lists, so the request is not lost.
 pub async fn run_pass(
     app: &AppHandle,
     node_manager: &NodeManager,
     conn: &ConnectionManager,
     preferred_id: Option<&str>,
+    force: bool,
 ) -> Result<(), String> {
-    let _guard = match claim() {
+    let _guard = match claim(force) {
         Some(g) => g,
         None => return Err("节点测活已在进行中，本次更新将在当前一轮结束后自动重测".to_string()),
     };
@@ -137,11 +191,12 @@ pub async fn run_pass(
     let mut last: HashMap<&'static str, GroupStats> = HashMap::new();
     loop {
         RERUN_REQUESTED.store(false, Ordering::SeqCst);
+        let force_this = force || RERUN_FORCED.swap(false, Ordering::SeqCst);
         last.clear();
 
         let mut stopped = false;
         for group in LIVENESS_GROUPS {
-            match probe_group(app, node_manager, conn, preferred_id, group).await {
+            match probe_group(app, node_manager, conn, preferred_id, group, force_this).await {
                 Ok(Some(stats)) => {
                     stopped = stats.aborted;
                     last.insert(group, stats);
@@ -173,6 +228,7 @@ pub async fn run_pass(
                 running: false,
                 done: stats.tested >= stats.total,
                 aborted: stats.aborted,
+                persisted: true,
             },
         );
     }
@@ -187,10 +243,48 @@ async fn probe_group(
     conn: &ConnectionManager,
     preferred_id: Option<&str>,
     group: &str,
+    force: bool,
 ) -> Result<Option<GroupStats>, String> {
-    let nodes = liveness_candidates(&node_manager.get_all(), group);
-    if nodes.is_empty() {
+    let rows = liveness_candidates(&node_manager.get_all(), group);
+    if rows.is_empty() {
         return Ok(None);
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let to_dial = stale_candidates(&rows, now, force);
+    let mut stats = GroupStats {
+        total: rows.len(),
+        // Servers whose verdict is still believed count towards the progress:
+        // the label answers "how much of this list has a real conclusion", and
+        // that number must not fall back to zero every time a tab opens.
+        tested: rows.len() - to_dial.len(),
+        alive: rows
+            .iter()
+            .filter(|n| !needs_dialling(n, now, force) && n.status == NodeStatus::Alive)
+            .count(),
+        aborted: false,
+    };
+
+    if to_dial.is_empty() {
+        emit_progress(
+            app,
+            &LivenessProgress {
+                group: group.to_string(),
+                tested: stats.tested,
+                total: stats.total,
+                alive: stats.alive,
+                running: false,
+                done: true,
+                aborted: false,
+                persisted: true,
+            },
+        );
+        log::info!(
+            "liveness {group}: {}/{} verdicts still fresh, nothing to dial",
+            stats.tested,
+            stats.total
+        );
+        return Ok(Some(stats));
     }
 
     let relay = match node_manager.get_best_relay_node(preferred_id) {
@@ -216,32 +310,29 @@ async fn probe_group(
         .app_data_dir()
         .map_err(|e| format!("app_data_dir: {}", e))?;
 
-    let total = nodes.len();
     emit_progress(
         app,
         &LivenessProgress {
             group: group.to_string(),
-            tested: 0,
-            total,
-            alive: 0,
+            tested: stats.tested,
+            total: stats.total,
+            alive: stats.alive,
             running: true,
             done: false,
             aborted: false,
+            persisted: false,
         },
     );
 
-    let mut stats = GroupStats {
-        total,
-        ..Default::default()
-    };
     log::info!(
-        "liveness {group}: dialling {} servers through {} in batches of {}",
-        total,
+        "liveness {group}: dialling {} servers through {} in batches of {} ({} already measured)",
+        to_dial.len(),
         relay.name,
-        BATCH_SIZE
+        BATCH_SIZE,
+        stats.tested
     );
 
-    for (batch_no, chunk) in nodes.chunks(BATCH_SIZE).enumerate() {
+    for (batch_no, chunk) in to_dial.chunks(BATCH_SIZE).enumerate() {
         if tunnel_took_over(conn) {
             stats.aborted = true;
             break;
@@ -290,8 +381,9 @@ async fn probe_group(
             );
         }
 
-        let now = chrono::Utc::now().timestamp();
-        let mut measured: Vec<UnifiedNode> = Vec::with_capacity(targets.len());
+        let batch_start = std::time::Instant::now();
+        let alive_before_batch = stats.alive;
+        let mut pending: Vec<UnifiedNode> = Vec::with_capacity(targets.len());
         for (name, node) in &targets {
             if tunnel_took_over(conn) {
                 stats.aborted = true;
@@ -302,24 +394,68 @@ async fn probe_group(
                 stats.alive += 1;
             }
             stats.tested += 1;
-            measured.push(record_verdict(node, &verdict, now));
+            pending.push(record_verdict(node, &verdict, now));
+            // Publish every dial so the count visibly moves — a dead server
+            // costs about five seconds, so a batch of fifty is minutes of
+            // otherwise silent work. Store only every PERSIST_EVERY dials, and
+            // say so in the beat so the UI reloads the list just then.
+            let persisted = pending.len() >= PERSIST_EVERY && {
+                flush(node_manager, group, &mut pending)
+            };
+            emit_progress(
+                app,
+                &LivenessProgress {
+                    group: group.to_string(),
+                    tested: stats.tested,
+                    total: stats.total,
+                    alive: stats.alive,
+                    running: true,
+                    done: false,
+                    aborted: false,
+                    persisted,
+                },
+            );
         }
+        // One whole batch with no reachable server is not bad luck at fifty
+        // volunteer relays — it is the dial path failing. The core's own log says
+        // which half, and this app's only phone diagnostic channel is its log.
+        let core_tail = if stats.alive == alive_before_batch {
+            lane.tail_log(20)
+        } else {
+            String::new()
+        };
         drop(lane);
 
-        if let Err(e) = node_manager.update_nodes(&measured) {
-            log::warn!("liveness {group}: verdicts not stored: {}", e);
+        if !core_tail.is_empty() {
+            log::warn!(
+                "liveness {group}: batch {} dialled {} servers, none connected — core log tail: {}",
+                batch_no,
+                targets.len(),
+                core_tail
+            );
         }
+
+        let stored = flush(node_manager, group, &mut pending);
         emit_progress(
             app,
             &LivenessProgress {
                 group: group.to_string(),
                 tested: stats.tested,
-                total,
+                total: stats.total,
                 alive: stats.alive,
                 running: true,
                 done: false,
                 aborted: false,
+                persisted: stored,
             },
+        );
+        log::info!(
+            "liveness {group}: batch {} of {} servers in {:.0}s ({}/{} measured)",
+            batch_no,
+            chunk.len(),
+            batch_start.elapsed().as_secs_f64(),
+            stats.tested,
+            stats.total
         );
         if stats.aborted {
             break;
@@ -328,11 +464,34 @@ async fn probe_group(
 
     log::info!(
         "liveness {group}: {}/{} servers reachable{}",
-        stats.tested,
-        total,
+        stats.alive,
+        stats.total,
         if stats.aborted { " (sweep stopped early)" } else { "" }
     );
     Ok(Some(stats))
+}
+
+/// Write the verdicts gathered so far back to the store. Returns whether the
+/// pending set is on disk; a failed write leaves them queued so the next flush
+/// retries them instead of dropping those conclusions.
+fn flush(
+    node_manager: &NodeManager,
+    group: &str,
+    pending: &mut Vec<UnifiedNode>,
+) -> bool {
+    if pending.is_empty() {
+        return true;
+    }
+    match node_manager.update_nodes(pending) {
+        Ok(()) => {
+            pending.clear();
+            true
+        }
+        Err(e) => {
+            log::warn!("liveness {group}: verdicts not stored: {}", e);
+            false
+        }
+    }
 }
 
 /// A probe burst must never compete with a tunnel the user actually opened.
@@ -437,17 +596,47 @@ mod tests {
 
     #[test]
     fn one_sweep_at_a_time_and_a_late_request_is_queued() {
-        let held = claim().expect("the first caller owns the sweep");
+        let held = claim(false).expect("the first caller owns the sweep");
         assert!(!RERUN_REQUESTED.load(Ordering::SeqCst), "nothing queued yet");
 
-        assert!(claim().is_none(), "a second sweep must not open a second lane set");
+        assert!(claim(false).is_none(), "a second sweep must not open a second lane set");
         assert!(
             RERUN_REQUESTED.load(Ordering::SeqCst),
             "the refused caller's lists become the running sweep's job"
         );
 
         drop(held);
-        assert!(claim().is_some(), "releasing the sweep lets the next one in");
+        assert!(claim(true).is_some(), "releasing the sweep lets the next one in");
+        assert!(
+            RERUN_FORCED.swap(false, Ordering::SeqCst),
+            "a forced request survives into the sweep that takes the lock"
+        );
         RERUN_REQUESTED.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn a_recent_verdict_is_believed_and_a_forced_pass_redials_it() {
+        let now = 1_700_000_000;
+        let mut fresh = node("f", "VPNGate", ProtocolType::Openvpn, NodeStatus::Alive);
+        fresh.last_checked = Some(now - 60);
+        let mut stale = node("s", "VPNGate", ProtocolType::Openvpn, NodeStatus::Dead);
+        stale.last_checked = Some(now - VERDICT_TTL_SECS - 1);
+        let never = node("n", "VPNGate", ProtocolType::Openvpn, NodeStatus::Unknown);
+        let rows = vec![fresh, stale, never];
+
+        assert_eq!(
+            stale_candidates(&rows, now, false)
+                .iter()
+                .map(|n| n.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["s", "n"],
+            "刚测过的不再拨一遍,否则每开一次标签页进度就回零,永远测不完"
+        );
+        assert_eq!(
+            stale_candidates(&rows, now, true).len(),
+            rows.len(),
+            "用户点更新节点时,全部重测"
+        );
+        assert_eq!(BATCH_SIZE % PERSIST_EVERY, 0, "a batch ends on a write boundary");
     }
 }

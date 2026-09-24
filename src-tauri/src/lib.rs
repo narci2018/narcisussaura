@@ -591,6 +591,7 @@ async fn fetch_megav_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNode
 async fn fetch_vpngate_nodes(
     app: AppHandle,
     state: State<'_, AppState>,
+    force: Option<bool>,
 ) -> Result<Vec<UnifiedNode>, String> {
     let preferred = state.settings.read().preferred_relay_id.clone();
     let nodes = vpngate_sources::sync(
@@ -600,7 +601,7 @@ async fn fetch_vpngate_nodes(
         preferred.as_deref(),
     )
     .await?;
-    spawn_liveness(&app);
+    spawn_liveness(&app, force.unwrap_or(false));
     Ok(nodes)
 }
 
@@ -613,19 +614,22 @@ async fn fetch_psiphon_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNo
 async fn fetch_residential_nodes(
     app: AppHandle,
     url: Option<String>,
+    force: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Vec<UnifiedNode>, String> {
     let nodes = crate::managers::SpecialSources::fetch_residential_nodes(&state.node_manager, url)
         .await
         .map_err(|e| e.to_string())?;
-    spawn_liveness(&app);
+    spawn_liveness(&app, force.unwrap_or(false));
     Ok(nodes)
 }
 
-/// Dial the freshly listed public servers for real, in the background. A sweep
-/// that is already running is asked to redo the lists instead, so a manual
-/// "更新节点" is never lost and never doubles the work on a phone.
-fn spawn_liveness(app: &AppHandle) {
+/// Dial the freshly listed public servers for real, in the background.
+///
+/// `force` is the user pressing 更新节点: everything gets dialled again. Opening
+/// a tab is not, because a sweep that restarts from zero on every mount of a
+/// 100-server list never finishes (each dead server costs ~5s).
+fn spawn_liveness(app: &AppHandle, force: bool) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let state = handle.state::<AppState>();
@@ -635,6 +639,7 @@ fn spawn_liveness(app: &AppHandle) {
             &state.node_manager,
             &state.connection_manager,
             preferred.as_deref(),
+            force,
         )
         .await
         {
@@ -748,14 +753,17 @@ pub fn run() {
                         }
                         Err(e) => log::warn!("startup: VPNGate list refresh failed: {}", e),
                     }
-                    // Then every public server in those lists gets dialled for
-                    // real through the same relay, batch by batch, so the tabs
-                    // can say 可用 / 不可用 instead of repeating what a list claimed.
+                    // Then the public servers without a recent verdict get dialled
+                    // for real through the same relay, one at a time, so the tabs
+                    // can say 可用 / 不可用 instead of repeating what a list
+                    // claimed. A restart inside the verdict window dials nothing:
+                    // those conclusions are already on disk.
                     match liveness::run_pass(
                         &handle,
                         &state.node_manager,
                         &state.connection_manager,
                         preferred.as_deref(),
+                        false,
                     )
                     .await
                     {

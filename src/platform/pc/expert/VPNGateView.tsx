@@ -1,21 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Shield, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Square } from 'lucide-react';
+import { Shield, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Square } from 'lucide-react';
 import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
-import { UnifiedNode } from '../../../types';
 import { RelayBar } from './RelayBar';
+import { LivenessBadge, LivenessProgressTag, byLiveness } from './liveness';
 
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
 export const VPNGateView: React.FC = () => {
-  const { status, connectedNode, connect, disconnect, testLatency, testingLatencyIds, refreshNodes, nodes, errorMessage, setErrorMessage } = useAppStore();
-  const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'VPNGate'), [nodes]);
-  const [gateNodes, setGateNodes] = useState<UnifiedNode[]>([]);
+  const { status, connectedNode, connect, disconnect, nodes, errorMessage, setErrorMessage, livenessProgress } = useAppStore();
+  // 只用 store 里的节点:后台每测完一批都会 refreshNodes,本地再存一份快照
+  // 就会把"未测"永远留在卡片上。
+  const gateNodes = React.useMemo(() => nodes.filter((n) => n.group === 'VPNGate'), [nodes]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [copiedError, setCopiedError] = useState(false);
-
-  const displayNodes = gateNodes.length > 0 ? gateNodes : storeNodes;
 
   const handleCopyError = () => {
     if (!errorMessage) return;
@@ -27,9 +26,8 @@ export const VPNGateView: React.FC = () => {
   const loadVPNGate = async () => {
     setLoading(true);
     try {
-      const fetched = await api.fetchVPNGateNodes();
-      setGateNodes(fetched);
-      await refreshNodes();
+      // 重新采集会顺带触发一轮真连接测活(后端 spawn_liveness)
+      await api.fetchVPNGateNodes();
     } catch (e) {
       console.error('Failed to load VPNGate nodes:', e);
     } finally {
@@ -41,13 +39,7 @@ export const VPNGateView: React.FC = () => {
     loadVPNGate();
   }, []);
 
-  const handleTestAllPing = async () => {
-    for (const n of displayNodes) {
-      testLatency(n.id);
-    }
-  };
-
-  const filtered = displayNodes.filter((n) => matchNodeKeywords(n, search));
+  const filtered = gateNodes.filter((n) => matchNodeKeywords(n, search)).sort(byLiveness);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#08090d] text-gray-100 overflow-hidden">
@@ -70,16 +62,10 @@ export const VPNGateView: React.FC = () => {
 
         <div className="flex items-center gap-2.5">
           <button
-            onClick={handleTestAllPing}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#171a26] hover:bg-[#202536] border border-[#2b3147] rounded-xl text-xs font-medium text-gray-300 transition-colors"
-          >
-            <Activity className="w-3.5 h-3.5 text-blue-400" />
-            <span>Test Latency</span>
-          </button>
-          <button
             onClick={loadVPNGate}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-blue-600/30"
+            title="重新采集多来源清单,并排队一轮真连接测活"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>{loading ? 'Fetching...' : 'Sync VPNGate'}</span>
@@ -99,8 +85,11 @@ export const VPNGateView: React.FC = () => {
             className="w-full bg-[#131620] border border-[#222738] rounded-xl pl-9 pr-3 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-emerald-500/50"
           />
         </div>
-        <div className="text-xs text-gray-500 font-mono">
-          {filtered.length} relays available
+        <div className="flex items-center gap-4">
+          <LivenessProgressTag progress={livenessProgress['VPNGate']} />
+          <div className="text-xs text-gray-500 font-mono">
+            {filtered.length} relays available
+          </div>
         </div>
       </div>
 
@@ -154,7 +143,6 @@ export const VPNGateView: React.FC = () => {
             {filtered.map((node) => {
               const isConnected = connectedNode?.id === node.id && status === 'connected';
               const isConnecting = connectedNode?.id === node.id && status === 'connecting';
-              const isPinging = testingLatencyIds.includes(node.id);
 
               return (
                 <div
@@ -190,6 +178,7 @@ export const VPNGateView: React.FC = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 my-3">
+                      <LivenessBadge status={node.status} />
                       <span className="px-1.5 py-0.5 bg-[#171b28] text-gray-400 rounded text-[10px] border border-[#23293d]">
                         Public Relay
                       </span>
@@ -202,17 +191,13 @@ export const VPNGateView: React.FC = () => {
                   </div>
 
                   <div className="pt-3 border-t border-[#1c2133] flex items-center justify-between gap-3">
-                    <button
-                      onClick={() => testLatency(node.id)}
-                      disabled={isPinging}
-                      className="flex items-center gap-1.5 text-[11px] font-mono text-gray-400 hover:text-gray-200 transition-colors"
-                      title="Test latency"
+                    <div
+                      className="flex items-center gap-1.5 text-[11px] font-mono text-gray-400"
+                      title="后台经中转真连接测得的往返延迟"
                     >
-                      <Signal className={`w-3.5 h-3.5 ${isPinging ? 'animate-pulse text-amber-400' : 'text-gray-500'}`} />
-                      <span>
-                        {isPinging ? 'Testing...' : node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : 'Ping'}
-                      </span>
-                    </button>
+                      <Signal className={`w-3.5 h-3.5 ${node.latency_ms && node.latency_ms > 0 ? 'text-emerald-400' : 'text-gray-500'}`} />
+                      <span>{node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : '未测'}</span>
+                    </div>
 
                     {isConnected ? (
                       <button

@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Home, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Building2, Square } from 'lucide-react';
+import { Home, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, AlertCircle, X, Copy, Check, Building2, Square } from 'lucide-react';
 import { useAppStore } from '../../../stores/appStore';
-import { UnifiedNode } from '../../../types';
 import { RelayBar } from './RelayBar';
+import { LivenessBadge, LivenessProgressTag, byLiveness } from './liveness';
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
 export const ResidentialView: React.FC = () => {
@@ -11,8 +11,6 @@ export const ResidentialView: React.FC = () => {
     connectedNode,
     connect,
     disconnect,
-    testLatency,
-    testingLatencyIds,
     nodes,
     errorMessage,
     setErrorMessage,
@@ -20,10 +18,12 @@ export const ResidentialView: React.FC = () => {
     residentialSubUrl,
     relayEnabled,
     setRelayEnabled,
+    livenessProgress,
   } = useAppStore();
 
-  const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'Residential'), [nodes]);
-  const [residentialNodes, setResidentialNodes] = useState<UnifiedNode[]>([]);
+  // 只用 store 里的节点:后台每测完一批都会 refreshNodes,本地再存一份快照
+  // 就会把"未测"永远留在卡片上。
+  const residentialNodes = React.useMemo(() => nodes.filter((n) => n.group === 'Residential'), [nodes]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [copiedError, setCopiedError] = useState(false);
@@ -34,8 +34,6 @@ export const ResidentialView: React.FC = () => {
       setRelayEnabled(true);
     }
   }, []);
-
-  const displayNodes = residentialNodes.length > 0 ? residentialNodes : storeNodes;
 
   const handleCopyError = () => {
     if (!errorMessage) return;
@@ -48,10 +46,8 @@ export const ResidentialView: React.FC = () => {
     if (!residentialSubUrl) return;
     setLoading(true);
     try {
-      const fetched = await loadResidentialNodes();
-      if (fetched && fetched.length > 0) {
-        setResidentialNodes(fetched);
-      }
+      // 拉完清单后由后端排一轮真连接测活
+      await loadResidentialNodes();
     } catch (e) {
       console.error('Failed to sync residential nodes:', e);
     } finally {
@@ -60,18 +56,12 @@ export const ResidentialView: React.FC = () => {
   };
 
   useEffect(() => {
-    if (storeNodes.length === 0 && residentialSubUrl) {
+    if (residentialNodes.length === 0 && residentialSubUrl) {
       handleSync();
     }
   }, [residentialSubUrl]);
 
-  const handleTestAllPing = async () => {
-    for (const n of displayNodes) {
-      testLatency(n.id);
-    }
-  };
-
-  const filtered = displayNodes.filter((n) => matchNodeKeywords(n, search));
+  const filtered = residentialNodes.filter((n) => matchNodeKeywords(n, search)).sort(byLiveness);
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#08090d] text-gray-100 overflow-hidden">
@@ -94,16 +84,10 @@ export const ResidentialView: React.FC = () => {
 
         <div className="flex items-center gap-2.5">
           <button
-            onClick={handleTestAllPing}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#171a26] hover:bg-[#202536] border border-[#2b3147] rounded-xl text-xs font-medium text-gray-300 transition-colors"
-          >
-            <Activity className="w-3.5 h-3.5 text-blue-400" />
-            <span>Test Latency</span>
-          </button>
-          <button
             onClick={handleSync}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-amber-600/30"
+            title="重新拉取住宅节点清单,并排队一轮真连接测活"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>{loading ? 'Fetching...' : 'Sync Residential'}</span>
@@ -123,8 +107,11 @@ export const ResidentialView: React.FC = () => {
             className="w-full bg-[#131620] border border-[#222738] rounded-xl pl-9 pr-3 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-amber-500/50"
           />
         </div>
-        <div className="text-xs text-gray-500 font-mono">
-          {filtered.length} residential nodes available
+        <div className="flex items-center gap-4">
+          <LivenessProgressTag progress={livenessProgress['Residential']} />
+          <div className="text-xs text-gray-500 font-mono">
+            {filtered.length} residential nodes available
+          </div>
         </div>
       </div>
 
@@ -178,7 +165,6 @@ export const ResidentialView: React.FC = () => {
             {filtered.map((node) => {
               const isConnected = connectedNode?.id === node.id && status === 'connected';
               const isConnecting = connectedNode?.id === node.id && status === 'connecting';
-              const isPinging = testingLatencyIds.includes(node.id);
               const ispName = (node.config as any)?.isp || node.city || 'Residential ISP';
 
               return (
@@ -215,6 +201,7 @@ export const ResidentialView: React.FC = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 my-3">
+                      <LivenessBadge status={node.status} />
                       <span className="flex items-center gap-1 px-1.5 py-0.5 bg-[#171b28] text-amber-300/90 rounded text-[10px] border border-[#23293d]">
                         <Building2 className="w-3 h-3 text-amber-400" />
                         <span className="max-w-[140px] truncate">{ispName}</span>
@@ -228,17 +215,13 @@ export const ResidentialView: React.FC = () => {
                   </div>
 
                   <div className="pt-3 border-t border-[#1c2133] flex items-center justify-between gap-3">
-                    <button
-                      onClick={() => testLatency(node.id)}
-                      disabled={isPinging}
-                      className="flex items-center gap-1.5 text-[11px] font-mono text-gray-400 hover:text-gray-200 transition-colors"
-                      title="Test latency"
+                    <div
+                      className="flex items-center gap-1.5 text-[11px] font-mono text-gray-400"
+                      title="后台经中转真连接测得的往返延迟"
                     >
-                      <Signal className={`w-3.5 h-3.5 ${isPinging ? 'animate-pulse text-amber-400' : 'text-gray-500'}`} />
-                      <span>
-                        {isPinging ? 'Testing...' : node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : 'Ping'}
-                      </span>
-                    </button>
+                      <Signal className={`w-3.5 h-3.5 ${node.latency_ms && node.latency_ms > 0 ? 'text-emerald-400' : 'text-gray-500'}`} />
+                      <span>{node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : '未测'}</span>
+                    </div>
 
                     {isConnected ? (
                       <button

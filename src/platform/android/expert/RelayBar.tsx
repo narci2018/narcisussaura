@@ -56,7 +56,11 @@ export const RelayBar: React.FC<RelayBarProps> = ({
   };
 
   return (
-    <div className="mx-3 my-2.5 p-3 bg-[#121520]/95 border border-blue-500/25 rounded-2xl flex flex-col justify-between gap-3 shadow-lg shadow-black/20 backdrop-blur-sm">
+    // backdrop-blur below makes this card its own stacking context, so the
+    // popover's z-50 cannot escape it — while open, the CARD itself must lift
+    // above the later-DOM node cards that were covering it (v0.2.103 field
+    // bug). z-40 stays under the global error banner (z-50).
+    <div className={`mx-3 my-2.5 p-3 bg-[#121520]/95 border border-blue-500/25 rounded-2xl flex flex-col justify-between gap-3 shadow-lg shadow-black/20 backdrop-blur-sm ${open ? 'relative z-40' : ''}`}>
       <div className="flex items-start gap-3">
         <div className={`mt-0.5 p-2 rounded-xl flex items-center justify-center transition-colors ${
           relayEnabled ? 'bg-blue-500/15 text-blue-400 border border-blue-500/30' : 'bg-gray-800 text-gray-500 border border-gray-700'

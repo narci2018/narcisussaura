@@ -256,18 +256,42 @@ mod android_only {
             // Wait for the core's mixed/SOCKS port to accept connections (up to
             // 10s). If it never listens, tunrelay would forward into nothing and
             // the bridge check below could only report a misleading "no traffic"
-            // — fail here with the real reason instead.
+            // — fail here with the real reason instead. The core dying is the
+            // common case, and its log line is the actual answer; reporting a dead
+            // core as "the exit node is unusable" sent us chasing the wrong
+            // component for a whole release.
+            let core_log = self.app_data_dir.join("mihomo.log");
             let mut ready = false;
             for _ in 0..40 {
                 if std::net::TcpStream::connect(("127.0.0.1", mixed_port)).is_ok() {
                     ready = true;
                     break;
                 }
+                let exited = {
+                    let mut lock = self.process.lock();
+                    match lock.as_mut().map(|c| c.try_wait()) {
+                        Some(Ok(Some(status))) => {
+                            *lock = None;
+                            Some(status)
+                        }
+                        _ => None,
+                    }
+                };
+                if let Some(status) = exited {
+                    let log_now = std::fs::read_to_string(&core_log).unwrap_or_default();
+                    log::warn!("Android: proxy core exited before listening ({}):\n{}", status, log_now.trim());
+                    return Err(format!(
+                        "[核心已退出] 代理核心未监听端口 {} 就退出了（退出码 {}）：{}",
+                        mixed_port,
+                        status,
+                        Self::brief_log_line(&log_now)
+                    ));
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
             if !ready {
                 return Err(format!(
-                    "[核心端口未就绪] 代理核心未在 10 秒内监听本地端口 {}（核心启动失败或上游握手卡死）",
+                    "[核心端口未就绪] 代理核心 10 秒后仍未监听本地端口 {}（仍在启动中）",
                     mixed_port
                 ));
             }

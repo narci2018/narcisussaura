@@ -71,6 +71,11 @@ pub struct LivenessProgress {
     /// list on this flag rather than on every beat, so a hundred dials do not
     /// mean a hundred full list transfers.
     pub persisted: bool,
+    /// What this round concluded, or why it could not run — in one line the user
+    /// can act on. A sweep that ends with the badge still reading 未测 has to
+    /// say why: silently learning nothing is what made the whole button feel
+    /// pointless in the field (v0.2.107: "要么可用，要么不可用，要么报错，怎么能够静默").
+    pub message: Option<String>,
 }
 
 fn emit_progress(app: &AppHandle, p: &LivenessProgress) {
@@ -87,6 +92,45 @@ fn beat(group: &str, stats: &GroupStats, running: bool, aborted: bool, persisted
         done: !running && stats.tested >= stats.total,
         aborted,
         persisted,
+        message: None,
+    }
+}
+
+/// One core error, shortened for a UI line: the message goes in a label, and the
+/// full text is already in the app log.
+fn brief(e: &str) -> String {
+    let line = e.trim().lines().last().unwrap_or("").trim();
+    const MAX: usize = 120;
+    if line.chars().count() > MAX {
+        format!("{}…", line.chars().take(MAX).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
+/// "；其余 N 个未测" when a sweep stopped early, nothing when it did not.
+fn unmeasured_tail(total: usize, tested: usize) -> String {
+    if tested < total {
+        format!("；其余 {} 个未测", total - tested)
+    } else {
+        String::new()
+    }
+}
+
+/// The last beat of a list this round will not learn anything more about, said
+/// out loud. `total` is what the list holds so the counts stay honest about how
+/// much was skipped.
+fn stopped_beat(group: &str, total: usize, message: impl Into<String>) -> LivenessProgress {
+    LivenessProgress {
+        group: group.to_string(),
+        tested: 0,
+        total,
+        alive: 0,
+        running: false,
+        done: false,
+        aborted: true,
+        persisted: false,
+        message: Some(message.into()),
     }
 }
 
@@ -99,6 +143,7 @@ static IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 /// restarting this one.
 static QUEUED: AtomicU8 = AtomicU8::new(0);
 
+#[derive(Debug)]
 pub struct PassGuard;
 
 impl Drop for PassGuard {
@@ -123,17 +168,30 @@ fn groups_for(scope: Option<&'static str>) -> Vec<&'static str> {
     }
 }
 
-/// Take the sweep, or queue the requested lists behind the one already running.
-fn claim(groups: &[&'static str]) -> Option<PassGuard> {
+/// Take the sweep. Returns `Err` when one already holds the lanes; the requested
+/// lists then join the running sweep instead of being dropped, which is why the
+/// caller must show this message and not just log it — a button that started
+/// nothing looks exactly like a button that found nothing.
+pub fn claim_pass(groups: &[&'static str]) -> Result<PassGuard, String> {
     if IN_PROGRESS.swap(true, Ordering::SeqCst) {
         for group in groups {
             if let Some(bit) = group_bit(group) {
                 QUEUED.fetch_or(bit, Ordering::SeqCst);
             }
         }
-        return None;
+        return Err("测活正在进行中，本轮结束后会补测这份名单".to_string());
     }
-    Some(PassGuard)
+    Ok(PassGuard)
+}
+
+/// Claim for a single-server dial. Nothing gets queued here: the user pointed at
+/// one card, and silently scheduling the whole list behind the running sweep
+/// would measure servers they never asked about while its button sat there.
+fn claim_single() -> Result<PassGuard, String> {
+    if IN_PROGRESS.swap(true, Ordering::SeqCst) {
+        return Err("测活正在进行中，请等待当前一轮结束后再单独测这个节点".to_string());
+    }
+    Ok(PassGuard)
 }
 
 /// Drain the lists that arrived while the sweep was busy.
@@ -183,6 +241,11 @@ struct GroupStats {
     total: usize,
     alive: usize,
     aborted: bool,
+    /// Rows this list holds that a lane cannot dial (non-OpenVPN). Reported so
+    /// "12 个未测" is never mistaken for "12 个待测".
+    skipped: usize,
+    /// Why the sweep stopped, when it did. Becomes the final beat's message.
+    note: Option<String>,
 }
 
 /// The relay, core binary and writable dir a probe lane needs.
@@ -193,18 +256,19 @@ struct LaneSetup {
     relay_name: String,
 }
 
+/// Errors here are shown to the user verbatim (a list that cannot be measured at
+/// all has to say why), so they are written as advice, not as log lines.
 fn prepare_lane(
     app: &AppHandle,
     node_manager: &NodeManager,
     conn: &ConnectionManager,
     preferred_id: Option<&str>,
-    group: &str,
 ) -> Result<LaneSetup, String> {
     let relay = node_manager
         .get_best_relay_node(preferred_id)
-        .ok_or_else(|| format!("liveness {group}: 没有可用的中转节点"))?;
+        .ok_or_else(|| "没有可用的中转节点：测活要经它拨号，请先连接成功一次，或在面板里手动指定一个中转".to_string())?;
     let relay_yaml = ConnectionManager::format_mihomo_relay_proxy(&relay, "relay")
-        .ok_or_else(|| format!("liveness {group}: 中转节点 {} 无法用 mihomo 表达", relay.name))?;
+        .ok_or_else(|| format!("中转节点「{}」的协议无法用于测活，请换一个中转", relay.name))?;
     Ok(LaneSetup {
         binary: conn.locate_binary(app, "mihomo")?,
         dir: app
@@ -216,33 +280,26 @@ fn prepare_lane(
     })
 }
 
-/// Dial every server of one list that has no fresh verdict, publishing as it goes.
+/// Dial every server of one list, publishing as it goes.
 ///
-/// Returns `Err` only when another sweep already holds the lanes; the requested
-/// lists were queued, so they are measured by that sweep instead.
+/// The lanes are already claimed — see [`claim_pass`], which the command does
+/// synchronously so a rejected button reports why instead of logging it in a
+/// spawned task nobody watches.
 pub async fn run_pass(
     app: &AppHandle,
     node_manager: &NodeManager,
     conn: &ConnectionManager,
     preferred_id: Option<&str>,
     scope: Option<&'static str>,
-) -> Result<(), String> {
-    let wanted = groups_for(scope);
-    let _guard = match claim(&wanted) {
-        Some(g) => g,
-        None => return Err("测活正在进行中,请等待当前一轮结束".to_string()),
-    };
-
-    let mut queue = wanted;
+    _guard: PassGuard,
+) {
+    let mut queue = groups_for(scope);
     while !queue.is_empty() {
         let groups = std::mem::take(&mut queue);
         let mut yielded = false;
         for group in groups {
             match probe_group(app, node_manager, conn, preferred_id, group).await {
-                Ok(Some(stats)) => yielded = stats.aborted,
-                // Nothing to probe, or no relay to dial through: no events, so the
-                // list keeps showing 未测 instead of a fabricated verdict.
-                Ok(None) => {}
+                Ok(stats) => yielded = stats.map(|s| s.aborted).unwrap_or(true),
                 Err(e) => log::warn!("liveness {group}: {e}"),
             }
             if yielded {
@@ -258,7 +315,6 @@ pub async fn run_pass(
             break;
         }
     }
-    Ok(())
 }
 
 /// Dial one server the user pointed at, and store its verdict.
@@ -278,12 +334,9 @@ pub async fn measure_one(
     if node.protocol != ProtocolType::Openvpn {
         return Err("只有 OpenVPN 节点支持真连接测活".to_string());
     }
-    let _guard = match claim(&[group]) {
-        Some(g) => g,
-        None => return Err("测活正在进行中,请等待当前一轮结束".to_string()),
-    };
+    let _guard = claim_single()?;
 
-    let setup = prepare_lane(app, node_manager, conn, preferred_id, group)?;
+    let setup = prepare_lane(app, node_manager, conn, preferred_id)?;
     let name = "p0".to_string();
     let blocks = vec![(
         name.clone(),
@@ -317,8 +370,15 @@ pub async fn measure_one(
     Ok(measured)
 }
 
-/// Dial one list through the preferred relay. `Ok(None)` means this group had
-/// nothing to probe or no way to reach the internet through a relay.
+/// Dial one list through the preferred relay, saying out loud what came of it.
+///
+/// Every exit from this function publishes a beat the panel can show: a list with
+/// nothing to dial, a relay that cannot be used, a lane that would not start, and
+/// the finished sweep all end with a sentence, because 未测 with no explanation is
+/// indistinguishable from a button that does nothing.
+///
+/// `Ok(None)` means the dial path itself is dead (no relay, no lane) — the caller
+/// stops rather than retry that per list.
 async fn probe_group(
     app: &AppHandle,
     node_manager: &NodeManager,
@@ -326,20 +386,40 @@ async fn probe_group(
     preferred_id: Option<&str>,
     group: &'static str,
 ) -> Result<Option<GroupStats>, String> {
-    let rows = liveness_candidates(&node_manager.get_all(), group);
+    let all = node_manager.get_all();
+    let rows = liveness_candidates(&all, group);
+    // Rows of this list a lane cannot represent. They keep whatever verdict they
+    // had; the summary says how many, so the count in the panel is explainable.
+    let skipped = all.iter().filter(|n| n.group == group && n.protocol != ProtocolType::Openvpn).count();
     if rows.is_empty() {
-        return Ok(None);
+        let message = if skipped > 0 {
+            format!(
+                "这份名单里 {} 个节点都不是 OpenVPN，真连接测活无法拨号",
+                skipped
+            )
+        } else {
+            "名单是空的：请先点「同步」采集节点，再测活".to_string()
+        };
+        log::info!("liveness {group}: {message}");
+        emit_progress(app, &stopped_beat(group, skipped, message));
+        return Ok(Some(GroupStats {
+            total: 0,
+            skipped,
+            ..Default::default()
+        }));
     }
-    let setup = match prepare_lane(app, node_manager, conn, preferred_id, group) {
+    let setup = match prepare_lane(app, node_manager, conn, preferred_id) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("{e}, 本次跳过");
+            log::warn!("liveness {group}: {e}");
+            emit_progress(app, &stopped_beat(group, rows.len(), e));
             return Ok(None);
         }
     };
 
     let mut stats = GroupStats {
         total: rows.len(),
+        skipped,
         ..Default::default()
     };
     emit_progress(app, &beat(group, &stats, true, false, false));
@@ -351,9 +431,14 @@ async fn probe_group(
     );
 
     let now = chrono::Utc::now().timestamp();
+    let mut rejected = 0usize;
     for (batch_no, chunk) in rows.chunks(BATCH_SIZE).enumerate() {
         if tunnel_took_over(conn) {
             stats.aborted = true;
+            stats.note = Some(format!(
+                "已让路给你正在使用的连接：测了 {}/{} 个，其余未测",
+                stats.tested, stats.total
+            ));
             break;
         }
 
@@ -378,24 +463,36 @@ async fn probe_group(
             Ok(Ok(lane)) => lane,
             Ok(Err(e)) => {
                 // These servers stay Unknown: a core that will not start says
-                // nothing about them.
+                // nothing about them — but it has to say that.
                 log::warn!("liveness {group}: lane {} did not start: {}", index, e);
                 stats.aborted = true;
+                stats.note = Some(format!(
+                    "测活核心未能启动（{}），本轮中止：已测 {}/{} 个，其余未测",
+                    brief(&e),
+                    stats.tested,
+                    stats.total
+                ));
                 break;
             }
             Err(e) => {
                 log::warn!("liveness {group}: lane {} join failed: {}", index, e);
                 stats.aborted = true;
+                stats.note = Some(format!(
+                    "测活任务被系统中断（{}），本轮中止：已测 {}/{} 个，其余未测",
+                    brief(&e.to_string()),
+                    stats.tested,
+                    stats.total
+                ));
                 break;
             }
         };
 
         let accepted = lane.group_members().await;
-        if accepted.len() < targets.len() + 1 {
+        if accepted.len() < targets.len() {
             log::warn!(
-                "liveness {group}: lane {} took {} of {} configs, the rest read as dead",
+                "liveness {group}: lane {} took {} of {} configs, the rest are left 未测",
                 index,
-                accepted.len().saturating_sub(1),
+                accepted.len(),
                 targets.len()
             );
         }
@@ -406,7 +503,17 @@ async fn probe_group(
         for (name, node) in &targets {
             if tunnel_took_over(conn) {
                 stats.aborted = true;
+                stats.note = Some(format!(
+                    "已让路给你正在使用的连接：测了 {}/{} 个，其余未测",
+                    stats.tested, stats.total
+                ));
                 break;
+            }
+            // The core refused this server's OpenVPN config, so nothing was ever
+            // dialled: that is not evidence about the server.
+            if !accepted.iter().any(|m| m == name) {
+                rejected += 1;
+                continue;
             }
             let verdict = lane.test_node(name, PROBE_204_URL).await;
             if verdict.alive {
@@ -457,7 +564,35 @@ async fn probe_group(
         }
     }
 
-    emit_progress(app, &beat(group, &stats, false, stats.aborted, true));
+    let mut final_beat = beat(group, &stats, false, stats.aborted, true);
+    final_beat.message = Some(match stats.note.take() {
+        Some(reason) => reason,
+        None => {
+            let mut summary = format!(
+                "测活完成：{}/{} 个可连通{}",
+                stats.alive,
+                stats.tested,
+                unmeasured_tail(stats.total, stats.tested)
+            );
+            if stats.tested > 0 && stats.alive == 0 {
+                summary.push_str("；整批无一可用，通常是中转或出口链路问题，不是这些服务器都死了");
+            }
+            if rejected > 0 {
+                summary.push_str(&format!(
+                    "；{} 个节点的 OpenVPN 配置被核心拒绝，未判定",
+                    rejected
+                ));
+            }
+            if stats.skipped > 0 {
+                summary.push_str(&format!(
+                    "；{} 个非 OpenVPN 节点不参与真连接测活",
+                    stats.skipped
+                ));
+            }
+            summary
+        }
+    });
+    emit_progress(app, &final_beat);
     log::info!(
         "liveness {group}: {}/{} servers reachable{}",
         stats.alive,
@@ -591,34 +726,73 @@ mod tests {
 
     #[test]
     fn one_sweep_at_a_time_and_a_request_for_another_list_is_queued() {
-        let held = claim(&["VPNGate"]).expect("the first caller owns the sweep");
+        let held = claim_pass(&["VPNGate"]).expect("the first caller owns the sweep");
         assert!(take_queued().is_empty(), "nothing queued yet");
 
         // The other panel has its own button; pressing it mid-sweep must not
-        // restart this one, and must not be dropped either.
-        assert!(claim(&["Residential"]).is_none(), "a second sweep cannot share the lanes");
+        // restart this one, must not be dropped — and must say so out loud,
+        // because a press that quietly did nothing is exactly "点了没反应".
+        let busy = claim_pass(&["Residential"]);
+        assert!(busy.is_err(), "a second sweep cannot share the lanes");
+        assert!(busy.unwrap_err().contains("正在进行中"), "拒绝必须带上原因");
         assert_eq!(take_queued(), vec!["Residential"]);
         assert!(take_queued().is_empty(), "draining clears the request");
 
-        assert!(claim(&["VPNGate", "Residential"]).is_none());
+        assert!(claim_pass(&["VPNGate", "Residential"]).is_err());
         assert_eq!(take_queued(), LIVENESS_GROUPS.to_vec(), "一次排队可以攒下两份名单");
 
+        // A single card asks about one server, so it must not book the whole list
+        // behind the running sweep as a side effect.
         drop(held);
-        assert!(claim(&["VPNGate"]).is_some(), "releasing the sweep lets the next one in");
-        assert_eq!(take_queued(), Vec::<&str>::new());
+        let held_again = claim_single().expect("releasing the sweep lets the next one in");
+        assert!(claim_single().is_err());
+        assert_eq!(take_queued(), Vec::<&str>::new(), "单节点请求不排队");
+        drop(held_again);
+    }
+
+    #[test]
+    fn a_sweep_that_cannot_start_says_why() {
+        let p = stopped_beat("VPNGate", 137, "没有可用的中转节点：测活要经它拨号");
+        assert!(!p.running && p.aborted && !p.done, "这是一条终止播报");
+        assert_eq!(
+            p.message.as_deref(),
+            Some("没有可用的中转节点：测活要经它拨号")
+        );
+        assert_eq!(p.total, 137, "要说清楚有多少个因此没测");
+        assert_eq!(p.tested, 0, "一个都没拨，不能装作测过");
+
+        assert_eq!(unmeasured_tail(100, 30), "；其余 70 个未测");
+        assert_eq!(unmeasured_tail(100, 100), "", "全部测完就不该提未测");
     }
 
     #[test]
     fn the_terminal_beat_says_done_only_when_the_list_is_finished() {
-        let half = GroupStats { tested: 50, total: 100, alive: 9, aborted: false };
+        let half = GroupStats {
+            tested: 50,
+            total: 100,
+            alive: 9,
+            ..Default::default()
+        };
         let running = beat("VPNGate", &half, true, false, true);
         assert!(running.running && !running.done, "还在拨下一批");
+        assert_eq!(running.message, None, "中途每一拍都只报进度");
 
-        let done = GroupStats { tested: 100, total: 100, alive: 19, aborted: false };
+        let done = GroupStats {
+            tested: 100,
+            total: 100,
+            alive: 19,
+            ..Default::default()
+        };
         let stopped = beat("VPNGate", &done, false, false, true);
         assert!(stopped.done && !stopped.aborted);
 
-        let early = GroupStats { tested: 30, total: 100, alive: 4, aborted: true };
+        let early = GroupStats {
+            tested: 30,
+            total: 100,
+            alive: 4,
+            aborted: true,
+            ..Default::default()
+        };
         let yielded = beat("Residential", &early, false, true, true);
         assert!(!yielded.done, "提前结束不等于全部测完");
         assert!(yielded.aborted);

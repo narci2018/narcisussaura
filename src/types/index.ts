@@ -125,6 +125,9 @@ export interface LivenessProgress {
   aborted: boolean;
   // 这批结论是否已写回节点库;只有 true(或 running=false)时才重拉整份列表
   persisted: boolean;
+  // 这一轮的结论或"为什么一个都没测成"。任何一条终止路径都必须带上它:
+  // 满屏"未测"却没有一个字解释,和按钮失灵没有区别。
+  message?: string | null;
 }
 
 

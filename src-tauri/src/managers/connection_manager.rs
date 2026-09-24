@@ -159,7 +159,7 @@ impl ConnectionManager {
                 &node,
                 relay_node.as_ref(),
                 &settings,
-                self.mihomo_geo_rules_usable(),
+                self.mihomo_geo_databases(),
             );
             let config_path = self.app_data_dir.join("current_config.yaml");
             std::fs::write(&config_path, config_str)
@@ -1405,34 +1405,39 @@ r#"  - name: {}
         )
     }
 
-    /// Are mihomo's GEOSITE/GEOIP rules usable at all right now?
+    /// Which of mihomo's two geodatabases are on disk: `(GEOSITE, GEOIP)`.
     ///
-    /// The core resolves them from `geosite.dat`/`geoip.dat` in its data dir, and
-    /// when a file is missing it does not degrade — it downloads it from
+    /// A missing file is not a graceful skip — the core downloads it from
     /// github.com, and in exactly the networks this app exists for that download
     /// stalls ~20s and then exits **fatal**, so the mixed port never listens and
     /// the user is told the exit node is dead (reproduced locally with the
     /// bundled core: `Parse config error: rules[0] [GEOSITE,cn,DIRECT] error:
     /// can't download GeoSite.dat`). Split-routing is worth much less than a
-    /// core that starts, so without the databases the geo rules are left out.
-    fn mihomo_geo_rules_usable(&self) -> bool {
-        let usable = ["geosite.dat", "geoip.dat"]
-            .iter()
-            .all(|f| self.app_data_dir.join(f).is_file());
-        if !usable {
+    /// core that starts, so a rule whose own database is absent is left out.
+    ///
+    /// The two databases are separate files with separate download failures, so
+    /// they are checked separately: GEOSITE rules read `geosite.dat`, GEOIP rules
+    /// read the MMDB (`geoip.metadb`, or the legacy `geoip.dat`).
+    fn mihomo_geo_databases(&self) -> (bool, bool) {
+        let has = |names: &[&str]| names.iter().any(|f| self.app_data_dir.join(f).is_file());
+        let geosite = has(&["geosite.dat"]);
+        let geoip = has(&["geoip.metadb", "geoip.dat"]);
+        if !geosite || !geoip {
             log::info!(
-                "mihomo: geosite.dat/geoip.dat 不在 {}，本次配置跳过 GEOSITE/GEOIP 规则(否则核心会因下载失败而拒绝启动)",
+                "mihomo: 地理库不全({} geosite / {} geoip，目录 {})，本次配置跳过缺库那一类 GEOSITE/GEOIP 规则(否则核心会因下载失败而拒绝启动)",
+                if geosite { "有" } else { "无" },
+                if geoip { "有" } else { "无" },
                 self.app_data_dir.display()
             );
         }
-        usable
+        (geosite, geoip)
     }
 
     fn generate_mihomo_openvpn_config(
         node: &UnifiedNode,
         relay_node: Option<&UnifiedNode>,
         settings: &AppSettings,
-        geo_rules_usable: bool,
+        geo_databases: (bool, bool),
     ) -> String {
         // A relay mihomo cannot express (unhandled protocol) must not leave the
         // openvpn entry pointing at a dialer-proxy that is absent from the config.
@@ -1454,16 +1459,17 @@ r#"  - name: {}
 
         let active_set = settings.get_active_rule_set();
         let mut rules_yaml = String::new();
+        let (geosite_usable, geoip_usable) = geo_databases;
 
         let format_rule = |item: &str, action: &str| -> String {
             let r = item.trim();
             if let Some(cat) = r.strip_prefix("geosite:") {
-                if !geo_rules_usable {
+                if !geosite_usable {
                     return String::new();
                 }
                 format!("  - GEOSITE,{},{}\n", cat, action)
             } else if let Some(cat) = r.strip_prefix("geoip:") {
-                if !geo_rules_usable {
+                if !geoip_usable {
                     return String::new();
                 }
                 format!("  - GEOIP,{},{},no-resolve\n", cat, action)
@@ -1509,6 +1515,16 @@ r#"  - name: {}
         // Fallback rule
         rules_yaml.push_str("  - MATCH,proxy\n");
 
+        // `fallback-filter: geoip: false` is not cosmetic: with `dns.enable: true`
+        // the default filter classifies polluted answers by GeoIP, so the core
+        // demands the MMDB and — when it is absent — downloads it from github.com
+        // before the port ever opens. Measured locally with the shipped core on a
+        // blocked network: 19.4s of nothing, then
+        // `fatal Parse config error: load GeoIP dns fallback filter error, can't
+        // download MMDB`. With the flag off the same config loads in 21ms and the
+        // mixed port listens in under a second, with no geodata on disk at all.
+        // (The probe lanes have always set `dns.enable: false`, which is exactly
+        // why 测活 reported a node 可用 while 连接 to that same node failed.)
         format!(
 r#"mixed-port: {}
 allow-lan: false
@@ -1538,6 +1554,8 @@ dns:
   fallback:
     - 1.1.1.1
     - 8.8.8.8
+  fallback-filter:
+    geoip: false
 
 proxies:
 {}{}
@@ -1888,10 +1906,18 @@ rules:
         if raw.starts_with("[核心已退出]") {
             return raw.to_string();
         }
+        // Both of these are failures of this device's own components — the core
+        // process never opened its local port, or the tunrelay bridge died. In
+        // neither case has a connection attempt reached the exit node, so telling
+        // the user to change nodes is wrong twice over: it sends them hunting
+        // through the list, and it hides the reason the core already printed.
+        // v0.2.107 in the field was exactly this: a missing GeoIP database made
+        // the core stall, and the banner blamed a node that 测活 had just proven
+        // reachable.
         if raw.starts_with("[核心端口未就绪]") || raw.starts_with("[桥接进程退出]") {
             return format!(
-                "[出口节点不可用]\n{} 出口节点的核心未能就绪（启动失败或上游握手卡死）。\n请更换出口节点或更换中转节点。",
-                node_kind
+                "{}\n失败发生在手机本机（核心或桥接没有就绪），尚未向出口节点发起连接，与该节点是否可用无关。请重试一次；若仍然失败，用「拷贝完整日志」反馈。",
+                raw
             );
         }
         match relay_verdict {
@@ -2467,8 +2493,9 @@ mod tests {
 
     /// The core refuses to start at all when a GEOSITE/GEOIP rule cannot be
     /// resolved offline — it downloads the database from github.com, which is the
-    /// one thing this app's networks guarantee will not finish. So the rules have
-    /// to disappear with the databases, not take the tunnel down with them.
+    /// one thing this app's networks guarantee will not finish. So each rule
+    /// category has to disappear with *its own* database, not take the tunnel
+    /// down with them.
     #[test]
     fn geo_rules_are_dropped_when_the_databases_are_absent() {
         let settings = AppSettings::default();
@@ -2478,10 +2505,10 @@ mod tests {
             "默认分流规则必须含 geosite,否则这个测试什么都没测到"
         );
 
-        let with_geo = ConnectionManager::generate_mihomo_openvpn_config(&openvpn_node(), None, &settings, true);
+        let with_geo = ConnectionManager::generate_mihomo_openvpn_config(&openvpn_node(), None, &settings, (true, true));
         assert!(with_geo.contains("GEOSITE,") && with_geo.contains("GEOIP,"));
 
-        let without_geo = ConnectionManager::generate_mihomo_openvpn_config(&openvpn_node(), None, &settings, false);
+        let without_geo = ConnectionManager::generate_mihomo_openvpn_config(&openvpn_node(), None, &settings, (false, false));
         assert!(
             !without_geo.contains("GEOSITE,") && !without_geo.contains("GEOIP,"),
             "{without_geo}"
@@ -2492,5 +2519,50 @@ mod tests {
         );
         assert!(without_geo.contains("type: openvpn"));
         assert!(without_geo.contains("AND,((NETWORK,udp),(DST-PORT,443)),REJECT"));
+    }
+
+    /// The two geodatabases fail independently, so a host that has only one of
+    /// them must keep the rules that database supports.
+    #[test]
+    fn each_geo_rule_category_follows_its_own_database() {
+        let settings = AppSettings::default();
+        let only_geosite = ConnectionManager::generate_mihomo_openvpn_config(
+            &openvpn_node(),
+            None,
+            &settings,
+            (true, false),
+        );
+        assert!(only_geosite.contains("GEOSITE,"), "{only_geosite}");
+        assert!(
+            !only_geosite.contains("GEOIP,"),
+            "geoip 库不在场却留下 GEOIP 规则,核心会卡在下载 geoip.metadb 上"
+        );
+
+        let only_geoip = ConnectionManager::generate_mihomo_openvpn_config(
+            &openvpn_node(),
+            None,
+            &settings,
+            (false, true),
+        );
+        assert!(only_geoip.contains("GEOIP,"), "{only_geoip}");
+        assert!(!only_geoip.contains("GEOSITE,"));
+    }
+
+    /// `dns.enable: true` by itself makes the core load the GeoIP MMDB — the dns
+    /// fallback filter classifies polluted answers with it, and a missing file is
+    /// fetched from github.com at startup, which stalls ~20s and then exits fatal
+    /// before the mixed port opens. That is why a node could read 可用 from the
+    /// probe lanes (which run with dns off) and fail on connect.
+    #[test]
+    fn dns_block_never_depends_on_the_geoip_database() {
+        let settings = AppSettings::default();
+        for databases in [(false, false), (true, true)] {
+            let cfg = ConnectionManager::generate_mihomo_openvpn_config(&openvpn_node(), None, &settings, databases);
+            assert!(cfg.contains("dns:\n  enable: true"), "{cfg}");
+            assert!(
+                cfg.contains("fallback-filter:\n    geoip: false"),
+                "geoip 库随包发布前,dns 必须显式声明 geoip: false: {cfg}"
+            );
+        }
     }
 }

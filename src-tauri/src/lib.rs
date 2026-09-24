@@ -622,13 +622,18 @@ async fn fetch_residential_nodes(
 }
 
 /// Measure a whole public list for real, through the preferred relay.
+///
+/// The lanes are claimed **here**, not inside the spawned task: a press that
+/// starts nothing must come back to the panel as a reason, otherwise the button
+/// appears to have measured a list that is still all 未测.
 #[tauri::command]
 async fn measure_group_nodes(
     app: AppHandle,
     group: String,
 ) -> Result<(), String> {
     let group = liveness::known_group(&group).ok_or("该名单不需要真连接测活")?;
-    spawn_liveness(&app, Some(group));
+    let guard = liveness::claim_pass(&[group])?;
+    spawn_liveness(app, Some(group), guard);
     Ok(())
 }
 
@@ -653,23 +658,21 @@ async fn measure_node(
 /// Dial the listed public servers for real, in the background.
 ///
 /// `scope` names one list; `None` covers every public list. Only a button press
-/// gets here.
-fn spawn_liveness(app: &AppHandle, scope: Option<&'static str>) {
-    let handle = app.clone();
+/// gets here, and it arrives with the lanes already claimed — see
+/// [`measure_group_nodes`] for why the claim happens on the caller's side.
+fn spawn_liveness(app: AppHandle, scope: Option<&'static str>, guard: liveness::PassGuard) {
     tauri::async_runtime::spawn(async move {
-        let state = handle.state::<AppState>();
+        let state = app.state::<AppState>();
         let preferred = state.settings.read().preferred_relay_id.clone();
-        if let Err(e) = liveness::run_pass(
-            &handle,
+        liveness::run_pass(
+            &app,
             &state.node_manager,
             &state.connection_manager,
             preferred.as_deref(),
             scope,
+            guard,
         )
-        .await
-        {
-            log::info!("liveness: {e}");
-        }
+        .await;
     });
 }
 

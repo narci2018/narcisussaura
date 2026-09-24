@@ -170,6 +170,12 @@ impl ConnectionManager {
                 .current_dir(&self.app_data_dir)
                 .stdout(std::process::Stdio::from(log_out))
                 .stderr(std::process::Stdio::from(log_err));
+            // Without -d, mihomo defaults to os.UserConfigDir()/mihomo; on
+            // Android HOME resolves to /sdcard and mkdir fails (v0.2.101 field
+            // error: "can't create config directory /sdcard/.config/mihomo").
+            // Pin the writable app data dir instead.
+            #[cfg(target_os = "android")]
+            cmd.arg("-d").arg(&self.app_data_dir);
             hide_window_std(&mut cmd);
 
             let child = cmd

@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, X, Copy, Check } from 'lucide-react';
+import { AlertCircle, X, Copy, Check, Square } from 'lucide-react';
 import { TitleBar } from './components/TitleBar';
 import { SimpleDashboard } from './components/SimpleMode';
 import { currentProfile } from './platform';
 import { useAppStore } from './stores/appStore';
+import { api } from './services/api';
+import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import './App.css';
 
 const APP_MODE_KEY = 'app_mode';
@@ -18,6 +20,8 @@ export const App: React.FC = () => {
     document.documentElement.dataset.theme = settings.theme || 'dark';
   }, [settings.theme]);
   const [copiedError, setCopiedError] = useState(false);
+  const [copyingLogs, setCopyingLogs] = useState(false);
+  const [copiedLogs, setCopiedLogs] = useState(false);
 
   // Mode: 'simple' (default) or 'expert'
   const [mode, setMode] = useState<'simple' | 'expert'>(() => {
@@ -52,6 +56,26 @@ export const App: React.FC = () => {
     navigator.clipboard.writeText(errorMessage);
     setCopiedError(true);
     setTimeout(() => setCopiedError(false), 2000);
+  };
+
+  const handleCopyFullLogs = async () => {
+    if (copyingLogs) return;
+    setCopyingLogs(true);
+    try {
+      const logs = await api.getFullLogs();
+      const bundle = `设备时间: ${new Date().toISOString()}\n\n${logs}`;
+      try {
+        await writeText(bundle);
+      } catch {
+        navigator.clipboard?.writeText(bundle);
+      }
+      setCopiedLogs(true);
+      setTimeout(() => setCopiedLogs(false), 2500);
+    } catch (e) {
+      setErrorMessage(`读取日志失败: ${e}`);
+    } finally {
+      setCopyingLogs(false);
+    }
   };
 
   // ─── Simple Mode ─────────────────────────────────────────────────────────────
@@ -95,6 +119,14 @@ export const App: React.FC = () => {
                 >
                   {copiedError ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                   <span>{copiedError ? '已拷贝' : '拷贝错误'}</span>
+                </button>
+                <button
+                  onClick={handleCopyFullLogs}
+                  className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg bg-sky-900/50 hover:bg-sky-800/70 text-sky-200 border border-sky-500/40 transition-colors shadow-sm"
+                  title="拷贝 sing-box / mihomo / tunrelay / 崩溃日志全文到剪贴板"
+                >
+                  {copiedLogs ? <Check className="w-3 h-3 text-emerald-400" /> : copyingLogs ? <Square className="w-3 h-3 animate-pulse" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedLogs ? '已复制' : copyingLogs ? '读取中…' : '拷贝完整日志'}</span>
                 </button>
                 <button
                   onClick={() => setErrorMessage(null)}

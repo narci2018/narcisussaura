@@ -265,6 +265,14 @@ impl ConnectionManager {
                     return Err("Connection cancelled by user".to_string());
                 }
                 log::warn!("Internet connectivity verification failed: {}", probe_err);
+                // Before tearing the core down, let mihomo's controller test the
+                // relay outbound on its own — tell the user WHICH hop died
+                // instead of a generic guess.
+                let relay_verdict = if relay_node.is_some() {
+                    Self::probe_relay_via_controller(settings.clash_api_port).await
+                } else {
+                    None
+                };
                 if let Some(mut c) = self.process.lock().take() {
                     let _ = c.kill();
                     let _ = c.wait();
@@ -276,11 +284,23 @@ impl ConnectionManager {
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
 
                 let node_kind = if is_residential { "优质住宅IP" } else { "VPNGate" };
-                return Err(format!(
-                    "外网连通性验证失败：该 {} 节点无法转发国际互联网流量。\n已自动断开以防浏览器无法上网。请切换其他低延迟节点或更换中转节点！\n详细原因: {}",
-                    node_kind,
-                    probe_err
-                ));
+                return Err(match relay_verdict {
+                    Some(false) => format!(
+                        "[中转节点不可用]\n中转节点「{}」已确认无法连通，出口节点尚未验证。\n系统正在自动更换其他中转节点重试；若反复失败请在 Servers 列表中手动更换中转节点。\n详细原因: {}",
+                        relay_node.as_ref().map(|r| r.name.as_str()).unwrap_or(""),
+                        probe_err
+                    ),
+                    Some(true) => format!(
+                        "[出口节点不可用]\n中转节点连通正常，但该 {} 出口节点无法转发国际互联网流量。\n已自动断开以防浏览器无法上网，请切换其他低延迟出口节点。\n详细原因: {}",
+                        node_kind,
+                        probe_err
+                    ),
+                    None => format!(
+                        "[出口节点不可用]\n该 {} 出口节点无法转发国际互联网流量（中转节点状态未能确认，控制接口不可达）。\n已自动断开以防浏览器无法上网，请切换出口节点或更换中转节点。\n详细原因: {}",
+                        node_kind,
+                        probe_err
+                    ),
+                });
             }
 
             if self.connect_generation.load(Ordering::SeqCst) != current_gen {
@@ -382,6 +402,7 @@ impl ConnectionManager {
                 "EstablishTunnelServerAffinityGracePeriodMilliseconds": 300000,
                 "EgressRegion": egress_region
             });
+            let relay_upstream_active = upstream_proxy_url.is_some();
             if let Some(proxy_url) = upstream_proxy_url {
                 psiphon_cfg["UpstreamProxyURL"] = serde_json::json!(proxy_url);
             }
@@ -446,6 +467,14 @@ impl ConnectionManager {
             if !psiphon_ready {
                 let last_log = std::fs::read_to_string(&psiphon_log_path).unwrap_or_default();
                 let snippet = last_log.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+                // While the relay's SOCKS port is still up, run a full CONNECT
+                // handshake through it — this is the only way to tell a dead
+                // relay from a dead Psiphon egress.
+                let relay_ok = if relay_upstream_active {
+                    Self::socks5_tunnel_probe(1828).await
+                } else {
+                    true
+                };
                 if let Some(mut pproc) = self.psiphon_process.lock().take() {
                     let _ = pproc.kill();
                     let _ = pproc.wait();
@@ -458,10 +487,22 @@ impl ConnectionManager {
                 *self.status.lock() = ConnectionStatus::Error;
                 *self.connected_node.lock() = None;
                 let _ = app.emit("core:status-changed", ConnectionStatus::Error);
-                return Err(format!(
-                    "Psiphon 隧道建立超时（未能与出口服务器建立加密连接）。\n建议：如果直连受阻，可在上方中转栏中选择一个低延迟订阅节点作为中转加速，即可 100% 成功建联！\n诊断日志:\n{}",
-                    snippet
-                ));
+                return Err(if relay_upstream_active && !relay_ok {
+                    format!(
+                        "[中转节点不可用]\n为 Psiphon 中继的订阅节点(本地 1828 上游)无法转发流量。\n系统正在自动更换其他中转节点重试；若反复失败请在 Servers 列表中手动更换中转节点。\n诊断日志:\n{}",
+                        snippet
+                    )
+                } else if relay_upstream_active {
+                    format!(
+                        "[出口节点不可用]\n中转链路实测正常，但 Psiphon 出口服务器当前无法建立加密隧道，请稍后重试或更换出口地区。\n诊断日志:\n{}",
+                        snippet
+                    )
+                } else {
+                    format!(
+                        "[出口节点不可用]\nPsiphon 直连未能与出口服务器建立加密连接。若国内直连长期受阻，可开启上方中转栏选择订阅节点中继加速。\n诊断日志:\n{}",
+                        snippet
+                    )
+                });
             }
         }
 
@@ -674,14 +715,40 @@ impl ConnectionManager {
             }
             Self::force_kill_all_cores();
             let _ = PlatformProxy::disable_proxy();
+            // The relay lives inside this core with no per-proxy API, so the
+            // strongest signal available is raw TCP reachability of its server.
+            let relay_dead = match effective_relay {
+                Some(r) => !Self::tcp_reachable(&r.address, r.port).await,
+                None => false,
+            };
             *self.status.lock() = ConnectionStatus::Error;
             *self.connected_node.lock() = None;
             let _ = app.emit("core:status-changed", ConnectionStatus::Error);
 
-            return Err(format!(
-                "外网连通性验证失败：该节点虽然能建立本地传输通道，但无法转发国际互联网流量（数据包被 GFW 阻断或节点失效）。\n已自动断开以防浏览器无法上网。请切换其他低延迟的节点！\n详细原因: {}",
-                probe_err
-            ));
+            let exit_kind = match node.protocol {
+                crate::models::ProtocolType::Psiphon => "Psiphon 出口",
+                crate::models::ProtocolType::Masque => "MASQUE 出口",
+                _ => "出口",
+            };
+            return Err(if relay_dead {
+                format!(
+                    "[中转节点不可用]\n中转节点「{}」服务器 TCP 不可达，流量无法出境。\n系统正在自动更换其他中转节点重试；若反复失败请在 Servers 列表中手动更换中转节点。\n详细原因: {}",
+                    effective_relay.map(|r| r.name.as_str()).unwrap_or(""),
+                    probe_err
+                )
+            } else if effective_relay.is_some() {
+                format!(
+                    "[出口节点不可用]\n中转节点服务器可达，但该{}节点无法转发国际互联网流量（若中转代理层异常请更换中转节点）。\n已自动断开以防浏览器无法上网，请切换其他低延迟节点！\n详细原因: {}",
+                    exit_kind,
+                    probe_err
+                )
+            } else {
+                format!(
+                    "[出口节点不可用]\n该{}节点能建立本地传输通道，但无法转发国际互联网流量（节点失效或入口被阻断）。\n已自动断开以防浏览器无法上网，请切换其他低延迟节点！\n详细原因: {}",
+                    exit_kind,
+                    probe_err
+                )
+            });
         }
 
         if self.connect_generation.load(Ordering::SeqCst) != current_gen {
@@ -1604,6 +1671,82 @@ rules:
             "端到端测试超时：数据包无法在预定时限内到达国际互联网目标（总时限 {}s，{}）",
             cap_secs, last_err
         ))
+    }
+
+    /// Ask mihomo's external controller to test the "relay" outbound on its
+    /// own, so a failed end-to-end probe can be attributed to the relay or the
+    /// exit node instead of a generic guess. Some(true)=relay OK,
+    /// Some(false)=relay dead, None=unknown (controller unreachable or the
+    /// config has no "relay" proxy, e.g. unsupported relay protocol).
+    async fn probe_relay_via_controller(clash_api_port: u16) -> Option<bool> {
+        let url = format!(
+            "http://127.0.0.1:{}/proxies/relay/delay?url=https%3A%2F%2Fwww.gstatic.com%2Fgenerate_204&timeout=8000",
+            clash_api_port
+        );
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(12))
+            .build()
+            .ok()?;
+        let resp = client.get(&url).send().await.ok()?;
+        match resp.status().as_u16() {
+            200 => Some(true),
+            400 | 502 => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Full SOCKS5 CONNECT handshake through a local SOCKS port (e.g. the
+    /// psiphon upstream relay on 1828). Returns true only when the relay
+    /// actually tunnels a TCP connection to an international target.
+    async fn socks5_tunnel_probe(port: u16) -> bool {
+        tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+            let mut s = match std::net::TcpStream::connect_timeout(
+                &addr,
+                std::time::Duration::from_secs(3),
+            ) {
+                Ok(s) => s,
+                Err(_) => return false,
+            };
+            let dur = std::time::Duration::from_secs(8);
+            let _ = s.set_read_timeout(Some(dur));
+            let _ = s.set_write_timeout(Some(dur));
+            if s.write_all(&[5, 1, 0]).is_err() {
+                return false;
+            }
+            let mut hello = [0u8; 2];
+            if s.read_exact(&mut hello).is_err() || hello[0] != 5 || hello[1] != 0 {
+                return false;
+            }
+            let host = b"cp.cloudflare.com";
+            let mut req = vec![5u8, 1, 0, 3, host.len() as u8];
+            req.extend_from_slice(host);
+            req.extend_from_slice(&443u16.to_be_bytes());
+            if s.write_all(&req).is_err() {
+                return false;
+            }
+            let mut rep = [0u8; 10];
+            if s.read_exact(&mut rep).is_err() {
+                return false;
+            }
+            rep[0] == 5 && rep[1] == 0
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    /// Bare TCP reachability of a node's server:port — used for the sing-box
+    /// chained path where the relay lives inside the core and has no per-proxy
+    /// API to test.
+    async fn tcp_reachable(addr: &str, port: u16) -> bool {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            tokio::net::TcpStream::connect((addr, port)),
+        )
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false)
     }
 
     /// Pin smart-group selector members one by one via the Clash API and probe

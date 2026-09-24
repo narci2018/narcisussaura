@@ -402,12 +402,58 @@ export const useAppStore = create<AppStore>((set, get) => ({
     } catch (e: any) {
       if (connectSeq !== currentConnectSeq) return;
       console.error('Connect failed:', e);
-      const errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
+      let errStr = typeof e === 'string' ? e : (e?.message || JSON.stringify(e));
       if (errStr.includes('cancelled') || errStr.includes('abort') || errStr.includes('终止')) {
         set({ status: 'disconnected', connectedNode: null });
-      } else {
-        set({ status: 'error', errorMessage: errStr });
+        return;
       }
+      // Relay-side failure ([中转节点不可用], tagged by the Rust probe): walk
+      // through the other relay candidates before surfacing an error — the
+      // exit node was never even tested, so giving up here wastes a working
+      // subscription node further down the latency ranking.
+      if (errStr.includes('[中转节点不可用]') && relayParam !== 'none') {
+        let candidates: typeof state.nodes = [];
+        try {
+          candidates = await api.getRelayCandidates();
+        } catch {}
+        if (connectSeq !== currentConnectSeq) return;
+        const failedId = relayParam !== 'auto' ? relayParam : candidates[0]?.id;
+        const queue = candidates.filter((c) => c.id !== failedId).slice(0, 4);
+        for (const cand of queue) {
+          set({ status: 'connecting', tunnelStage: null });
+          try {
+            await api.connect(targetId, cand.id);
+            if (connectSeq !== currentConnectSeq) return;
+            const connected = get().nodes.find((n) => n.id === targetId) || connectingNode;
+            set({
+              status: 'connected',
+              connectedNode: connected,
+              selectedNodeId: targetId,
+              connectedChainId: null,
+              selectedRelayNodeId: cand.id,
+            });
+            return;
+          } catch (e2: any) {
+            if (connectSeq !== currentConnectSeq) return;
+            const s2 = typeof e2 === 'string' ? e2 : (e2?.message || JSON.stringify(e2));
+            if (s2.includes('cancelled') || s2.includes('abort') || s2.includes('终止')) {
+              set({ status: 'disconnected', connectedNode: null });
+              return;
+            }
+            if (!s2.includes('[中转节点不可用]')) {
+              set({ status: 'error', errorMessage: s2 });
+              return;
+            }
+            errStr = s2;
+          }
+        }
+        set({
+          status: 'error',
+          errorMessage: `已自动尝试 ${queue.length + 1} 个中转节点，均无法连通，没有可用中转节点。\n请在 Servers 列表确认订阅节点状态，或稍后重试。\n最后一次诊断: ${errStr}`,
+        });
+        return;
+      }
+      set({ status: 'error', errorMessage: errStr });
     }
   },
 

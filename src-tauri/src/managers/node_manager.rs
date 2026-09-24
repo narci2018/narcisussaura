@@ -13,6 +13,17 @@ pub struct NodeManager {
     data_path: PathBuf,
 }
 
+/// Whether a group sync may forget the servers that are no longer listed.
+///
+/// `DropMissing` is the normal case: one authoritative dump covers the whole
+/// group. `KeepMissing` is for a partial source — a mirror that publishes a
+/// slice must not delete the rest of the list every time the tab is opened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupPrune {
+    DropMissing,
+    KeepMissing,
+}
+
 impl NodeManager {
     pub fn new(app_data_dir: &Path) -> Self {
         let data_path = app_data_dir.join("nodes.json");
@@ -579,6 +590,58 @@ impl NodeManager {
         Ok(())
     }
 
+    /// Swap a group for a freshly built list in one write.
+    ///
+    /// A network source that drops a server must drop it here too under
+    /// `DropMissing`: servers that fell out of the list would otherwise sit in
+    /// the group forever and be dialled by every later liveness pass. What the
+    /// new list repeats keeps the old record's favourite flag and its
+    /// measurements, so a resync does not wipe the user's stars or make every
+    /// row read "未测" again.
+    pub fn replace_group(
+        &self,
+        group: &str,
+        nodes: Vec<UnifiedNode>,
+        prune: GroupPrune,
+    ) -> Result<Vec<UnifiedNode>, String> {
+        let mut lock = self.nodes.write();
+        let carried: Vec<UnifiedNode> = lock
+            .iter()
+            .filter(|n| n.group == group)
+            .cloned()
+            .collect();
+        if prune == GroupPrune::DropMissing {
+            lock.retain(|n| n.group != group);
+        } else {
+            let incoming: Vec<String> = nodes.iter().map(|n| n.id.clone()).collect();
+            // Keep everything the new list does not mention; overwrite only what
+            // it repeats.
+            lock.retain(|n| n.group != group || !incoming.contains(&n.id));
+        }
+
+        let merged: Vec<UnifiedNode> = nodes
+            .into_iter()
+            .map(|mut node| {
+                if let Some(old) = carried.iter().find(|o| o.id == node.id) {
+                    node.favorite = node.favorite || old.favorite;
+                    if node.latency_ms.is_none() {
+                        node.latency_ms = old.latency_ms;
+                        node.speed_bps = old.speed_bps;
+                        node.last_checked = old.last_checked;
+                        node.status = old.status.clone();
+                    }
+                }
+                node
+            })
+            .collect();
+        lock.extend(merged.iter().cloned());
+        let group_now: Vec<UnifiedNode> =
+            lock.iter().filter(|n| n.group == group).cloned().collect();
+        drop(lock);
+        self.save()?;
+        Ok(group_now)
+    }
+
     pub fn update_latency(&self, id: &str, latency: Option<i64>) {
         let mut lock = self.nodes.write();
         if let Some(node) = lock.iter_mut().find(|n| n.id == id) {
@@ -1022,5 +1085,94 @@ mod tests {
         assert_eq!(node.config["security"], "tls");
         assert_eq!(node.config["fingerprint"], "chrome");
         assert_eq!(node.config["ech"], "cloudflare-ech.com");
+    }
+
+    fn group_node(group: &str, id: &str, status: NodeStatus, latency: Option<i64>) -> UnifiedNode {
+        UnifiedNode {
+            id: id.to_string(),
+            name: id.to_string(),
+            protocol: ProtocolType::Openvpn,
+            address: "example.com".to_string(),
+            port: 443,
+            country_code: "JP".to_string(),
+            country_name: "Japan".to_string(),
+            city: String::new(),
+            group: group.to_string(),
+            tags: vec![],
+            favorite: false,
+            latency_ms: latency,
+            speed_bps: None,
+            last_checked: None,
+            status,
+            config: json!({}),
+        }
+    }
+
+    #[test]
+    fn replacing_a_group_prunes_gone_servers_and_keeps_measured_ones() {
+        let dir = std::env::temp_dir().join(format!("aura-nm-replace-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manager = NodeManager::new(&dir);
+
+        let measured = group_node("VPNGate", "keep-443", NodeStatus::Alive, Some(123));
+        let stale = group_node("VPNGate", "gone-443", NodeStatus::Dead, None);
+        let untouched = group_node("Residential", "res-1", NodeStatus::Unknown, None);
+        manager.add_node(measured.clone()).unwrap();
+        manager.add_node(stale).unwrap();
+        manager.add_node(untouched.clone()).unwrap();
+
+        // 重新采集:同一台服务器带着默认值回来,掉出来源的那台不在列表里
+        let mut fresh = measured.clone();
+        fresh.favorite = true;
+        fresh.status = NodeStatus::Unknown;
+        fresh.latency_ms = None;
+        let merged = manager
+            .replace_group(
+                "VPNGate",
+                vec![
+                    fresh,
+                    group_node("VPNGate", "new-80", NodeStatus::Unknown, None),
+                ],
+                GroupPrune::DropMissing,
+            )
+            .unwrap();
+
+        let ids: Vec<String> = manager.get_all().into_iter().map(|n| n.id).collect();
+        assert!(!ids.iter().any(|id| id.ends_with("gone-443")), "掉出来源的节点必须清掉");
+        assert!(ids.contains(&untouched.id), "别的组不受影响");
+        assert_eq!(merged.len(), 2, "返回的是这一组现在的情况");
+
+        let kept = merged.iter().find(|n| n.id.ends_with("keep-443")).expect("kept node");
+        assert_eq!(kept.latency_ms, Some(123), "重同步不该把测活结果抹平成未测");
+        assert_eq!(kept.status, NodeStatus::Alive);
+        assert!(kept.favorite, "新列表没有星标,旧的该保留");
+
+        // 部分来源(镜像只给了几台):绝不能把没提到的服务器删掉
+        let partial = manager
+            .replace_group(
+                "VPNGate",
+                vec![group_node("VPNGate", "mirror-only-443", NodeStatus::Unknown, None)],
+                GroupPrune::KeepMissing,
+            )
+            .unwrap();
+        let after: Vec<String> = manager.get_all().into_iter().map(|n| n.id).collect();
+        assert!(after.iter().any(|id| id.ends_with("new-80")), "缺信息时宁可不删");
+        assert_eq!(partial.len(), 3, "keep-443 + new-80 + 镜像那台");
+
+        // 同一批节点重复写入不能变成重复行
+        let again = manager
+            .replace_group(
+                "VPNGate",
+                vec![
+                    group_node("VPNGate", "mirror-only-443", NodeStatus::Unknown, None),
+                    group_node("VPNGate", "new-80", NodeStatus::Unknown, None),
+                ],
+                GroupPrune::KeepMissing,
+            )
+            .unwrap();
+        assert_eq!(again.len(), 3, "重写已有节点是覆盖,不是追加");
+
+        drop(manager);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -8,6 +8,7 @@ pub mod inspector_manager;
 pub mod lane_core;
 pub mod relay_selector;
 pub mod url_fallback;
+pub mod vpngate_sources;
 
 pub use chain_manager::ChainManager;
 pub use connection_manager::ConnectionManager;

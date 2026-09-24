@@ -69,6 +69,10 @@ export const api = {
 
   rankRelays: () => invoke<RelayRanking | null>('rank_relays'),
 
+  onNodesUpdated: (callback: (count: number) => void): Promise<UnlistenFn> => {
+    return listen<number>('nodes:updated', (event) => callback(event.payload));
+  },
+
   onRelayPreferred: (callback: (ranking: RelayRanking) => void): Promise<UnlistenFn> => {
     return listen<RelayRanking>('relay:preferred', (event) => callback(event.payload));
   },

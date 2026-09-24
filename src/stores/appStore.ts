@@ -359,6 +359,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         get().fetchRelayCandidates().catch(() => {});
       }).catch(() => {});
 
+      // 后台采集/测活写回的节点列表(启动流水线会分批发这个)
+      api.onNodesUpdated(() => {
+        get().refreshNodes().catch(() => {});
+      }).catch(() => {});
+
       // Surface a captured crash from the previous run (Android only; the
       // backend deletes the log after reading so it shows exactly once).
       api.getCrashReport().then((report) => {

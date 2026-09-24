@@ -31,6 +31,14 @@ use crate::platform::hide_window_std;
 
 /// Deliberately far from the connect path's 2080/9090 and the inspector's 30000+.
 const LANE_PORT_BASE: u16 = 21980;
+
+/// Lane indices are a port allocation, so the jobs that overlap in time must
+/// never share one: 0 is the relay ranking, 1 fetches node lists through the
+/// best relay, and the liveness batches start at 2.
+pub const LANE_RELAY_RANKING: usize = 0;
+pub const LANE_LIST_FETCH: usize = 1;
+pub const LANE_LIVENESS_FIRST: usize = 2;
+
 /// One openvpn handshake that never completes costs the whole batch this much.
 pub const NODE_DIAL_TIMEOUT: Duration = Duration::from_secs(6);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);

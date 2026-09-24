@@ -27,8 +27,8 @@ use crate::models::{NodeStatus, UnifiedNode};
 pub const RANK_LIMIT: usize = 10;
 /// Of the measured candidates, the quickest few also get a bandwidth sample.
 pub const SPEED_TOP: usize = 3;
-/// Ranking owns lane 0; the node-liveness lanes use 1 and up.
-const RANK_LANE_INDEX: usize = 0;
+/// Ranking owns lane 0 (the index allocation lives in `lane_core`).
+const RANK_LANE_INDEX: usize = crate::managers::lane_core::LANE_RELAY_RANKING;
 
 /// One ranking at a time: they bind a fixed port pair, and a second concurrent
 /// pass would just measure the same candidates twice on a phone.

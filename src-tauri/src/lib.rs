@@ -3,7 +3,7 @@ pub mod managers;
 pub mod models;
 pub mod platform;
 
-use crate::managers::{relay_selector, ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};
+use crate::managers::{relay_selector, vpngate_sources, ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};
 use crate::models::{AppSettings, ConnectionStatus, ProxyChain, Subscription, UnifiedNode};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -220,11 +220,12 @@ async fn get_relay_candidates(state: State<'_, AppState>) -> Result<Vec<UnifiedN
 
 /// Remember who won the relay ranking and tell the UI. Shared by the startup
 /// job and the explicit command, because both must leave the same state behind.
+/// Returns the winner's id so callers can hop the next request through it.
 fn store_preferred_relay(
     app: &AppHandle,
     state: &AppState,
     ranking: &relay_selector::RelayRanking,
-) {
+) -> Option<String> {
     if let Some(id) = &ranking.preferred_id {
         let snapshot = {
             let mut settings = state.settings.write();
@@ -238,6 +239,7 @@ fn store_preferred_relay(
         }
     }
     relay_selector::emit_ranking(app, ranking);
+    ranking.preferred_id.clone()
 }
 
 /// Dial the relay shortlist for real and remember the winner, so that every
@@ -583,9 +585,21 @@ async fn fetch_megav_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNode
     crate::managers::SpecialSources::fetch_megav_nodes(&state.node_manager).await.map_err(|e| e.to_string())
 }
 
+/// Rebuild the VPNGate list from every source (mirror direct, official endpoints
+/// through the preferred relay) and publish it.
 #[tauri::command]
-async fn fetch_vpngate_nodes(state: State<'_, AppState>) -> Result<Vec<UnifiedNode>, String> {
-    crate::managers::SpecialSources::fetch_vpngate_nodes(&state.node_manager).await.map_err(|e| e.to_string())
+async fn fetch_vpngate_nodes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Vec<UnifiedNode>, String> {
+    let preferred = state.settings.read().preferred_relay_id.clone();
+    vpngate_sources::sync(
+        &app,
+        &state.node_manager,
+        &state.connection_manager,
+        preferred.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -672,23 +686,36 @@ pub fn run() {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    let ranking = {
-                        let state = handle.state::<AppState>();
-                        let candidates = state.node_manager.get_relay_candidates();
-                        relay_selector::select_preferred_relay(
-                            &handle,
-                            &state.node_manager,
-                            &state.connection_manager,
-                            candidates,
-                        )
-                        .await
-                    };
-                    match ranking {
-                        Ok(ranking) => {
-                            let state = handle.state::<AppState>();
-                            store_preferred_relay(&handle, &state, &ranking);
+                    let state = handle.state::<AppState>();
+                    let candidates = state.node_manager.get_relay_candidates();
+                    let ranking = relay_selector::select_preferred_relay(
+                        &handle,
+                        &state.node_manager,
+                        &state.connection_manager,
+                        candidates,
+                    )
+                    .await;
+                    let preferred = match ranking {
+                        Ok(ranking) => store_preferred_relay(&handle, &state, &ranking),
+                        Err(e) => {
+                            log::warn!("startup relay ranking did not run: {}", e);
+                            state.settings.read().preferred_relay_id.clone()
                         }
-                        Err(e) => log::warn!("startup relay ranking did not run: {}", e),
+                    };
+                    // The official VPNGate lists are only reachable through that
+                    // relay, so they are pulled immediately behind it.
+                    match vpngate_sources::sync(
+                        &handle,
+                        &state.node_manager,
+                        &state.connection_manager,
+                        preferred.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(nodes) => {
+                            log::info!("startup: VPNGate list refreshed to {} servers", nodes.len())
+                        }
+                        Err(e) => log::warn!("startup: VPNGate list refresh failed: {}", e),
                     }
                 });
             }

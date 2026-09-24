@@ -1101,21 +1101,24 @@ impl ConnectionManager {
         let _ = PlatformProxy::disable_proxy();
     }
 
-    fn format_mihomo_relay_proxy(relay: &UnifiedNode) -> Option<String> {
+    /// One relay proxy entry at two-space indent, named `name`. The connect path
+    /// always calls it `relay` (the openvpn entry points at it with dialer-proxy);
+    /// the ranking lane puts many candidates in one config, so it names them.
+    pub(crate) fn format_mihomo_relay_proxy(relay: &UnifiedNode, name: &str) -> Option<String> {
         let conf = &relay.config;
         match relay.protocol {
             crate::models::ProtocolType::Shadowsocks => {
                 let method = conf.get("method").and_then(|v| v.as_str()).unwrap_or("chacha20-ietf-poly1305");
                 let password = conf.get("password").and_then(|v| v.as_str()).unwrap_or_default();
                 Some(format!(
-r#"  - name: relay
+r#"  - name: {}
     type: ss
     server: {}
     port: {}
     cipher: {}
     password: "{}"
     udp: true"#,
-                    relay.address, relay.port, method, password
+                    name, relay.address, relay.port, method, password
                 ))
             }
             crate::models::ProtocolType::Trojan => {
@@ -1123,7 +1126,7 @@ r#"  - name: relay
                 let sni = conf.get("sni").and_then(|v| v.as_str()).unwrap_or(&relay.address);
                 let network = conf.get("network").and_then(|v| v.as_str()).unwrap_or("tcp");
                 let mut s = format!(
-r#"  - name: relay
+r#"  - name: {}
     type: trojan
     server: {}
     port: {}
@@ -1132,7 +1135,7 @@ r#"  - name: relay
     sni: {}
     skip-cert-verify: true
     network: {}"#,
-                    relay.address, relay.port, password, sni, network
+                    name, relay.address, relay.port, password, sni, network
                 );
                 if network == "ws" {
                     let path = conf.get("path").and_then(|v| v.as_str()).unwrap_or("/");
@@ -1159,14 +1162,14 @@ r#"
                 let fp = conf.get("fingerprint").and_then(|v| v.as_str()).unwrap_or("chrome");
 
                 let mut s = format!(
-r#"  - name: relay
+r#"  - name: {}
     type: vless
     server: {}
     port: {}
     uuid: "{}"
     network: {}
     udp: true"#,
-                    relay.address, relay.port, uuid, network
+                    name, relay.address, relay.port, uuid, network
                 );
                 if !flow.is_empty() {
                     s.push_str(&format!("\n    flow: {}", flow));
@@ -1216,7 +1219,7 @@ r#"
                 let sni = conf.get("sni").and_then(|v| v.as_str()).unwrap_or(&relay.address);
 
                 let mut s = format!(
-r#"  - name: relay
+r#"  - name: {}
     type: vmess
     server: {}
     port: {}
@@ -1225,7 +1228,7 @@ r#"  - name: relay
     cipher: {}
     udp: true
     network: {}"#,
-                    relay.address, relay.port, uuid, alter_id, cipher, network
+                    name, relay.address, relay.port, uuid, alter_id, cipher, network
                 );
                 if is_tls {
                     s.push_str(&format!(
@@ -1254,7 +1257,7 @@ r#"
                 let password = conf.get("password").and_then(|v| v.as_str()).unwrap_or_default();
                 let sni = conf.get("sni").and_then(|v| v.as_str()).unwrap_or(&relay.address);
                 Some(format!(
-r#"  - name: relay
+r#"  - name: {}
     type: hysteria2
     server: {}
     port: {}
@@ -1262,18 +1265,18 @@ r#"  - name: relay
     sni: {}
     skip-cert-verify: true
     udp: true"#,
-                    relay.address, relay.port, password, sni
+                    name, relay.address, relay.port, password, sni
                 ))
             }
             crate::models::ProtocolType::Socks5 => {
                 let user = conf.get("username").and_then(|v| v.as_str()).unwrap_or_default();
                 let pass = conf.get("password").and_then(|v| v.as_str()).unwrap_or_default();
                 let mut s = format!(
-r#"  - name: relay
+r#"  - name: {}
     type: socks5
     server: {}
     port: {}"#,
-                    relay.address, relay.port
+                    name, relay.address, relay.port
                 );
                 if !user.is_empty() {
                     s.push_str(&format!("\n    username: \"{}\"\n    password: \"{}\"", user, pass));
@@ -1284,11 +1287,11 @@ r#"  - name: relay
                 let user = conf.get("username").and_then(|v| v.as_str()).unwrap_or_default();
                 let pass = conf.get("password").and_then(|v| v.as_str()).unwrap_or_default();
                 let mut s = format!(
-r#"  - name: relay
+r#"  - name: {}
     type: http
     server: {}
     port: {}"#,
-                    relay.address, relay.port
+                    name, relay.address, relay.port
                 );
                 if !user.is_empty() {
                     s.push_str(&format!("\n    username: \"{}\"\n    password: \"{}\"", user, pass));
@@ -1299,29 +1302,24 @@ r#"  - name: relay
         }
     }
 
-    fn generate_mihomo_openvpn_config(
+    /// One `type: openvpn` proxy entry at two-space indent, named `name`. Both the
+    /// single-node connect config and the multi-node background probe lanes need this
+    /// shape. `dialer_proxy` chains the entry behind a relay proxy already present in
+    /// the same config; SoftEther's handshake only survives that hop over TCP, so a
+    /// relay forces `proto: tcp`.
+    pub(crate) fn mihomo_openvpn_proxy_block(
         node: &UnifiedNode,
-        relay_node: Option<&UnifiedNode>,
-        settings: &AppSettings,
+        name: &str,
+        dialer_proxy: Option<&str>,
     ) -> String {
         let conf = &node.config;
-        let proto = if relay_node.is_some() {
-            "tcp"
+        let proto = if dialer_proxy.is_some() {
+            "tcp".to_string()
         } else {
-            conf.get("proto").and_then(|v| v.as_str()).unwrap_or("tcp")
+            conf.get("proto").and_then(|v| v.as_str()).unwrap_or("tcp").to_string()
         };
         let cipher = conf.get("cipher").and_then(|v| v.as_str()).unwrap_or("AES-128-CBC");
         let auth = conf.get("auth").and_then(|v| v.as_str()).unwrap_or("SHA1");
-
-        let (relay_block, dialer_proxy_line) = if let Some(relay) = relay_node {
-            if let Some(r_yaml) = Self::format_mihomo_relay_proxy(relay) {
-                (format!("{}\n", r_yaml), "    dialer-proxy: relay\n".to_string())
-            } else {
-                (String::new(), String::new())
-            }
-        } else {
-            (String::new(), String::new())
-        };
 
         let block = |val: &str, indent: usize| -> String {
             let sp = " ".repeat(indent);
@@ -1365,6 +1363,56 @@ r#"  - name: relay
         } else {
             String::new()
         };
+
+        let dialer_line = match dialer_proxy {
+            Some(d) => format!("    dialer-proxy: {}\n", d),
+            None => String::new(),
+        };
+
+        format!(
+r#"  - name: {}
+    type: openvpn
+    server: {}
+    port: {}
+    proto: {}
+{}    udp: true
+    username: vpn
+    password: vpn
+    cipher: {}
+    auth: {}
+{}
+{}
+{}
+"#,
+            name,
+            node.address,
+            node.port,
+            proto,
+            dialer_line,
+            cipher,
+            auth,
+            ca_block.trim_end(),
+            cert_block.trim_end(),
+            key_block.trim_end()
+        )
+    }
+
+    fn generate_mihomo_openvpn_config(
+        node: &UnifiedNode,
+        relay_node: Option<&UnifiedNode>,
+        settings: &AppSettings,
+    ) -> String {
+        // A relay mihomo cannot express (unhandled protocol) must not leave the
+        // openvpn entry pointing at a dialer-proxy that is absent from the config.
+        let relay_block = match relay_node.and_then(|r| Self::format_mihomo_relay_proxy(r, "relay")) {
+            Some(yaml) => format!("{}\n", yaml),
+            None => String::new(),
+        };
+        let proxy_block = Self::mihomo_openvpn_proxy_block(
+            node,
+            "proxy",
+            if relay_block.is_empty() { None } else { Some("relay") },
+        );
 
         let mihomo_mode = match settings.routing_mode.as_str() {
             "global" => "global",
@@ -1454,19 +1502,7 @@ dns:
     - 8.8.8.8
 
 proxies:
-{}  - name: proxy
-    type: openvpn
-    server: {}
-    port: {}
-    proto: {}
-{}    udp: true
-    username: vpn
-    password: vpn
-    cipher: {}
-    auth: {}
-{}
-{}
-{}
+{}{}
 
 rules:
 {}"#,
@@ -1474,15 +1510,7 @@ rules:
             mihomo_mode,
             settings.clash_api_port,
             relay_block,
-            node.address,
-            node.port,
-            proto,
-            dialer_proxy_line,
-            cipher,
-            auth,
-            ca_block.trim_end(),
-            cert_block.trim_end(),
-            key_block.trim_end(),
+            proxy_block,
             rules_yaml
         )
     }

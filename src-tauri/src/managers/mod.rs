@@ -5,6 +5,8 @@ pub mod special_sources;
 pub mod speedtest;
 pub mod subscription_manager;
 pub mod inspector_manager;
+pub mod lane_core;
+pub mod relay_selector;
 pub mod url_fallback;
 
 pub use chain_manager::ChainManager;
@@ -14,4 +16,5 @@ pub use special_sources::SpecialSources;
 pub use speedtest::SpeedTestManager;
 pub use subscription_manager::SubscriptionManager;
 pub use inspector_manager::InspectorManager;
+pub use lane_core::{build_lane_config, Lane, LanePool, NodeVerdict};
 pub use url_fallback::{generate_fallback_urls, fetch_with_smart_fallback};

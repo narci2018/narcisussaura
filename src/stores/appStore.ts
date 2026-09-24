@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../services/api';
 import { invoke } from '@tauri-apps/api/core';
-import { ActiveTab, AppSettings, ConnectionStatus, ProxyChain, Subscription, TrafficStats, UnifiedNode } from '../types';
+import { ActiveTab, AppSettings, ConnectionStatus, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
 
 
 export interface InspectReportItem {
@@ -71,7 +71,10 @@ interface AppStore {
   relayEnabled: boolean;
   selectedRelayNodeId: string;
   relayCandidates: UnifiedNode[];
+  preferredRelay: RelayRanking | null;
+  isRankingRelays: boolean;
   fetchRelayCandidates: () => Promise<void>;
+  rankRelays: () => Promise<void>;
   setRelayEnabled: (enabled: boolean) => void;
   setSelectedRelayNodeId: (id: string) => void;
 
@@ -256,6 +259,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   relayEnabled: false,
   selectedRelayNodeId: 'auto',
   relayCandidates: [],
+  preferredRelay: null,
+  isRankingRelays: false,
   setRelayEnabled: (enabled) => set({ relayEnabled: enabled }),
   setSelectedRelayNodeId: (id) => set({ selectedRelayNodeId: id }),
   fetchRelayCandidates: async () => {
@@ -264,6 +269,20 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ relayCandidates });
     } catch (e) {
       console.error('Failed to fetch relay candidates:', e);
+    }
+  },
+  rankRelays: async () => {
+    if (get().isRankingRelays) return;
+    set({ isRankingRelays: true });
+    try {
+      const ranking = await api.rankRelays();
+      set({ preferredRelay: ranking });
+      // 测得的延迟/带宽写回在节点记录上,重新拉一次候选才有真实数字
+      await get().fetchRelayCandidates();
+    } catch (e) {
+      console.error('Failed to rank relay candidates:', e);
+    } finally {
+      set({ isRankingRelays: false });
     }
   },
 
@@ -332,6 +351,12 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
       api.onVpnStage((stage) => {
         set({ tunnelStage: translateVpnStage(stage) });
+      }).catch(() => {});
+
+      // 启动后后台的中转优选结果:谁被实测出来了
+      api.onRelayPreferred((ranking) => {
+        set({ preferredRelay: ranking });
+        get().fetchRelayCandidates().catch(() => {});
       }).catch(() => {});
 
       // Surface a captured crash from the previous run (Android only; the
@@ -551,6 +576,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const updated = await api.updateAllSubscriptions(useProxy);
       set({ subscriptions: updated });
       await get().refreshNodes();
+      // 新节点进来,"auto" 中转就该重新量一次
+      get().rankRelays();
     } catch (e: any) {
       console.error('Update all subscriptions batch failed, falling back:', e);
       for (const sub of subs) {
@@ -763,6 +790,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }));
       // Refresh nodes list to reflect newly fetched nodes
       await get().refreshNodes();
+      get().rankRelays();
     } catch (e: any) {
       set((state) => ({
         subscriptions: state.subscriptions.map((s) =>

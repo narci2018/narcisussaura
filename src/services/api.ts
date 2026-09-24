@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { AppSettings, ConnectionStatus, ProxyChain, Subscription, TrafficStats, UnifiedNode } from '../types';
+import { AppSettings, ConnectionStatus, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
 
 export const api = {
   getConnectionStatus: () => invoke<ConnectionStatus>('get_connection_status'),
@@ -65,6 +65,12 @@ export const api = {
 
   onVpnStage: (callback: (stage: string) => void): Promise<UnlistenFn> => {
     return listen<string>('core:vpn-stage', (event) => callback(event.payload));
+  },
+
+  rankRelays: () => invoke<RelayRanking | null>('rank_relays'),
+
+  onRelayPreferred: (callback: (ranking: RelayRanking) => void): Promise<UnlistenFn> => {
+    return listen<RelayRanking>('relay:preferred', (event) => callback(event.payload));
   },
 
   getCrashReport: () => invoke<string | null>('get_crash_report'),

@@ -123,6 +123,10 @@ pub struct AppSettings {
     pub rule_sets: Vec<RoutingRuleSet>,
     #[serde(default = "default_theme")]
     pub theme: String,
+    /// Node the startup relay ranking measured as the best chain entry point.
+    /// `None` until something has actually been dialled — see managers/relay_selector.rs.
+    #[serde(default)]
+    pub preferred_relay_id: Option<String>,
 }
 
 fn default_theme() -> String {
@@ -216,6 +220,7 @@ impl Default for AppSettings {
             active_rule_set_id: "default".to_string(),
             rule_sets: default_rule_sets(),
             theme: "dark".to_string(),
+            preferred_relay_id: None,
         }
     }
 }

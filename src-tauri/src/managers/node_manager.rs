@@ -412,12 +412,17 @@ impl NodeManager {
                     country_name: "本地极速中转".to_string(),
                     city: "Localhost".to_string(),
                     group: "LocalProxy".to_string(),
-                    tags: vec!["Local".to_string(), "Relay".to_string(), "Verified".to_string()],
+                    tags: vec!["Local".to_string(), "Relay".to_string()],
                     favorite: true,
-                    latency_ms: Some(1),
-                    speed_bps: Some(100_000_000),
+                    // A port that answers a 25ms connect has not carried a single
+                    // byte yet. These used to be pinned at "1ms / 100Mbps / Alive",
+                    // which made every local listener win the relay race regardless
+                    // of whether the proxy behind it worked. The relay ranking
+                    // (managers/relay_selector.rs) dials them like everyone else.
+                    latency_ms: None,
+                    speed_bps: None,
                     last_checked: None,
-                    status: NodeStatus::Alive,
+                    status: NodeStatus::Unknown,
                     config: serde_json::json!({}),
                 });
             }
@@ -522,9 +527,19 @@ impl NodeManager {
         candidates
     }
 
-    /// Returns the best single relay candidate node
-    pub fn get_best_relay_node(&self) -> Option<UnifiedNode> {
-        self.get_relay_candidates().into_iter().next()
+    /// Returns the best single relay candidate node.
+    ///
+    /// `preferred_id` is what the startup ranking actually dialled traffic
+    /// through (`settings.preferred_relay_id`): a measured node beats this
+    /// heuristic list, so it wins whenever it is still a candidate at all.
+    pub fn get_best_relay_node(&self, preferred_id: Option<&str>) -> Option<UnifiedNode> {
+        let candidates = self.get_relay_candidates();
+        if let Some(id) = preferred_id.filter(|id| !id.trim().is_empty()) {
+            if let Some(hit) = candidates.iter().find(|n| n.id == id) {
+                return Some(hit.clone());
+            }
+        }
+        candidates.into_iter().next()
     }
 
     pub fn add_node(&self, mut node: UnifiedNode) -> Result<UnifiedNode, String> {

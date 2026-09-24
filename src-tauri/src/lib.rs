@@ -3,7 +3,7 @@ pub mod managers;
 pub mod models;
 pub mod platform;
 
-use crate::managers::{ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};
+use crate::managers::{relay_selector, ChainManager, ConnectionManager, NodeManager, SpeedTestManager, SubscriptionManager, InspectorManager};
 use crate::models::{AppSettings, ConnectionStatus, ProxyChain, Subscription, UnifiedNode};
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -76,6 +76,35 @@ async fn get_full_logs(app: AppHandle) -> Result<String, String> {
         format!("===== singbox.log =====\n{}", tail(dir.join("singbox.log"), 300)),
         format!("===== tunrelay.log =====\n{}", tail(dir.join("tunrelay.log"), 400)),
     ];
+    // 住宅/VPNGate 与后台测活走 mihomo:没有这两类日志就只能靠猜
+    let mihomo = tail(dir.join("mihomo.log"), 300);
+    if mihomo != "(文件不存在)" {
+        parts.push(format!("===== mihomo.log =====\n{}", mihomo));
+    }
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        let mut lanes: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|n| n.starts_with("lane_") && n.ends_with(".log"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        lanes.sort();
+        for path in lanes {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("lane.log")
+                .to_string();
+            let body = tail(path, 120);
+            if !body.trim().is_empty() {
+                parts.push(format!("===== {} =====\n{}", name, body));
+            }
+        }
+    }
     for name in ["crash_log", "panic_log"] {
         let s = tail(dir.join(name), 60);
         if s != "(文件不存在)" && !s.trim().is_empty() {
@@ -169,10 +198,14 @@ async fn connect(
         .get_by_id(&node_id)
         .ok_or_else(|| "Node not found".to_string())?;
 
+    let preferred = state.settings.read().preferred_relay_id.clone();
     let relay_node = match relay_node_id.as_deref() {
         Some("none") | Some("direct") => None,
-        Some("auto") => state.node_manager.get_best_relay_node(),
-        Some(id) if !id.trim().is_empty() => state.node_manager.get_by_id(id).or_else(|| state.node_manager.get_best_relay_node()),
+        Some("auto") => state.node_manager.get_best_relay_node(preferred.as_deref()),
+        Some(id) if !id.trim().is_empty() => state
+            .node_manager
+            .get_by_id(id)
+            .or_else(|| state.node_manager.get_best_relay_node(preferred.as_deref())),
         _ => None,
     };
 
@@ -183,6 +216,49 @@ async fn connect(
 #[tauri::command]
 async fn get_relay_candidates(state: State<'_, AppState>) -> Result<Vec<UnifiedNode>, String> {
     Ok(state.node_manager.get_relay_candidates())
+}
+
+/// Remember who won the relay ranking and tell the UI. Shared by the startup
+/// job and the explicit command, because both must leave the same state behind.
+fn store_preferred_relay(
+    app: &AppHandle,
+    state: &AppState,
+    ranking: &relay_selector::RelayRanking,
+) {
+    if let Some(id) = &ranking.preferred_id {
+        let snapshot = {
+            let mut settings = state.settings.write();
+            settings.preferred_relay_id = Some(id.clone());
+            settings.clone()
+        };
+        if let Ok(dir) = app.path().app_data_dir() {
+            if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                let _ = std::fs::write(dir.join("settings.json"), json);
+            }
+        }
+    }
+    relay_selector::emit_ranking(app, ranking);
+}
+
+/// Dial the relay shortlist for real and remember the winner, so that every
+/// later "auto" chain hop is a measured choice instead of a guess. The same
+/// routine runs on its own a few seconds after boot (see `setup`); this command
+/// is the manual "重新实测" button in the relay bar.
+#[tauri::command]
+async fn rank_relays(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<relay_selector::RelayRanking, String> {
+    let candidates = state.node_manager.get_relay_candidates();
+    let ranking = relay_selector::select_preferred_relay(
+        &app,
+        &state.node_manager,
+        &state.connection_manager,
+        candidates,
+    )
+    .await?;
+    store_preferred_relay(&app, &state, &ranking);
+    Ok(ranking)
 }
 
 #[tauri::command]
@@ -355,6 +431,12 @@ async fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String>
 
 #[tauri::command]
 async fn save_settings(new_settings: AppSettings, state: State<'_, AppState>, app: tauri::AppHandle) -> Result<(), String> {
+    // preferred_relay_id is written by the ranking job, never by the settings
+    // form — a save that carries no preference must not erase the measured one.
+    let mut new_settings = new_settings;
+    if new_settings.preferred_relay_id.is_none() {
+        new_settings.preferred_relay_id = state.settings.read().preferred_relay_id.clone();
+    }
     *state.settings.write() = new_settings.clone();
     
     // Save to disk
@@ -581,6 +663,36 @@ pub fn run() {
                 settings,
             });
 
+            // Pick the chain entry point before anything asks for it. Every
+            // background job that follows (official VPNGate sources, liveness
+            // probes) hops through this one relay, so it is measured first thing
+            // after boot rather than guessed at connect time. The small delay
+            // keeps the burst off the window's paint.
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    let ranking = {
+                        let state = handle.state::<AppState>();
+                        let candidates = state.node_manager.get_relay_candidates();
+                        relay_selector::select_preferred_relay(
+                            &handle,
+                            &state.node_manager,
+                            &state.connection_manager,
+                            candidates,
+                        )
+                        .await
+                    };
+                    match ranking {
+                        Ok(ranking) => {
+                            let state = handle.state::<AppState>();
+                            store_preferred_relay(&handle, &state, &ranking);
+                        }
+                        Err(e) => log::warn!("startup relay ranking did not run: {}", e),
+                    }
+                });
+            }
+
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             {
                 let show_i = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)?;
@@ -661,6 +773,7 @@ pub fn run() {
             fetch_psiphon_nodes,
             fetch_residential_nodes,
             get_relay_candidates,
+            rank_relays,
             get_settings,
             save_settings,
             get_chains,

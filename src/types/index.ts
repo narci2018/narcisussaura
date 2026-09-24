@@ -98,10 +98,20 @@ export interface AppSettings {
   active_rule_set_id?: string;
   rule_sets?: RoutingRuleSet[];
   theme?: 'dark' | 'light';
+  // 启动测速选出的首选中转节点 id;从未实测过时为 null
+  preferred_relay_id?: string | null;
 }
 
-export interface SubscriptionTraffic {
-  upload: number;
+export interface RelayRanking {
+  preferred_id: string | null;
+  preferred_name: string | null;
+  latency_ms: number | null;
+  speed_bps: number | null;
+  tested: number;
+  aborted: boolean;
+}
+
+export interface SubscriptionTraffic {  upload: number;
   download: number;
   total: number;
   expire?: number;

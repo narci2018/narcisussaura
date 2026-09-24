@@ -73,6 +73,21 @@ pub enum ConnectionStatus {
     Error,
 }
 
+impl ConnectionStatus {
+    /// Whether a real tunnel owns the device's routing right now — the only state
+    /// background probing must stand down for.
+    ///
+    /// This is deliberately **not** `!= Disconnected`. A failed connect parks the
+    /// status on `Error` until the user presses 断开, so treating anything-but-
+    /// Disconnected as "the tunnel is busy" made every 测活 round abort at batch 0
+    /// with zero dials after one bad connect — the v0.2.108 field report of
+    /// "全是未测、按钮像失灵" was this predicate, not the probe algorithm.
+    /// `Disconnecting` is on its way out and carries no traffic either.
+    pub fn holds_tunnel(&self) -> bool {
+        matches!(self, Self::Connecting | Self::Connected)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrafficStats {
     pub upload_bytes: u64,
@@ -271,4 +286,20 @@ pub struct ProxyChain {
     pub latency_ms: Option<i64>,
     #[serde(default)]
     pub created_at: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConnectionStatus::*;
+
+    #[test]
+    fn a_failed_connect_does_not_occupy_the_device() {
+        // 背景探测(测活、中转排序)只为真隧道让路。Error 是"连接失败后停在这里"
+        // 的状态,把它算成占用会让之后每一轮测活一个节点都不拨。
+        assert!(Connecting.holds_tunnel());
+        assert!(Connected.holds_tunnel());
+        for idle in [Disconnected, Disconnecting, Error] {
+            assert!(!idle.holds_tunnel(), "{idle:?} 没有隧道在跑");
+        }
+    }
 }

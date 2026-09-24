@@ -172,7 +172,9 @@ pub async fn select_preferred_relay(
         .map_err(|e| format!("ranking lane join: {}", e))??;
 
         for (name, node) in &indexed {
-            if conn.get_status() != crate::models::ConnectionStatus::Disconnected {
+            // 只有真隧道在跑才让路;连接失败留下的 Error 不算,否则一次失败之后
+            // 每一轮中转排序都会在第一个候选前停下(和测活同一处事故)。
+            if conn.get_status().holds_tunnel() {
                 log::info!(
                     "relay ranking: stopped after {} candidates, a real tunnel owns the device now",
                     measured.len()

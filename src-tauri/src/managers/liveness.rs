@@ -26,7 +26,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::managers::connection_manager::ConnectionManager;
 use crate::managers::lane_core::{Lane, NodeVerdict, LANE_LIVENESS_FIRST, PROBE_204_URL};
 use crate::managers::node_manager::NodeManager;
-use crate::models::{ConnectionStatus, NodeStatus, ProtocolType, UnifiedNode};
+use crate::models::{NodeStatus, ProtocolType, UnifiedNode};
 
 /// Servers probed by one lane. The agreed ceiling for what a phone may spend in
 /// the background: 50 configs is the largest set measured to start cleanly.
@@ -622,8 +622,10 @@ fn flush(node_manager: &NodeManager, group: &str, pending: &mut Vec<UnifiedNode>
 }
 
 /// A probe burst must never compete with a tunnel the user actually opened.
+/// `Error` does not count — see [`crate::models::ConnectionStatus::holds_tunnel`],
+/// and the field report that this predicate once silently emptied.
 fn tunnel_took_over(conn: &ConnectionManager) -> bool {
-    conn.get_status() != ConnectionStatus::Disconnected
+    conn.get_status().holds_tunnel()
 }
 
 #[cfg(test)]

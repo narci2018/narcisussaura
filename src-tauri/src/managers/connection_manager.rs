@@ -9,6 +9,44 @@ use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
+/// Filenames mihomo reads for its geo rules, exactly as the core expects them in
+/// its `-d` directory. `geoip.metadb` is the one the dns `fallback-filter` wants
+/// too, which is why both ship.
+const MIHOMO_GEO_FILES: [&str; 2] = ["geosite.dat", "geoip.metadb"];
+
+/// First directory in `dirs` that actually holds `name`.
+fn find_bundled_file(dirs: &[PathBuf], name: &str) -> Option<PathBuf> {
+    dirs.iter().map(|d| d.join(name)).find(|p| p.exists())
+}
+
+/// Copy a bundled file into place, atomically and only when it is missing or the
+/// live copy has a different size. Returns true when a copy was made.
+///
+/// The size check is self-healing, not paranoia: a copy interrupted by the
+/// platform leaves a truncated file behind, and both cores fatal-crash on a
+/// corrupt rule database rather than reporting it.
+fn deploy_bundled_file(src: &Path, dst: &Path) -> bool {
+    let src_len = match std::fs::metadata(src) {
+        Ok(m) => m.len(),
+        Err(_) => return false,
+    };
+    if src_len == 0 || src == dst {
+        return false;
+    }
+    if std::fs::metadata(dst).map(|m| m.len()).unwrap_or(0) == src_len {
+        return false;
+    }
+    let file_name = dst
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let tmp = dst.with_file_name(format!("{}.tmp", file_name));
+    if std::fs::copy(src, &tmp).is_err() {
+        return false;
+    }
+    std::fs::rename(&tmp, dst).is_ok()
+}
+
 /// Outcome of a core spawn attempt that is checked against the startup window.
 enum CoreStartup {
     /// Generation advanced (user cancelled) during the startup window.
@@ -1575,7 +1613,6 @@ rules:
         use tauri::Manager;
         let rules_dst = self.app_data_dir.join("rules");
         let _ = std::fs::create_dir_all(&rules_dst);
-
         let rule_files = [
             "geosite-category-ads-all.srs",
             "geosite-private.srs",
@@ -1601,26 +1638,49 @@ rules:
         search_dirs.push(PathBuf::from("binaries/rules"));
 
         for rule in &rule_files {
-            let dst = rules_dst.join(rule);
-            let Some(src) = search_dirs.iter().map(|d| d.join(rule)).find(|p| p.exists()) else {
+            let Some(src) = find_bundled_file(&search_dirs, rule) else {
                 continue;
             };
-            let src_len = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
-            if src_len == 0 || src == dst {
+            deploy_bundled_file(&src, &rules_dst.join(rule));
+        }
+
+        self.ensure_mihomo_geo_databases(app);
+    }
+
+    /// Land mihomo's geo databases in the directory it is started with (`-d`),
+    /// which is where it looks for `geosite.dat` / `geoip.metadb`.
+    ///
+    /// This has to happen **before** a config with GEOSITE/GEOIP rules is
+    /// generated: when the files are missing the core downloads them during
+    /// startup and, on a network that blocks GitHub, exits 19s later with
+    /// `can't download MMDB` — which the bridge then reported as "出口节点不可用"
+    /// (measured with the shipped binary; the reason v0.2.107 shipped split
+    /// routing switched off instead).
+    fn ensure_mihomo_geo_databases(&self, app: &AppHandle) {
+        use tauri::Manager;
+        let mut dirs = Vec::new();
+        #[cfg(target_os = "android")]
+        crate::platform::android::prepend_rule_search_dirs(&self.app_data_dir, &mut dirs);
+        if let Ok(res_dir) = app.path().resource_dir() {
+            dirs.push(res_dir.join("binaries"));
+            dirs.push(res_dir);
+        }
+        if let Ok(exe_path) = std::env::current_exe() {
+            let exe_dir = exe_path.parent().unwrap_or(Path::new(""));
+            dirs.push(exe_dir.join("binaries"));
+            dirs.push(exe_dir.to_path_buf());
+        }
+        dirs.push(PathBuf::from("src-tauri/binaries"));
+        dirs.push(PathBuf::from("binaries"));
+
+        for name in MIHOMO_GEO_FILES {
+            let dst = self.app_data_dir.join(name);
+            let Some(src) = find_bundled_file(&dirs, name) else {
+                log::warn!("mihomo: 随包地理库 {} 没找到，国内分流仍会关闭", name);
                 continue;
-            }
-            // Self-heal: a copy interrupted by MIUI leaves a truncated .srs
-            // behind, and sing-box fatal-crashes on a corrupt rule_set — a
-            // size mismatch vs the bundled source means we must re-copy.
-            let dst_len = std::fs::metadata(&dst).map(|m| m.len()).unwrap_or(0);
-            if dst_len == src_len {
-                continue;
-            }
-            // Atomic deploy: temp file + rename, so a kill mid-copy can never
-            // leave the live rule file truncated again.
-            let tmp = rules_dst.join(format!("{}.tmp", rule));
-            if std::fs::copy(&src, &tmp).is_ok() {
-                let _ = std::fs::rename(&tmp, &dst);
+            };
+            if deploy_bundled_file(&src, &dst) {
+                log::info!("mihomo: 地理库 {} 已落到 {}", name, self.app_data_dir.display());
             }
         }
     }
@@ -2564,5 +2624,40 @@ mod tests {
                 "geoip 库随包发布前,dns 必须显式声明 geoip: false: {cfg}"
             );
         }
+    }
+
+    /// 国内分流完全靠这两个库:谁把它们从随包资源里删掉,分流就悄悄关掉,而症状
+    /// (连上后国内站点绕道国外)不会报错。所以在测试里钉住它们确实在仓库里。
+    #[test]
+    fn the_geo_databases_are_actually_bundled() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
+        for name in MIHOMO_GEO_FILES {
+            let path = find_bundled_file(&[dir.clone()], name)
+                .unwrap_or_else(|| panic!("{} 没有随包发布: {}", name, dir.display()));
+            let len = std::fs::metadata(&path).unwrap().len();
+            assert!(len > 1_000_000, "{name} 只有 {len} 字节,不像是完整的库");
+        }
+    }
+
+    /// 落库必须幂等且能自愈:被平台打断的拷贝会留下一个截断的库,而 mihomo 读到
+    /// 坏库时的死法和库不存在时一样干脆。
+    #[test]
+    fn bundled_files_land_only_when_missing_or_truncated() {
+        let dir = std::env::temp_dir().join(format!("aura-geo-deploy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("geosite.dat");
+        let dst = dir.join("geosite.dat.live");
+        std::fs::write(&src, vec![7u8; 4096]).unwrap();
+
+        assert!(deploy_bundled_file(&src, &dst), "库里缺失时必须落一份");
+        assert_eq!(std::fs::metadata(&dst).unwrap().len(), 4096);
+        assert!(!deploy_bundled_file(&src, &dst), "已经就位就不该重拷");
+
+        std::fs::write(&dst, b"truncated").unwrap();
+        assert!(deploy_bundled_file(&src, &dst), "被截断必须自愈重写");
+        assert_eq!(std::fs::metadata(&dst).unwrap().len(), 4096);
+        assert!(!deploy_bundled_file(&src, &src), "源就是目标时不许动它");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

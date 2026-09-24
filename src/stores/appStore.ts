@@ -372,7 +372,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // 都全量刷新。
       api.onNodesLiveness((progress) => {
         set({
-          livenessProgress: { ...get().livenessProgress, [progress.group]: progress },
+          // at 是本地盖的时间戳:一轮在跑时每个节点都有一拍,前端靠它判断
+          // "这一轮已经没动静了",而不是把按钮永久灰着。
+          livenessProgress: { ...get().livenessProgress, [progress.group]: { ...progress, at: Date.now() } },
         });
         if (progress.persisted || !progress.running) {
           get().refreshNodes().catch(() => {});

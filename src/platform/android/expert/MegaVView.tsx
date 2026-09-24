@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Zap, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, AlertCircle, X, Copy, Check, Square } from 'lucide-react';
+import { Zap, RefreshCw, Activity, CheckCircle2, Signal, ArrowUpRight, Search, Square } from 'lucide-react';
 import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
 import { UnifiedNode } from '../../../types';
@@ -8,21 +8,13 @@ import { RelayBar } from './RelayBar';
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
 export const MegaVView: React.FC = () => {
-  const { status, connectedNode, connect, disconnect, testLatency, testingLatencyIds, refreshNodes, nodes, errorMessage, setErrorMessage } = useAppStore();
+  const { status, connectedNode, connect, disconnect, testLatency, testingLatencyIds, refreshNodes, nodes } = useAppStore();
   const storeNodes = React.useMemo(() => nodes.filter((n) => n.group === 'MegaV'), [nodes]);
   const [megaNodes, setMegaNodes] = useState<UnifiedNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState('');
-  const [copiedError, setCopiedError] = useState(false);
 
   const displayNodes = megaNodes.length > 0 ? megaNodes : storeNodes;
-
-  const handleCopyError = () => {
-    if (!errorMessage) return;
-    navigator.clipboard.writeText(errorMessage);
-    setCopiedError(true);
-    setTimeout(() => setCopiedError(false), 2000);
-  };
 
   const loadMegaV = async () => {
     setLoading(true);
@@ -105,36 +97,7 @@ export const MegaVView: React.FC = () => {
       </div>
 
       {/* Relay Proxy Toolbar */}
-      <RelayBar description="MegaV 公开节点入口 IP 及 workers.dev 域名在国内被全面阻断。开启链式中转将通过您的翻墙节点中继访问，保障 100% 成功建联。" />
-
-      {/* Connection Failure Notice */}
-      {errorMessage && (
-        <div className="mx-6 mt-4 p-3.5 bg-red-950/80 border border-red-500/60 rounded-xl flex items-start justify-between gap-3 text-red-200 backdrop-blur-md">
-          <div className="flex items-start gap-2.5 flex-1 min-w-0">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <div className="text-[13px] font-mono whitespace-pre-wrap leading-relaxed select-text break-words">
-              {errorMessage}
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={handleCopyError}
-              className="flex items-center gap-1 text-[12px] px-2 py-1 rounded-lg bg-red-900/70 active:bg-red-800 text-red-200 border border-red-500/50 transition-colors shadow-sm"
-              title="拷贝错误信息到剪贴板"
-            >
-              {copiedError ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-              <span>{copiedError ? '已拷贝' : '拷贝错误'}</span>
-            </button>
-            <button
-              onClick={() => setErrorMessage(null)}
-              className="text-red-400 active:text-white p-1 rounded-lg active:bg-white/10 transition-colors"
-              title="关闭"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
+      <RelayBar description="MegaV 公开节点入口 IP 及 workers.dev 域名在国内常被阻断。开启链式中转将通过您的翻墙节点中继访问，显著提升建联成功率。" />
 
       {/* Nodes Cards Grid */}
       <div className="flex-1 overflow-y-auto p-6">

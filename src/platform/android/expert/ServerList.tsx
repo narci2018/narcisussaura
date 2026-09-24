@@ -573,7 +573,7 @@ export const ServerList: React.FC = () => {
               <div
                 key={node.id}
                 onClick={() => setSelectedNodeId(node.id)}
-                className={`w-full rounded-xl p-3.5 flex items-center justify-between border transition-all cursor-pointer ${
+                className={`w-full rounded-xl p-3.5 flex flex-col gap-2.5 border transition-all cursor-pointer ${
                   isLiveConnected
                     ? 'bg-emerald-500/5 border-emerald-500/40 shadow-sm shadow-emerald-500/10'
                     : isSelected
@@ -581,11 +581,11 @@ export const ServerList: React.FC = () => {
                     : 'bg-[#11131c] border-[#1f2433] active:border-[#2b3348] active:bg-[#141722]'
                 }`}
               >
-                {/* Left: Info */}
-                <div className="flex items-center gap-3.5">
+                {/* Row 1: Info + metric badges — all shrink-safe so nothing spills off-screen */}
+                <div className="flex items-center gap-3 min-w-0">
                   {/* Country Flag or Globe Icon */}
                   <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-[13px] ${
+                    className={`w-9 h-9 shrink-0 rounded-xl flex items-center justify-center font-bold text-[13px] ${
                       isLiveConnected
                         ? 'bg-emerald-500/20 text-emerald-300'
                         : 'bg-[#1b202e] text-gray-300 border border-[#272e42]'
@@ -598,70 +598,72 @@ export const ServerList: React.FC = () => {
                     )}
                   </div>
 
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[13px] font-semibold text-gray-200">{node.name}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[13px] font-semibold text-gray-200 truncate">{node.name}</span>
 
                       {/* Recommended Tag */}
                       {recommended && (
-                        <span className="px-1.5 py-0.5 rounded text-[12px] bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30 flex items-center gap-1 shadow-sm shadow-amber-500/10">
+                        <span className="px-1.5 py-0.5 rounded text-[12px] bg-amber-500/15 text-amber-300 font-bold border border-amber-500/30 flex items-center gap-1 shadow-sm shadow-amber-500/10 shrink-0">
                           <Sparkles className="w-2.5 h-2.5 text-amber-400" />
                           <span>推荐</span>
                         </span>
                       )}
 
                       {isLiveConnected && (
-                        <span className="px-1.5 py-0.5 rounded text-[12px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30">
+                        <span className="px-1.5 py-0.5 rounded text-[12px] bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/30 shrink-0">
                           Active
                         </span>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 text-[12px] text-gray-400 font-mono mt-0.5 flex-wrap">
-                      <span>
+                    <div className="flex items-center gap-2 text-[12px] text-gray-400 font-mono mt-0.5 min-w-0">
+                      <span className="truncate">
                         {node.address}:{node.port}
                       </span>
                       {node.protocol === 'masque' ? (
-                        <span className="text-[12px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-purple-500/10">
+                        <span className="text-[12px] font-bold text-purple-300 bg-purple-500/15 border border-purple-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-purple-500/10 shrink-0">
                           WARP · MASQUE (H3)
                         </span>
                       ) : node.protocol === 'wireguard' ? (
-                        <span className="text-[12px] font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-cyan-500/10">
+                        <span className="text-[12px] font-bold text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-1.5 py-0.5 rounded shadow-sm shadow-cyan-500/10 shrink-0">
                           WARP · WireGuard
                         </span>
                       ) : (
-                        <span className="uppercase text-gray-500">{node.protocol}</span>
+                        <span className="uppercase text-gray-500 shrink-0">{node.protocol}</span>
                       )}
                       {node.group && (
                         <>
-                          <span>·</span>
-                          <span className="text-blue-400/80 bg-blue-500/10 px-1.5 py-0.2 rounded border border-blue-500/20">
+                          <span className="shrink-0">·</span>
+                          <span className="text-blue-400/80 bg-blue-500/10 px-1.5 py-0.2 rounded border border-blue-500/20 truncate">
                             {node.group}
                           </span>
                         </>
                       )}
                     </div>
                   </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Real Download Speed Badge */}
+                    {node.speed_bps ? (
+                      <span className="text-[12px] font-mono text-indigo-300 px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 flex items-center gap-1">
+                        <Gauge className="w-3 h-3 text-indigo-400" />
+                        <span>{formatSpeed(node.speed_bps)}</span>
+                      </span>
+                    ) : null}
+
+                    {/* Latency badge */}
+                    {getLatencyBadge(node)}
+                  </div>
                 </div>
 
-                {/* Right: Latency, Speed & Controls */}
-                <div className="flex items-center gap-2.5" onClick={(e) => e.stopPropagation()}>
-                  {/* Real Download Speed Badge */}
-                  {node.speed_bps ? (
-                    <span className="text-[12px] font-mono text-indigo-300 px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 flex items-center gap-1">
-                      <Gauge className="w-3 h-3 text-indigo-400" />
-                      <span>{formatSpeed(node.speed_bps)}</span>
-                    </span>
-                  ) : null}
-
-                  {/* Latency badge */}
-                  {getLatencyBadge(node)}
-
+                {/* Row 2: Controls — right-aligned inside the card, always visible without horizontal scroll */}
+                <div className="flex items-center gap-1.5 justify-end min-w-0" onClick={(e) => e.stopPropagation()}>
                   {/* Ping latency button */}
                   <button
                     onClick={() => testLatency(node.id)}
                     disabled={isTestingLat}
-                    className="p-1.5 rounded-lg active:bg-gray-800 text-gray-400 active:text-blue-400 transition-colors disabled:opacity-50"
+                    className="p-1.5 rounded-lg active:bg-gray-800 text-gray-400 active:text-blue-400 transition-colors disabled:opacity-50 shrink-0"
                     title="Ping latency (TCP Handshake)"
                   >
                     <Zap className={`w-3.5 h-3.5 ${isTestingLat ? 'animate-bounce text-blue-400' : ''}`} />
@@ -671,7 +673,7 @@ export const ServerList: React.FC = () => {
                   <button
                     onClick={() => testSpeed(node.id)}
                     disabled={isTestingSpd}
-                    className="p-1.5 rounded-lg active:bg-gray-800 text-gray-400 active:text-indigo-400 transition-colors disabled:opacity-50"
+                    className="p-1.5 rounded-lg active:bg-gray-800 text-gray-400 active:text-indigo-400 transition-colors disabled:opacity-50 shrink-0"
                     title="Test real download bandwidth"
                   >
                     <Gauge className={`w-3.5 h-3.5 ${isTestingSpd ? 'animate-spin text-indigo-400' : ''}`} />
@@ -680,7 +682,7 @@ export const ServerList: React.FC = () => {
                   {/* Favorite toggle */}
                   <button
                     onClick={() => toggleFavorite(node.id)}
-                    className="p-1.5 rounded-lg active:bg-gray-800 transition-colors"
+                    className="p-1.5 rounded-lg active:bg-gray-800 transition-colors shrink-0"
                     title={node.favorite ? 'Remove favorite' : 'Add favorite'}
                   >
                     <Star
@@ -699,7 +701,7 @@ export const ServerList: React.FC = () => {
                         e.stopPropagation();
                         disconnect();
                       }}
-                      className="px-2.5 py-1.5 rounded-lg bg-red-500/15 active:bg-red-500/25 text-red-400 border border-red-500/30 text-[13px] font-medium transition-all flex items-center gap-1.5"
+                      className="px-2.5 py-1.5 rounded-lg bg-red-500/15 active:bg-red-500/25 text-red-400 border border-red-500/30 text-[13px] font-medium transition-all flex items-center gap-1.5 shrink-0"
                       title="已连接，点击断开"
                     >
                       <Square className="w-3 h-3 fill-red-400" />
@@ -711,7 +713,7 @@ export const ServerList: React.FC = () => {
                         e.stopPropagation();
                         disconnect();
                       }}
-                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 text-[13px] font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95"
+                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 text-[13px] font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95 shrink-0"
                       title="点击终止当前连接"
                     >
                       <Square className="w-3 h-3 fill-red-400 text-red-400 animate-pulse" />
@@ -723,7 +725,7 @@ export const ServerList: React.FC = () => {
                         setSelectedNodeId(node.id);
                         connect(node.id);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 active:bg-blue-600 text-white text-[13px] font-medium transition-all active:scale-95"
+                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 active:bg-blue-600 text-white text-[13px] font-medium transition-all active:scale-95 shrink-0"
                     >
                       Connect
                     </button>
@@ -732,7 +734,7 @@ export const ServerList: React.FC = () => {
                   {/* Delete button */}
                   <button
                     onClick={() => deleteNode(node.id)}
-                    className="p-1.5 rounded-lg active:bg-red-500/20 text-gray-500 active:text-red-400 transition-colors"
+                    className="p-1.5 rounded-lg active:bg-red-500/20 text-gray-500 active:text-red-400 transition-colors shrink-0"
                     title="Delete node"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

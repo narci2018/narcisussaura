@@ -1,19 +1,14 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Power,
   Globe,
   ArrowDown,
   ArrowUp,
   Clock,
-  AlertTriangle,
   ChevronRight,
-  Copy,
-  Check,
   Square,
 } from 'lucide-react';
 import { useAppStore } from '../../../stores/appStore';
-import { api } from '../../../services/api';
-import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { QuoteBar } from './QuoteBar';
 
 function formatBytes(bytes: number): string {
@@ -46,13 +41,8 @@ export const Dashboard: React.FC = () => {
     connect,
     disconnect,
     setActiveTab,
-    errorMessage,
     setErrorMessage,
   } = useAppStore();
-
-  const [copiedError, setCopiedError] = useState(false);
-  const [copyingLogs, setCopyingLogs] = useState(false);
-  const [copiedLogs, setCopiedLogs] = useState(false);
 
   const selectedNode = connectedNode || nodes.find((n) => n.id === selectedNodeId) || nodes[0] || null;
 
@@ -72,112 +62,8 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleCopyError = async () => {
-    if (!errorMessage) return;
-    try {
-      await writeText(errorMessage);
-    } catch {
-      navigator.clipboard?.writeText(errorMessage);
-    }
-    setCopiedError(true);
-    setTimeout(() => setCopiedError(false), 2500);
-  };
-
-  const handleCopyFullLogs = async () => {
-    if (copyingLogs) return;
-    setCopyingLogs(true);
-    try {
-      const logs = await api.getFullLogs();
-      const bundle = `设备时间: ${new Date().toISOString()}\n\n${logs}`;
-      try {
-        await writeText(bundle);
-      } catch {
-        navigator.clipboard?.writeText(bundle);
-      }
-      setCopiedLogs(true);
-    } catch (e) {
-      setErrorMessage(`读取日志失败: ${e}`);
-    } finally {
-      setCopyingLogs(false);
-      setTimeout(() => setCopiedLogs(false), 2500);
-    }
-  };
-
   return (
     <div className="flex-1 overflow-y-auto px-4 py-4 flex flex-col items-center justify-between max-w-4xl mx-auto w-full">
-      {/* Error alert banner */}
-      {errorMessage && (
-        <div className="w-full mb-5 p-4 rounded-2xl bg-[#1c1216] border border-red-500/30 text-red-300 text-[13px] shadow-xl shadow-red-950/20 flex flex-col justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200">
-          <div className="flex items-start gap-3 flex-1 min-w-0 select-text">
-            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <div className="text-[12px] font-semibold text-red-300 mb-1 flex items-center gap-1.5">
-                <span>连接失败或启动错误 (Connection Error)</span>
-              </div>
-              <div className="font-mono text-[12px] leading-relaxed break-all select-text cursor-text bg-[#0e0709] p-2.5 rounded-xl border border-red-900/40 text-red-200 max-h-48 overflow-y-auto overscroll-contain whitespace-pre-line">
-                {errorMessage}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0 self-end self-center">
-            <button
-              onClick={handleCopyError}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
-                copiedError
-                  ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-500/20'
-                  : 'bg-red-600/20 active:bg-red-600/30 text-red-200 active:text-white border-red-500/40'
-              }`}
-              title="复制错误信息到剪贴板以便反馈与排查"
-            >
-              {copiedError ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>已复制 (Copied!)</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5 text-red-300" />
-                  <span>复制错误 (Copy Error)</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={handleCopyFullLogs}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[13px] font-semibold border transition-all ${
-                copiedLogs
-                  ? 'bg-emerald-600/25 text-emerald-300 border-emerald-500/50 shadow-sm shadow-emerald-500/20'
-                  : 'bg-sky-600/20 active:bg-sky-600/30 text-sky-200 active:text-white border-sky-500/40'
-              }`}
-              title="拷贝 sing-box / tunrelay / 崩溃日志全文到剪贴板"
-            >
-              {copiedLogs ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>日志已复制 (Logs Copied!)</span>
-                </>
-              ) : copyingLogs ? (
-                <>
-                  <Square className="w-3.5 h-3.5 text-sky-300 animate-pulse" />
-                  <span>读取中…</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5 text-sky-300" />
-                  <span>拷贝完整日志 (Copy Full Logs)</span>
-                </>
-              )}
-            </button>
-            <button
-              onClick={() => setErrorMessage(null)}
-              className="px-2.5 py-1.5 rounded-xl text-[13px] text-gray-400 active:text-white active:bg-gray-800/60 transition-colors border border-transparent"
-              title="关闭错误提示"
-            >
-              Dismiss
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Connection Circle Area */}
       <div className="my-auto flex flex-col items-center">
         {/* Glow button wrapper */}

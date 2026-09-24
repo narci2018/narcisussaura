@@ -27,9 +27,17 @@ export const byLiveness = (a: UnifiedNode, b: UnifiedNode) => rank(a.status) - r
 
 const rank = (status: NodeStatus) => (status === 'alive' ? 0 : status === 'dead' ? 2 : 1);
 
+/** 一轮测活多久没动静就算它已经没了。在跑时每拨一个节点(~6 秒)就有一拍,
+ * 最长的合法空档是启动一个核心(10 秒)+ 写回一批结论;45 秒收不到拍就说明
+ * 这一轮再也不会播报了 —— 此时必须让用户能再点一次,而不是把按钮灰死。 */
+const LIVENESS_SILENCE_MS = 45_000;
+
+export const isLivenessRunning = (progress?: LivenessProgress, now: number = Date.now()): boolean =>
+  !!progress?.running && now - (progress.at ?? 0) < LIVENESS_SILENCE_MS;
+
 /**
- * 测活进度标签。后台一轮都没开始时不显示;跑完整个名单时明确告诉用户
- * "全部完成测活",中途让路给真实隧道时说明还剩多少没测。
+ * 测活进度标签。一轮跑完、跑不完、或者根本没能开始,都要留下一句话:
+ * "未测"加上沉默和按钮失灵没有区别。
  */
 export const LivenessProgressTag: React.FC<{ progress?: LivenessProgress }> = ({ progress }) => {
   if (!progress) return null;
@@ -46,6 +54,15 @@ export const LivenessProgressTag: React.FC<{ progress?: LivenessProgress }> = ({
       >
         <Icon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
         <span>{progress.message}</span>
+      </span>
+    );
+  }
+  // 声称在跑却早已没声音:说清楚,并且不再挡住按钮。
+  if (progress.running && !isLivenessRunning(progress)) {
+    return (
+      <span className="flex items-start gap-1.5 text-[12px] font-medium text-right max-w-[280px] text-amber-300">
+        <CircleX className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        <span>{`这一轮测活已经没有响应，再点一次“测活全部节点”`}</span>
       </span>
     );
   }

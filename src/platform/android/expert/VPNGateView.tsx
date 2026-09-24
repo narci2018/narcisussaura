@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Shield, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, Square, Zap } from 'lucide-react';
 import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
 import { RelayBar } from './RelayBar';
-import { LivenessBadge, LivenessProgressTag, byLiveness } from './liveness';
+import { LivenessBadge, LivenessProgressTag, byLiveness, isLivenessRunning } from './liveness';
 
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
 export const VPNGateView: React.FC = () => {
-  const { status, connectedNode, connect, disconnect, nodes, livenessProgress, refreshNodes, setErrorMessage } =
+  const { status, connectedNode, connect, disconnect, nodes, livenessProgress, refreshNodes } =
     useAppStore();
   // 只用 store 里的节点:测活每写回一批结论都会 refreshNodes,本地再存一份快照
   // 就会把"未测"永远留在卡片上。清单本身由启动任务采集一次,进页面不再拉。
@@ -16,6 +16,8 @@ export const VPNGateView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [probing, setProbing] = useState<string | null>(null);
   const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
+  const [measureError, setMeasureError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const [search, setSearch] = useState('');
 
   const loadVPNGate = async () => {
@@ -29,14 +31,24 @@ export const VPNGateView: React.FC = () => {
     }
   };
 
-  const measuring = !!livenessProgress['VPNGate']?.running;
+  const beat = livenessProgress['VPNGate'];
+  const measuring = isLivenessRunning(beat, now);
+  // 一轮在跑时靠新播报刷新;一轮死了就没有新播报,所以自己也要定时看一眼,
+  // 否则"没有响应"这条永远来不及显示。
+  useEffect(() => {
+    if (!beat?.running) return;
+    const t = setInterval(() => setNow(Date.now()), 3000);
+    return () => clearInterval(t);
+  }, [beat?.running]);
 
   // 手机端资源有限,一个节点实测约 5 秒,整轮只能由用户主动发起。
   const measureAll = async () => {
+    setMeasureError(null);
     try {
       await api.measureGroupNodes('VPNGate');
     } catch (e) {
-      setErrorMessage(`无法开始测活: ${e instanceof Error ? e.message : String(e)}`);
+      // 挨着按钮说,不用用户去顶部找那条会被顶掉的横幅。
+      setMeasureError(`测活没能开始：${e instanceof Error ? e.message : String(e)}`);
     }
   };
 
@@ -100,6 +112,10 @@ export const VPNGateView: React.FC = () => {
             <span>{measuring ? '测活中...' : '测活全部节点'}</span>
           </button>
         </div>
+
+        {measureError && (
+          <div className="text-[12px] leading-snug text-red-300">{measureError}</div>
+        )}
       </div>
 
       {/* Filter and Search Bar */}

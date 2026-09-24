@@ -290,9 +290,18 @@ mod android_only {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
             if !ready {
+                // The process is alive but never opened the port. That is a local
+                // startup problem — no dial to the exit node has happened yet — and
+                // the core's own log is the only thing that says why it is stuck
+                // (v0.2.107 in the field: the DNS block waited on a GeoIP download
+                // from github.com for 19s while this loop gave up at 10s, and the
+                // user was told the exit node was unusable).
+                let log_now = std::fs::read_to_string(&core_log).unwrap_or_default();
+                log::warn!("Android: core alive but port {} silent after 10s, log tail:\n{}", mixed_port, log_now.trim());
                 return Err(format!(
-                    "[核心端口未就绪] 代理核心 10 秒后仍未监听本地端口 {}（仍在启动中）",
-                    mixed_port
+                    "[核心端口未就绪] 代理核心 10 秒后仍未监听本地端口 {}（仍在启动中）：{}",
+                    mixed_port,
+                    Self::brief_log_line(&log_now)
                 ));
             }
 

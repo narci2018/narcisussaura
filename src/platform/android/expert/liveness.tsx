@@ -32,7 +32,24 @@ const rank = (status: NodeStatus) => (status === 'alive' ? 0 : status === 'dead'
  * "全部完成测活",中途让路给真实隧道时说明还剩多少没测。
  */
 export const LivenessProgressTag: React.FC<{ progress?: LivenessProgress }> = ({ progress }) => {
-  if (!progress || progress.total === 0) return null;
+  if (!progress) return null;
+  // 后台的一句话结论优先于计数。一个节点都没拨的时候,"已测 0/137"只是把
+  // 静默换个写法;用户要的是为什么。
+  if (progress.message) {
+    const ok = !progress.aborted;
+    const Icon = ok ? CircleCheck : CircleX;
+    return (
+      <span
+        className={`flex items-start gap-1.5 text-[12px] font-medium text-right max-w-[280px] ${
+          ok ? 'text-emerald-300' : 'text-red-300'
+        }`}
+      >
+        <Icon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+        <span>{progress.message}</span>
+      </span>
+    );
+  }
+  if (progress.total === 0) return null;
   const counts = `已测 ${progress.tested}/${progress.total} · 可用 ${progress.alive}`;
   if (progress.done && !progress.aborted) {
     return (

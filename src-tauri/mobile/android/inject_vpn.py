@@ -198,7 +198,9 @@ def inject_vpn_components():
     # mihomo is NOT optional: Residential/VPNGate nodes are OpenVPN and run on
     # the mihomo core, so a missing libmihomo.so ships an APK whose residential
     # connect always fails with "mihomo core binary not found" (v0.2.100).
-    for bin_name in ["sing-box", "mihomo"]:
+    # psiphon-tunnel-core is NOT optional either: the Psiphon tab needs it and
+    # hit the same "core binary not found" in the v0.2.102 field test.
+    for bin_name in ["sing-box", "mihomo", "psiphon-tunnel-core"]:
         bin_src = os.path.join(binaries_dir, bin_name)
         if os.path.exists(bin_src):
             dst = os.path.join(jni_abi_dir, f"lib{bin_name}.so")

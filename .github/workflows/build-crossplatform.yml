@@ -213,7 +213,9 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          # psiphon-tunnel-core go.mod requires >= 1.26 (toolchain go1.26.5);
+          # tunrelay (gvisor) builds fine on the newer Go too.
+          go-version: '1.26'
           cache-dependency-path: tunrelay/go.sum
 
       - name: Build tunrelay (android/arm64)
@@ -221,6 +223,20 @@ jobs:
           cd tunrelay
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o ../src-tauri/binaries/tunrelay .
           ls -la ../src-tauri/binaries/tunrelay
+
+      - name: Build psiphon-tunnel-core (android/arm64)
+        run: |
+          # Pin the same revision the bundled Windows exe was built from
+          # (buildinfo: Psiphon-Labs/psiphon-tunnel-core 96f782c6f6), so all
+          # platforms speak the same protocol/server-entry format.
+          mkdir -p "$RUNNER_TEMP/ptc"
+          cd "$RUNNER_TEMP/ptc"
+          git init -q
+          git remote add origin https://github.com/Psiphon-Labs/psiphon-tunnel-core.git
+          git fetch -q --depth 1 origin 96f782c6f662cb0a884029d70e1375ab3c1dece2
+          git checkout -q FETCH_HEAD
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "$GITHUB_WORKSPACE/src-tauri/binaries/psiphon-tunnel-core" ./ConsoleClient
+          ls -la "$GITHUB_WORKSPACE/src-tauri/binaries/psiphon-tunnel-core"
 
       - name: Install Frontend Dependencies
         run: pnpm install

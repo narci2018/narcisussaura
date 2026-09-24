@@ -23,11 +23,12 @@ export const VPNGateView: React.FC = () => {
     setTimeout(() => setCopiedError(false), 2000);
   };
 
-  const loadVPNGate = async () => {
+  const loadVPNGate = async (force = false) => {
     setLoading(true);
     try {
-      // 重新采集会顺带触发一轮真连接测活(后端 spawn_liveness)
-      await api.fetchVPNGateNodes();
+      // 手动同步 = 重新采集 + 全部重测;打开标签页只补齐过期结论,
+      // 否则一轮上百个节点的测活会被清零重来,永远跑不完。
+      await api.fetchVPNGateNodes(force);
     } catch (e) {
       console.error('Failed to load VPNGate nodes:', e);
     } finally {
@@ -62,7 +63,7 @@ export const VPNGateView: React.FC = () => {
 
         <div className="flex items-center gap-2.5">
           <button
-            onClick={loadVPNGate}
+            onClick={() => loadVPNGate(true)}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-blue-600/30"
             title="重新采集多来源清单,并排队一轮真连接测活"
@@ -132,7 +133,7 @@ export const VPNGateView: React.FC = () => {
             <Globe2 className="w-10 h-10 mb-2 opacity-30 text-emerald-400" />
             <p className="text-sm">No VPNGate relays found.</p>
             <button
-              onClick={loadVPNGate}
+              onClick={() => loadVPNGate(true)}
               className="mt-3 text-xs text-blue-400 hover:underline flex items-center gap-1"
             >
               <RefreshCw className="w-3 h-3" /> Click to re-sync

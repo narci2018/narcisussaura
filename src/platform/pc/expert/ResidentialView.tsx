@@ -42,12 +42,12 @@ export const ResidentialView: React.FC = () => {
     setTimeout(() => setCopiedError(false), 2000);
   };
 
-  const handleSync = async () => {
+  const handleSync = async (force = false) => {
     if (!residentialSubUrl) return;
     setLoading(true);
     try {
-      // 拉完清单后由后端排一轮真连接测活
-      await loadResidentialNodes();
+      // 手动同步才全部重测;进页面只补齐过期的结论
+      await loadResidentialNodes(force);
     } catch (e) {
       console.error('Failed to sync residential nodes:', e);
     } finally {
@@ -84,7 +84,7 @@ export const ResidentialView: React.FC = () => {
 
         <div className="flex items-center gap-2.5">
           <button
-            onClick={handleSync}
+            onClick={() => handleSync(true)}
             disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-xl text-xs font-medium transition-all shadow-sm shadow-amber-600/30"
             title="重新拉取住宅节点清单,并排队一轮真连接测活"
@@ -154,7 +154,7 @@ export const ResidentialView: React.FC = () => {
             <Globe2 className="w-10 h-10 mb-2 opacity-30 text-amber-400" />
             <p className="text-sm">No residential nodes found.</p>
             <button
-              onClick={handleSync}
+              onClick={() => handleSync(true)}
               className="mt-3 text-xs text-amber-400 hover:underline flex items-center gap-1"
             >
               <RefreshCw className="w-3 h-3" /> Click to fetch nodes

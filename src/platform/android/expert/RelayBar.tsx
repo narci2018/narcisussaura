@@ -24,7 +24,8 @@ export const RelayBar: React.FC<RelayBarProps> = ({
     fetchRelayCandidates,
     preferredRelay,
     isRankingRelays,
-    rankRelays,
+    refreshRelays,
+    relayRank,
   } = useAppStore();
 
   useEffect(() => {
@@ -162,7 +163,8 @@ export const RelayBar: React.FC<RelayBarProps> = ({
                           [{node.country_code}] {node.name}
                           <span className="text-gray-500 ml-1.5">
                             ({node.protocol.toUpperCase()} · {node.latency_ms ? `${node.latency_ms}ms` : '未测'}
-                            {formatBandwidth(node.speed_bps) ? ` · ${formatBandwidth(node.speed_bps)}` : ''})
+                            {formatBandwidth(node.speed_bps) ? ` · ${formatBandwidth(node.speed_bps)}` : ''}
+                            {node.status === 'dead' ? ' · 实测不通' : ''})
                           </span>
                         </span>
                         {active && <Check className="w-3.5 h-3.5 shrink-0" />}
@@ -176,30 +178,43 @@ export const RelayBar: React.FC<RelayBarProps> = ({
                   <button
                     onClick={() => {
                       setOpen(false);
-                      rankRelays();
+                      refreshRelays();
                     }}
                     disabled={isRankingRelays}
                     className="w-full flex items-center gap-2 px-3.5 py-2.5 text-left text-[13px] text-gray-300 active:bg-[#1f2437] transition-colors disabled:opacity-60"
                   >
                     <Activity className={`w-3.5 h-3.5 shrink-0 ${isRankingRelays ? 'animate-pulse text-blue-400' : 'text-blue-400'}`} />
                     <span className="truncate">
-                      {isRankingRelays ? '正在真实建联测速…' : '重新实测延迟与带宽'}
+                      {isRankingRelays ? '正在真实建联测速…' : '刷新候选并实测延迟与带宽'}
                     </span>
                   </button>
                 </div>
               )}
             </div>
 
+            {/* 刷新必须是"实测并自动选一台能用的",否则按完和没按一样。 */}
             <button
-              onClick={() => fetchRelayCandidates()}
-              title="刷新可用中转候选节点"
-              className="p-1.5 rounded-lg bg-[#191d2c] active:bg-[#22283d] text-gray-400 active:text-gray-200 border border-[#2e354e] transition-colors"
+              onClick={() => refreshRelays()}
+              disabled={isRankingRelays}
+              title={isRankingRelays ? '正在逐个真实建联测速…' : '刷新候选并实测延迟与带宽，自动选用当前可用的中转'}
+              className="p-1.5 rounded-lg bg-[#191d2c] active:bg-[#22283d] text-gray-400 active:text-gray-200 border border-[#2e354e] transition-colors disabled:opacity-60"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className={`w-3.5 h-3.5 ${isRankingRelays ? 'animate-spin text-blue-400' : ''}`} />
             </button>
           </div>
         )}
       </div>
+
+      {/* 刷新这一下必须留下一句话:成功是选中了谁,失败是为什么没能测。 */}
+      {relayRank && (
+        <p
+          className={`text-[12px] leading-relaxed ${
+            relayRank.ok ? 'text-emerald-400' : 'text-amber-400'
+          }`}
+        >
+          {relayRank.message}
+        </p>
+      )}
     </div>
   );
 };

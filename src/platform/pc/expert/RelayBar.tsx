@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Zap, RefreshCw, ChevronDown, Activity } from 'lucide-react';
+import { Zap, RefreshCw, ChevronDown } from 'lucide-react';
 import { useAppStore } from '../../../stores/appStore';
 
 interface RelayBarProps {
@@ -24,7 +24,8 @@ export const RelayBar: React.FC<RelayBarProps> = ({
     fetchRelayCandidates,
     preferredRelay,
     isRankingRelays,
-    rankRelays,
+    refreshRelays,
+    relayRank,
   } = useAppStore();
 
   useEffect(() => {
@@ -105,32 +106,39 @@ export const RelayBar: React.FC<RelayBarProps> = ({
                   <option key={node.id} value={node.id}>
                     [{node.country_code}] {node.name} ({node.protocol.toUpperCase()} ·{' '}
                     {node.latency_ms ? `${node.latency_ms}ms` : '未测'}
-                    {formatBandwidth(node.speed_bps) ? ` · ${formatBandwidth(node.speed_bps)}` : ''})
+                    {formatBandwidth(node.speed_bps) ? ` · ${formatBandwidth(node.speed_bps)}` : ''}
+                    {node.status === 'dead' ? ' · 实测不通' : ''})
                   </option>
                 ))}
               </select>
               <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
             </div>
 
+            {/* 一个按钮做完"刷新"该做的事:拉最新候选 → 真实建联实测 → 把选择
+                落到可用那台上。以前这里有两个按钮,一个只重拉列表(按完什么都没变),
+                另一个才实测;用户按的是前者,于是"刷新没有价值"。 */}
             <button
-              onClick={() => rankRelays()}
+              onClick={() => refreshRelays()}
               disabled={isRankingRelays}
-              title={isRankingRelays ? '正在逐个真实建联测速…' : '重新实测各中转节点的延迟与带宽'}
+              title={isRankingRelays ? '正在逐个真实建联测速…' : '刷新候选并实测延迟与带宽，自动选用当前可用的中转'}
               className="p-1.5 rounded-lg bg-[#191d2c] hover:bg-[#22283d] text-gray-400 hover:text-gray-200 border border-[#2e354e] transition-colors disabled:opacity-60"
             >
-              <Activity className={`w-3.5 h-3.5 ${isRankingRelays ? 'animate-pulse text-blue-400' : ''}`} />
-            </button>
-
-            <button
-              onClick={() => fetchRelayCandidates()}
-              title="刷新可用中转候选节点"
-              className="p-1.5 rounded-lg bg-[#191d2c] hover:bg-[#22283d] text-gray-400 hover:text-gray-200 border border-[#2e354e] transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className={`w-3.5 h-3.5 ${isRankingRelays ? 'animate-spin text-blue-400' : ''}`} />
             </button>
           </div>
         )}
       </div>
+
+      {/* 刷新这一下必须留下一句话:成功是选中了谁,失败是为什么没能测。 */}
+      {relayRank && (
+        <p
+          className={`self-start text-[11px] leading-relaxed ${
+            relayRank.ok ? 'text-emerald-400' : 'text-amber-400'
+          }`}
+        >
+          {relayRank.message}
+        </p>
+      )}
     </div>
   );
 };

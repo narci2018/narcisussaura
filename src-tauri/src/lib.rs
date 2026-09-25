@@ -226,13 +226,23 @@ fn store_preferred_relay(
     state: &AppState,
     ranking: &relay_selector::RelayRanking,
 ) -> Option<String> {
-    if let Some(id) = &ranking.preferred_id {
-        let snapshot = {
-            let mut settings = state.settings.write();
-            settings.preferred_relay_id = Some(id.clone());
-            settings.clone()
-        };
+    // 有胜者就记下它;候选确实被拨过而一个都没胜,就把旧的优选**清掉**。留着它的
+    // 话,面板上的"自动优选（已实测）"会继续指着那台刚拨不通的中转,而"刷新"就
+    // 白按了一次。
+    let changed = {
+        let mut settings = state.settings.write();
+        match &ranking.preferred_id {
+            Some(id) => {
+                settings.preferred_relay_id = Some(id.clone());
+                true
+            }
+            None if ranking.tested > 0 => settings.preferred_relay_id.take().is_some(),
+            None => false,
+        }
+    };
+    if changed {
         if let Ok(dir) = app.path().app_data_dir() {
+            let snapshot = state.settings.read().clone();
             if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
                 let _ = std::fs::write(dir.join("settings.json"), json);
             }

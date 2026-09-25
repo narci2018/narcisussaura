@@ -542,15 +542,10 @@ impl NodeManager {
     ///
     /// `preferred_id` is what the startup ranking actually dialled traffic
     /// through (`settings.preferred_relay_id`): a measured node beats this
-    /// heuristic list, so it wins whenever it is still a candidate at all.
+    /// heuristic list, so it wins whenever it is still usable at all — see
+    /// [`pick_usable_relay`].
     pub fn get_best_relay_node(&self, preferred_id: Option<&str>) -> Option<UnifiedNode> {
-        let candidates = self.get_relay_candidates();
-        if let Some(id) = preferred_id.filter(|id| !id.trim().is_empty()) {
-            if let Some(hit) = candidates.iter().find(|n| n.id == id) {
-                return Some(hit.clone());
-            }
-        }
-        candidates.into_iter().next()
+        pick_usable_relay(&self.get_relay_candidates(), preferred_id)
     }
 
     pub fn add_node(&self, mut node: UnifiedNode) -> Result<UnifiedNode, String> {
@@ -1083,6 +1078,29 @@ impl NodeManager {
     }
 }
 
+/// Which candidate a lane or a chain hop should dial through.
+///
+/// `preferred_id` (what the last real ranking measured) beats the heuristic order
+/// of the list, but only while it is still usable: a relay that the ranking or a
+/// liveness pass dialled and failed is stored `Dead`, and handing that same node
+/// to every later pass is how v0.2.110 kept blaming one dead relay for a whole
+/// list's failures. When every candidate reads `Dead` we still have to pick
+/// something — those verdicts are as stale as the list is long, and a fresh dial
+/// is the only way to learn otherwise — so fall back to the heuristic first.
+fn pick_usable_relay(candidates: &[UnifiedNode], preferred_id: Option<&str>) -> Option<UnifiedNode> {
+    let usable = |n: &UnifiedNode| n.status != NodeStatus::Dead;
+    if let Some(id) = preferred_id.filter(|id| !id.trim().is_empty()) {
+        if let Some(hit) = candidates.iter().find(|n| n.id == id && usable(n)) {
+            return Some(hit.clone());
+        }
+    }
+    candidates
+        .iter()
+        .find(|n| usable(n))
+        .or_else(|| candidates.first())
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1124,6 +1142,40 @@ mod tests {
             status,
             config: json!({}),
         }
+    }
+
+    /// 判死的中转不能再被"自动优选"复用 —— 否则每一轮测活都会怪同一台中转。
+    #[test]
+    fn a_relay_measured_dead_is_not_handed_out_again() {
+        let list = vec![
+            group_node("Default", "preferred", NodeStatus::Dead, Some(50)),
+            group_node("Default", "second", NodeStatus::Alive, Some(300)),
+            group_node("Default", "third", NodeStatus::Unknown, None),
+        ];
+        assert_eq!(
+            pick_usable_relay(&list, Some("preferred")).map(|n| n.id),
+            Some("second".to_string()),
+            "首选已判死,必须改用下一台可用的"
+        );
+        // 没测过的排在前面也不该抢走实测通过的那台
+        let unmeasured_first = vec![
+            group_node("Default", "fresh", NodeStatus::Unknown, None),
+            group_node("Default", "measured", NodeStatus::Alive, Some(120)),
+        ];
+        assert_eq!(
+            pick_usable_relay(&unmeasured_first, Some("measured")).map(|n| n.id),
+            Some("measured".to_string())
+        );
+        // 全部判死时仍要给 lane 一个成员:判错的是旧账,不是没有候选
+        assert_eq!(
+            pick_usable_relay(
+                &[group_node("Default", "d1", NodeStatus::Dead, None)],
+                Some("d1")
+            )
+            .map(|n| n.id),
+            Some("d1".to_string())
+        );
+        assert!(pick_usable_relay(&[], Some("anything")).is_none(), "没有候选就没有中转");
     }
 
     #[test]

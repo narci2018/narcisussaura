@@ -256,6 +256,7 @@ struct LaneSetup {
     binary: PathBuf,
     dir: PathBuf,
     relay_yaml: String,
+    relay_id: String,
     relay_name: String,
 }
 
@@ -279,9 +280,56 @@ fn prepare_lane(
             .app_data_dir()
             .map_err(|e| format!("app_data_dir: {}", e))?,
         relay_yaml,
+        relay_id: relay.id.clone(),
         relay_name: relay.name.clone(),
     })
 }
+
+/// Take a relay that just failed its own dial out of the rotation.
+///
+/// Writing `Dead` onto the record is what stops [`prepare_lane`] from handing the
+/// same broken relay to the next pass (`pick_usable_relay` skips dead candidates),
+/// and clearing `preferred_relay_id` is what stops the panel from still showing it
+/// as "自动优选（已实测）". Without this the app would blame one dead relay for
+/// every list forever: the verdict is only useful if it changes what happens next.
+fn retire_relay(app: &AppHandle, node_manager: &NodeManager, setup: &LaneSetup) {
+    if let Some(mut demoted) = node_manager
+        .get_all()
+        .into_iter()
+        .find(|n| n.id == setup.relay_id)
+    {
+        demoted.status = NodeStatus::Dead;
+        demoted.last_checked = Some(chrono::Utc::now().timestamp());
+        if let Err(e) = node_manager.update_node(demoted) {
+            log::warn!("liveness: 死中转「{}」未能写回库存: {}", setup.relay_name, e);
+        }
+    }
+    let Some(state) = app.try_state::<crate::AppState>() else {
+        return;
+    };
+    let snapshot = {
+        let mut settings = state.settings.write();
+        if settings.preferred_relay_id.as_deref() != Some(setup.relay_id.as_str()) {
+            None
+        } else {
+            settings.preferred_relay_id = None;
+            Some(settings.clone())
+        }
+    };
+    let Some(snapshot) = snapshot else {
+        return;
+    };
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
+    if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+        let _ = std::fs::write(dir.join("settings.json"), json);
+    }
+}
+
+/// 一台中转被判死之后要对用户说的那半句:光说"中转不可用"等于把球踢回给用户,
+/// 而这一台已经不会再被用到了。
+const RELAY_RETIRED_TAIL: &str = "已把这台中转记为不可用，下一轮测活会自动改用其他中转（若列表里还有）";
 
 /// Dial every server of one list, publishing as it goes.
 ///
@@ -390,11 +438,12 @@ pub async fn measure_one(
     drop(lane);
 
     if !relay_reachable {
+        retire_relay(app, node_manager, &setup);
         return Ok(ProbeOutcome::new(
             "relay-dead",
             format!(
-                "中转不可用:中转节点「{}」现在拨不通,所以这个出口节点未判定(不是它不可用)—— 在面板上方换一个中转,或断开重连让中转重新优选",
-                relay_name
+                "中转不可用:中转节点「{}」连拨 {} 次都不通,所以这个出口节点未判定(不是它不可用)—— {}；再点一次「测活」可重试这个节点",
+                relay_name, RELAY_ATTEMPTS, RELAY_RETIRED_TAIL
             ),
             None,
         ));
@@ -478,14 +527,20 @@ impl ProbeOutcome {
     }
 }
 
-/// 中转自身是否拨得通。一次约 2 秒,所以同一批里复用,但过期后要重问一次 ——
-/// 中转会在跑的过程中挂掉。
+/// 中转自身是否拨得通。一次判定要连续拨 [`RELAY_ATTEMPTS`] 次才算数 —— 只拨一次
+/// 的话,一条刚失败过的 openvpn 拨号留下的抖动会把中转误判成死了,而"几秒前才
+/// 用它测出可用"和"中转不可用"同时出现在屏幕上(v0.2.110 现场就是这个矛盾)。
 struct RelayWatch {
     name: String,
     last: Option<(bool, std::time::Instant)>,
 }
 
-/// 复用中转结论的时间窗。
+/// 判定"中转不可用"所需的连续失败次数。每一次都是真实握手 + 一个 204 往返。
+const RELAY_ATTEMPTS: usize = 3;
+/// 两次自检之间给核心一点时间:上一条失败拨号的连接还在拆,立刻重拨最容易又超时。
+const RELAY_RETRY_GAP: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// 复用"通"这个结论的时间窗。"不通"不复用:下一张卡片必须重新问一遍。
 const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl RelayWatch {
@@ -503,17 +558,34 @@ impl RelayWatch {
         self.last = None;
     }
 
-    /// 只在节点拨失败时问一次;答案在 [`RELAY_RECHECK`] 内复用。
+    /// 节点拨失败时问一次中转:连拨 `RELAY_ATTEMPTS` 次都不通才说它不可用。
     async fn reachable(&mut self, lane: &Lane) -> bool {
-        if let Some((ok, at)) = self.last {
+        if let Some((true, at)) = self.last {
             if at.elapsed() < RELAY_RECHECK {
-                return ok;
+                return true;
             }
         }
-        let ok = lane.measure_member(RELAY_MEMBER, PROBE_204_URL).await.is_some();
-        log::info!("liveness: 中转「{}」自检 → {}", self.name, if ok { "可用" } else { "拨不通" });
-        self.last = Some((ok, std::time::Instant::now()));
-        ok
+        for attempt in 0..RELAY_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(RELAY_RETRY_GAP).await;
+            }
+            if lane.check_relay(PROBE_204_URL).await.is_some() {
+                log::info!(
+                    "liveness: 中转「{}」自检 → 可用(第 {} 次拨通)",
+                    self.name,
+                    attempt + 1
+                );
+                self.last = Some((true, std::time::Instant::now()));
+                return true;
+            }
+        }
+        log::warn!(
+            "liveness: 中转「{}」连拨 {} 次都不通,失败该记在它头上",
+            self.name,
+            RELAY_ATTEMPTS
+        );
+        self.last = Some((false, std::time::Instant::now()));
+        false
     }
 }
 
@@ -671,12 +743,15 @@ async fn probe_group(
                 // 节点标成"不可用"是假账:它们根本没被真正测到。停手,并说清是谁的问题。
                 stats.not_judged += 1;
                 stats.aborted = true;
+                retire_relay(app, node_manager, &setup);
                 stats.note = Some(format!(
-                    "中转节点「{}」拨不通，本轮中止：{} 个节点未判定（不是它们不可用），已测 {}/{} 个",
+                    "中转节点「{}」连拨 {} 次都不通，本轮中止：{} 个节点未判定（不是它们不可用），已测 {}/{} 个；{}",
                     relay.name(),
+                    RELAY_ATTEMPTS,
                     stats.not_judged,
                     stats.tested,
-                    stats.total
+                    stats.total,
+                    RELAY_RETIRED_TAIL
                 ));
                 break;
             }

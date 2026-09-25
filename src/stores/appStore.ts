@@ -82,6 +82,10 @@ interface AppStore {
   setProbeOutcome: (nodeId: string, outcome: ProbeOutcome) => void;
   fetchRelayCandidates: () => Promise<void>;
   rankRelays: () => Promise<void>;
+  // 中转栏"刷新"这一下的结论,必须成句显示在栏上。从前这个按钮只重新拉一次候选
+  // 列表,按完和没按一样 —— 而它该回答的是"现在哪台中转能用"。
+  relayRank: { message: string; ok: boolean } | null;
+  refreshRelays: () => Promise<void>;
   setRelayEnabled: (enabled: boolean) => void;
   setSelectedRelayNodeId: (id: string) => void;
 
@@ -195,6 +199,31 @@ function translateVpnStage(raw: string): string {
   return raw;
 }
 
+/** IPC 失败原因必须落到面板上,不能只进 console。 */
+const errText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** 实测带宽是字节/秒,换算成看得懂的 MB/s */
+const formatBandwidth = (bytesPerSecond?: number | null): string | null => {
+  if (!bytesPerSecond || bytesPerSecond <= 0) return null;
+  return `${(bytesPerSecond / 1048576).toFixed(1)}MB/s`;
+};
+
+const describeRelay = (n: {
+  name: string;
+  country_code?: string;
+  latency_ms?: number | null;
+  speed_bps?: number | null;
+}): string => {
+  const detail = [
+    n.country_code,
+    n.latency_ms != null ? `${n.latency_ms}ms` : null,
+    formatBandwidth(n.speed_bps),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return `「${n.name}」${detail ? ` (${detail})` : ''}`;
+};
+
 export const useAppStore = create<AppStore>((set, get) => ({
   status: 'disconnected',
   connectedNode: null,
@@ -280,21 +309,64 @@ export const useAppStore = create<AppStore>((set, get) => ({
       set({ relayCandidates });
     } catch (e) {
       console.error('Failed to fetch relay candidates:', e);
+      // 候选列表拉不动,面板上剩下的就是一个空下拉框 —— 和按钮坏了没法区分。
+      set({ relayRank: { message: `中转候选没能刷新：${errText(e)}`, ok: false } });
     }
   },
   rankRelays: async () => {
-    if (get().isRankingRelays) return;
-    set({ isRankingRelays: true });
+    if (get().isRankingRelays) {
+      set({ relayRank: { message: '中转实测正在进行中，这一轮测完会自己报结果', ok: false } });
+      return;
+    }
+    set({ isRankingRelays: true, relayRank: null });
     try {
       const ranking = await api.rankRelays();
+      if (!ranking) {
+        set({ relayRank: { message: '实测没能进行：核心没有返回任何结果，请查看日志', ok: false } });
+        return;
+      }
       set({ preferredRelay: ranking });
       // 测得的延迟/带宽写回在节点记录上,重新拉一次候选才有真实数字
       await get().fetchRelayCandidates();
+      const row = ranking.preferred_id
+        ? get().relayCandidates.find((n) => n.id === ranking.preferred_id)
+        : undefined;
+      if (ranking.preferred_id) {
+        // 实测过的胜者就是"当前可用的中转",所以这一轮结束后选择框必须落在它身上。
+        // 'auto' 就是它:后端读的就是刚写下的 preferred_relay_id。
+        set({
+          selectedRelayNodeId: 'auto',
+          relayRank: {
+            message: `已实测并自动选用：${describeRelay(
+              row ?? {
+                name: ranking.preferred_name ?? ranking.preferred_id,
+                latency_ms: ranking.latency_ms,
+                speed_bps: ranking.speed_bps,
+              }
+            )}${ranking.aborted ? `（真实连接占用了设备，本轮只测了 ${ranking.tested} 台）` : ''}`,
+            ok: true,
+          },
+        });
+      } else if (ranking.tested === 0) {
+        set({ relayRank: { message: '实测没能进行：没有可拨号的中转候选，请先导入订阅（或让本地代理监听 10808/7890）', ok: false } });
+      } else if (ranking.aborted) {
+        set({ relayRank: { message: `真实连接正在占用设备，实测在 ${ranking.tested} 台后停下，还没测出可用中转`, ok: false } });
+      } else {
+        set({ relayRank: { message: `${ranking.tested} 台候选中转全部拨不通：暂时没有可用中转，请更新订阅或换一批节点`, ok: false } });
+      }
     } catch (e) {
       console.error('Failed to rank relay candidates:', e);
+      set({ relayRank: { message: `实测没能进行：${errText(e)}`, ok: false } });
     } finally {
       set({ isRankingRelays: false });
     }
+  },
+  relayRank: null,
+  refreshRelays: async () => {
+    // 刷新 = 拉最新候选 + 真实建联实测 + 把选择落到可用那台上。只做第一件事的
+    // 按钮按完和没按一样,用户要的"刷新有价值"就是这个意思。
+    await get().fetchRelayCandidates();
+    await get().rankRelays();
   },
 
   init: async () => {

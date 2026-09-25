@@ -41,6 +41,14 @@ pub const LANE_LIVENESS_FIRST: usize = 2;
 
 /// One openvpn handshake that never completes costs the whole batch this much.
 pub const NODE_DIAL_TIMEOUT: Duration = Duration::from_secs(6);
+/// The relay gets a wider budget than a node dial, and the difference matters:
+/// a node dial answers "is this server up", while a relay dial is used to
+/// *blame* something for a whole round of failures. Judging a relay dead because
+/// its first 204 after ten openvpn retransmits took 6.5s is how one node's
+/// verdict came out "可用" and its neighbour's "中转不可用" seconds apart.
+/// Judging a relay takes three of these plus the node dial that prompted it, and
+/// the whole thing has to answer inside the panel's 60-second deadline.
+pub const RELAY_CHECK_TIMEOUT: Duration = Duration::from_secs(8);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// HTTPS on purpose: nodes that only egress 443 RST plain-HTTP tunnels, and were
@@ -323,16 +331,28 @@ impl Lane {
 
     /// Measure a member: real handshake + one 204 round trip.
     pub async fn measure_member(&self, name: &str, url: &str) -> Option<i64> {
+        self.measure_member_with(name, url, NODE_DIAL_TIMEOUT).await
+    }
+
+    async fn measure_member_with(&self, name: &str, url: &str, timeout: Duration) -> Option<i64> {
         let _guard = self.gate.lock().await;
         if self.select(name).await.is_err() {
             return None;
         }
-        let client = self.proxy_client(NODE_DIAL_TIMEOUT).ok()?;
+        let client = self.proxy_client(timeout).ok()?;
         let start = std::time::Instant::now();
         match client.get(url).send().await {
             Ok(r) if r.status().as_u16() < 500 => Some(start.elapsed().as_millis() as i64),
             _ => None,
         }
+    }
+
+    /// Ask the relay itself whether it can carry traffic right now, on a longer
+    /// clock than a node dial gets: a slow-but-working relay must not be written
+    /// off as dead by a budget tuned for openvpn handshakes.
+    pub async fn check_relay(&self, url: &str) -> Option<i64> {
+        self.measure_member_with(RELAY_MEMBER, url, RELAY_CHECK_TIMEOUT)
+            .await
     }
 
     /// Download throughput of a member, in bytes/sec (None if it cannot carry bulk).

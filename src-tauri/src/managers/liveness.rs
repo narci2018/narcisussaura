@@ -24,7 +24,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::managers::connection_manager::ConnectionManager;
-use crate::managers::lane_core::{Lane, NodeVerdict, RELAY_MEMBER, LANE_LIVENESS_FIRST, PROBE_204_URL};
+use crate::managers::lane_core::{Lane, NodeVerdict, RELAY_MEMBER, LANE_LIVENESS_FIRST};
 use crate::managers::node_manager::NodeManager;
 use crate::models::{NodeStatus, ProtocolType, UnifiedNode};
 
@@ -431,7 +431,7 @@ pub async fn measure_one(
         ));
     }
 
-    let verdict = lane.test_node(&name, PROBE_204_URL).await;
+    let verdict = lane.test_node(&name).await;
     let mut relay = RelayWatch::new(setup.relay_name.clone());
     let relay_reachable = if verdict.alive { true } else { relay.reachable(&lane).await };
     let relay_name = setup.relay_name.clone();
@@ -569,7 +569,7 @@ impl RelayWatch {
             if attempt > 0 {
                 tokio::time::sleep(RELAY_RETRY_GAP).await;
             }
-            if lane.check_relay(PROBE_204_URL).await.is_some() {
+            if lane.check_relay().await.is_some() {
                 log::info!(
                     "liveness: 中转「{}」自检 → 可用(第 {} 次拨通)",
                     self.name,
@@ -737,7 +737,7 @@ async fn probe_group(
                 rejected += 1;
                 continue;
             }
-            let verdict = lane.test_node(name, PROBE_204_URL).await;
+            let verdict = lane.test_node(name).await;
             if !verdict.alive && !relay.reachable(&lane).await {
                 // 失败的第一种解释是承载它的那台中转自己拨不通 —— 那时候把这些出口
                 // 节点标成"不可用"是假账:它们根本没被真正测到。停手,并说清是谁的问题。

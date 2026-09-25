@@ -1,4 +1,5 @@
 use crate::core::{CoreAdapter, SingBoxAdapter};
+use crate::managers::lane_core::{first_answer, PROBE_204_URLS};
 use crate::models::{AppSettings, ConnectionStatus, ProxyMode, TrafficStats, UnifiedNode};
 use crate::platform::{core_binary_name, hide_window_std, PlatformProxy, ProcessGuard};
 use parking_lot::Mutex;
@@ -1147,6 +1148,38 @@ impl ConnectionManager {
         let _ = PlatformProxy::disable_proxy();
     }
 
+    /// The ECH half of a relay entry, as mihomo wants it.
+    ///
+    /// These subscription links all carry `ech=cloudflare-ech.com+<resolver>` and
+    /// sing-box is handed the *name* to query, so it performs ECH; mihomo was
+    /// handed nothing, so the same node was dialled with and without Encrypted
+    /// ClientHello depending on which core happened to be running. This closes
+    /// that gap — it is *not* what made a working relay read as 中转不可用 (that
+    /// was the single probe endpoint, see `lane_core::PROBE_204_URLS`).
+    ///
+    /// The config has to be the live one. Measured against the bundled v1.19.30
+    /// and the user's own Hong Kong node: a day-old ECHConfig (Cloudflare rotates
+    /// them) produced 0/7 dials — every request died at 12s — while the freshly
+    /// resolved one answered 204 in 0.21-0.35s on the same node. So when the
+    /// lookup fails the line is left out entirely rather than reused stale, and
+    /// `query-server-name` is not used either (mihomo's own DNS answer never
+    /// carries the `ech` parameter; with the lane's DNS off that fails every dial).
+    fn mihomo_ech_opts(conf: &serde_json::Value) -> String {
+        let Some(raw) = conf.get("ech").and_then(|v| v.as_str()) else {
+            return String::new();
+        };
+        match crate::core::ech::config_for(raw) {
+            Some(config) => format!(
+                "\n    ech-opts:\n      enable: true\n      config: \"{}\"",
+                config
+            ),
+            None => {
+                log::warn!("ech: 拿不到 {} 的 ECHConfig，本次中转条目按无 ECH 生成(该节点可能拨得慢)", raw);
+                String::new()
+            }
+        }
+    }
+
     /// One relay proxy entry at two-space indent, named `name`. The connect path
     /// always calls it `relay` (the openvpn entry points at it with dialer-proxy);
     /// the ranking lane puts many candidates in one config, so it names them.
@@ -1183,6 +1216,7 @@ r#"  - name: {}
     network: {}"#,
                     name, relay.address, relay.port, password, sni, network
                 );
+                s.push_str(&Self::mihomo_ech_opts(conf));
                 if network == "ws" {
                     let path = conf.get("path").and_then(|v| v.as_str()).unwrap_or("/");
                     let host = conf.get("host").and_then(|v| v.as_str()).unwrap_or(sni);
@@ -1240,6 +1274,7 @@ r#"
     client-fingerprint: {}"#,
                         sni, fp
                     ));
+                    s.push_str(&Self::mihomo_ech_opts(conf));
                 }
                 if network == "ws" {
                     let path = conf.get("path").and_then(|v| v.as_str()).unwrap_or("/");
@@ -1284,6 +1319,7 @@ r#"
     skip-cert-verify: true"#,
                         sni
                     ));
+                    s.push_str(&Self::mihomo_ech_opts(conf));
                 }
                 if network == "ws" {
                     let path = conf.get("path").and_then(|v| v.as_str()).unwrap_or("/");
@@ -1820,45 +1856,18 @@ rules:
                 }
             }
 
-            // Primary probe: Cloudflare captive portal 204 endpoint.
-            // Must be https: many nodes RST port-80 tunnels, so an http probe
-            // fails even when the tunnel carries real (443) traffic fine.
-            match client.get("https://cp.cloudflare.com/generate_204").send().await {
-                Ok(resp) if resp.status().as_u16() == 204 || resp.status().as_u16() == 200 => {
-                    return Ok(());
-                }
-                Ok(resp) => {
-                    last_err = format!("HTTP 状态码: {}", resp.status());
-                }
-                Err(e) => {
-                    last_err = if e.is_timeout() {
-                        format!("请求超时（单次时限 {}ms）", timeout_ms)
-                    } else if e.is_connect() {
-                        format!("连接失败: {}", e)
-                    } else {
-                        format!("{}", e)
-                    };
-                }
+            // 一次判定,所有探测站点同时拨。以前这里是"Cloudflare → Google → Trace"
+            // 的串行阶梯,而实测这批免费节点对 Cloudflare 是整段黑洞(同一台香港节点
+            // 12/12 次拨号全是 000)—— 于是每一轮验证都先白烧掉一整个超时预算,才轮
+            // 到真正会答的那个站点。必须 https:很多节点只放行 443,port-80 的隧道会被
+            // RST,那会把能跑真实流量的隧道误判成死路。
+            let budget = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .min(std::time::Duration::from_millis(timeout_ms));
+            if first_answer(&client, PROBE_204_URLS, budget).await.is_some() {
+                return Ok(());
             }
-
-            if connect_gen.load(Ordering::SeqCst) != current_gen {
-                return Err("Connection cancelled by user".to_string());
-            }
-
-            // Secondary fallback probe: Google 204 endpoint
-            if let Ok(resp) = client.get("https://www.google.com/generate_204").send().await {
-                let code = resp.status().as_u16();
-                if code == 204 || code == 200 {
-                    return Ok(());
-                }
-            }
-
-            // Tertiary fallback: Cloudflare Trace (hostname form so the cert verifies)
-            if let Ok(resp) = client.get("https://one.one.one.one/cdn-cgi/trace").send().await {
-                if resp.status().is_success() {
-                    return Ok(());
-                }
-            }
+            last_err = format!("请求超时（单次时限 {}ms，{} 个探测站点同时无应答）", timeout_ms, PROBE_204_URLS.len());
         }
 
         if connect_gen.load(Ordering::SeqCst) != current_gen {
@@ -2659,5 +2668,89 @@ mod tests {
         assert!(!deploy_bundled_file(&src, &src), "源就是目标时不许动它");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn relay_node(protocol: crate::models::ProtocolType, config: serde_json::Value) -> UnifiedNode {
+        UnifiedNode {
+            id: "r1".to_string(),
+            name: "HK relay".to_string(),
+            protocol,
+            address: "156.226.168.206".to_string(),
+            port: 443,
+            country_code: "HK".to_string(),
+            country_name: "Hong Kong".to_string(),
+            city: String::new(),
+            group: "Default".to_string(),
+            tags: vec![],
+            favorite: false,
+            latency_ms: None,
+            speed_bps: None,
+            last_checked: None,
+            status: crate::models::NodeStatus::Unknown,
+            config,
+        }
+    }
+
+    /// 订阅里的每一个节点都是 ECH 节点。sing-box 自己解析 HTTPS 记录,拿得到
+    /// ECHConfig;mihomo 拿不到,于是同一个节点在小白模式 0.3s 连上、在专家模式
+    /// 拨 8-11.5s 后超时 —— 报告出来就是"链式中转节点不可用"。中转条目必须把
+    /// ECHConfig 原样交给 mihomo。
+    #[test]
+    fn relay_entries_carry_the_ech_config_the_subscription_gives_us() {
+        let ech = "AEX+DQBB+gAgACBHo61Y/t95YsvhltSdUujm/ZV8vLg/WjmnWqd8SeZDOAAEAAEAAQASY2xvdWRmbGFyZS1lY2guY29tAAA=";
+        for (protocol, config) in [
+            (
+                crate::models::ProtocolType::Vless,
+                json!({ "uuid": "u", "tls": true, "network": "ws", "path": "/images", "ech": ech }),
+            ),
+            (
+                crate::models::ProtocolType::Vmess,
+                json!({ "uuid": "u", "tls": true, "network": "ws", "path": "/images", "ech": ech }),
+            ),
+            (
+                crate::models::ProtocolType::Trojan,
+                json!({ "password": "p", "network": "ws", "path": "/images", "ech": ech }),
+            ),
+        ] {
+            let block = ConnectionManager::format_mihomo_relay_proxy(
+                &relay_node(protocol.clone(), config.clone()),
+                "relay",
+            )
+            .unwrap();
+            assert!(
+                block.contains("ech-opts:") && block.contains(&format!("config: \"{}\"", ech)),
+                "{protocol:?} 中转条目丢了 ECH:\n{block}"
+            );
+        }
+    }
+
+    /// reality 自带密钥,不该出现 ECH;拿不到 ECHConfig 时也不能编造一个 —— 只有
+    /// `query-server-name` 而没有 config 在中转通道里是每次拨号必死。
+    #[test]
+    fn ech_opts_appear_only_when_there_is_a_real_config() {
+        let reality = ConnectionManager::format_mihomo_relay_proxy(
+            &relay_node(
+                crate::models::ProtocolType::Vless,
+                json!({ "uuid": "u", "security": "reality", "public_key": "k", "network": "ws", "path": "/", "ech": "cloudflare-ech.com+https://dns.alidns.com/dns-query" }),
+            ),
+            "relay",
+        )
+        .unwrap();
+        assert!(!reality.contains("ech"));
+
+        // 一个查不到记录的域名:留空,不写 ech-opts。
+        let dead_name = format!("no-such-host-{}.invalid", uuid::Uuid::new_v4());
+        let plain = ConnectionManager::format_mihomo_relay_proxy(
+            &relay_node(
+                crate::models::ProtocolType::Vless,
+                json!({ "uuid": "u", "tls": true, "network": "tcp", "ech": dead_name }),
+            ),
+            "relay",
+        )
+        .unwrap();
+        assert!(
+            !plain.contains("ech-opts"),
+            "拿不到 ECHConfig 时必须整段省略:\n{plain}"
+        );
     }
 }

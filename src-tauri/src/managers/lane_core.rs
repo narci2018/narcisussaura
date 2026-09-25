@@ -53,15 +53,47 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// HTTPS on purpose: nodes that only egress 443 RST plain-HTTP tunnels, and were
 /// misrated by the inspector's old port-80 probe (see inspector_manager).
-pub const PROBE_204_URL: &str = "https://cp.cloudflare.com/generate_204";
+///
+/// Four endpoints, dialled **at the same time**; the first 204 wins. This is what
+/// "链式中转节点不可用" really was. Measured 2026-09-26 through the user's own
+/// Hong Kong fleet with the bundled core: `cp.cloudflare.com/generate_204`
+/// answered `000` at the full timeout in **every** dial of every config shape
+/// (with ECH, without, disguised path, `/`), while `www.gstatic.com` returned 204
+/// in 0.15s on the same lane minutes apart — and `clients3.google.com`, dead in
+/// one battery, answered 204 in 0.17s in the next. Egress through a free node
+/// fleet is bursty, so no single probe host can carry a verdict, and a race costs
+/// nothing: the wall clock is still one dial budget where a serial retry triples
+/// it. Cloudflare stays last precisely because it never once answered here.
+pub const PROBE_204_URLS: &[&str] = &[
+    "https://www.gstatic.com/generate_204",
+    "https://clients3.google.com/generate_204",
+    "https://www.apple.com/library/test/success.html",
+    "https://cp.cloudflare.com/generate_204",
+];
 
 /// The relay entry's name inside a lane. [`build_lane_config`] puts it in the
 /// PROBE group, so a probe caller can dial **the relay by itself** — that is what
 /// separates "this exit node is dead" from "the relay carrying it is dead", and a
 /// liveness verdict is worthless without that distinction.
 pub const RELAY_MEMBER: &str = "relay";
-/// 2MB is enough to separate a 5Mbps link from a 500Mbps one inside ~10s.
-pub const THROUGHPUT_URL: &str = "https://speed.cloudflare.com/__down?bytes=2000000";
+/// Bulk sample for a bandwidth number: a couple of megabytes separates a 5Mbps
+/// relay from a 500Mbps one, if it arrives at all.
+///
+/// Tried in order until one actually streams, for the same reason the 204 probe
+/// has alternates: `speed.cloudflare.com` is Cloudflare, and through this node
+/// fleet every Cloudflare host measured 000 (`cp.cloudflare.com` in 12/12 dials)
+/// while a jsdelivr file streamed 131-222KB without trouble. A bandwidth number
+/// that always times out is not a measurement, it is the refresh button taking
+/// another twelve seconds per candidate — so the CDN host leads and the Cloudflare
+/// one is the fallback, exactly like the probe list above.
+pub const THROUGHPUT_URLS: &[&str] = &[
+    "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "https://speed.cloudflare.com/__down?bytes=2000000",
+];
+/// Below this a "rate" says nothing: one TLS round trip can凑出这个数. How long
+/// the caller waits for it is the caller's business — the relay refresh wants
+/// seconds, a bandwidth label can afford longer.
+const THROUGHPUT_MIN_BYTES: usize = 64 * 1024;
 
 fn lane_mixed_port(index: usize) -> u16 {
     LANE_PORT_BASE + (index as u16 * 2)
@@ -153,6 +185,39 @@ rules:
         proxies = proxies,
         names = names.join(", ")
     )
+}
+
+/// Race the probe endpoints and return the first one that answers with a
+/// usable status, in milliseconds. Nobody waits for the losers: `JoinSet` drops
+/// the still-pending requests, so one black-holed probe host costs zero seconds
+/// of the verdict.
+///
+/// The connect path's own verification (`connection_manager`) calls this with
+/// [`PROBE_204_URLS`] too — the rule "no single host may decide whether a tunnel
+/// carries traffic" is not something each caller should have to reinvent.
+pub async fn first_answer(client: &reqwest::Client, urls: &[&str], budget: Duration) -> Option<i64> {
+    let mut set = tokio::task::JoinSet::new();
+    for url in urls {
+        let client = client.clone();
+        let url = url.to_string();
+        set.spawn(async move {
+            let start = std::time::Instant::now();
+            match client.get(&url).send().await {
+                Ok(r) if r.status().as_u16() < 500 => Some(start.elapsed().as_millis() as i64),
+                _ => None,
+            }
+        });
+    }
+    let winner = tokio::time::timeout(budget, async {
+        while let Some(joined) = set.join_next().await {
+            if let Some(ms) = joined.ok()? {
+                return Some(ms);
+            }
+        }
+        None
+    })
+    .await;
+    winner.unwrap_or(None)
 }
 
 impl Lane {
@@ -329,54 +394,93 @@ impl Lane {
             .map_err(|e| format!("{}", e))
     }
 
-    /// Measure a member: real handshake + one 204 round trip.
-    pub async fn measure_member(&self, name: &str, url: &str) -> Option<i64> {
-        self.measure_member_with(name, url, NODE_DIAL_TIMEOUT).await
+    /// Measure a member: real handshake + one 204 round trip, against every probe
+    /// endpoint at once.
+    pub async fn measure_member(&self, name: &str) -> Option<i64> {
+        self.measure_member_on(name, PROBE_204_URLS, NODE_DIAL_TIMEOUT)
+            .await
     }
 
-    async fn measure_member_with(&self, name: &str, url: &str, timeout: Duration) -> Option<i64> {
+    /// `measure_member` with the endpoint set and the clock spelled out, for the
+    /// tests and for the ignored end-to-end probe that talks to a local fixture.
+    pub async fn measure_member_on(
+        &self,
+        name: &str,
+        urls: &[&str],
+        timeout: Duration,
+    ) -> Option<i64> {
         let _guard = self.gate.lock().await;
         if self.select(name).await.is_err() {
             return None;
         }
         let client = self.proxy_client(timeout).ok()?;
-        let start = std::time::Instant::now();
-        match client.get(url).send().await {
-            Ok(r) if r.status().as_u16() < 500 => Some(start.elapsed().as_millis() as i64),
-            _ => None,
-        }
+        first_answer(&client, urls, timeout).await
     }
 
     /// Ask the relay itself whether it can carry traffic right now, on a longer
     /// clock than a node dial gets: a slow-but-working relay must not be written
     /// off as dead by a budget tuned for openvpn handshakes.
-    pub async fn check_relay(&self, url: &str) -> Option<i64> {
-        self.measure_member_with(RELAY_MEMBER, url, RELAY_CHECK_TIMEOUT)
-            .await
+    pub async fn check_relay(&self) -> Option<i64> {
+        let _guard = self.gate.lock().await;
+        let client = self.proxy_client(RELAY_CHECK_TIMEOUT).ok()?;
+        first_answer(&client, PROBE_204_URLS, RELAY_CHECK_TIMEOUT).await
+    }
+
+    /// Bandwidth of a member, trying each bulk host until one really streams.
+    /// Sequential on purpose: two downloads at once would measure each other.
+    ///
+    /// `window` is how long one host gets. Callers that only want a number for a
+    /// label can afford a long one; the relay refresh, which must answer in
+    /// seconds, passes a short one and reports no bandwidth rather than no relay.
+    pub async fn measure_throughput(&self, name: &str, window: Duration) -> Option<u64> {
+        for url in THROUGHPUT_URLS {
+            if let Some(bps) = self.measure_member_throughput(name, url, window).await {
+                return Some(bps);
+            }
+        }
+        None
     }
 
     /// Download throughput of a member, in bytes/sec (None if it cannot carry bulk).
-    pub async fn measure_member_throughput(&self, name: &str, url: &str) -> Option<u64> {
+    ///
+    /// Bytes are counted as they arrive and the sample stops at the window, so a
+    /// 20KB/s relay still gets a real number instead of a request that never
+    /// finished — the old version waited for the whole body inside one client
+    /// timeout, which on this fleet meant every candidate returned None.
+    pub async fn measure_member_throughput(
+        &self,
+        name: &str,
+        url: &str,
+        window: Duration,
+    ) -> Option<u64> {
         let _guard = self.gate.lock().await;
         self.select(name).await.ok()?;
-        let client = self.proxy_client(Duration::from_secs(12)).ok()?;
+        let client = self.proxy_client(window).ok()?;
         let start = std::time::Instant::now();
-        let resp = client.get(url).send().await.ok()?;
+        let mut resp = client.get(url).send().await.ok()?;
         if !resp.status().is_success() {
             return None;
         }
-        let bytes = resp.bytes().await.ok()?;
+        let mut bytes = 0usize;
+        while start.elapsed() < window {
+            match resp.chunk().await {
+                Ok(Some(chunk)) => bytes += chunk.len(),
+                // body finished on its own: the elapsed time is the real transfer time
+                Ok(None) => break,
+                Err(_) => break,
+            }
+        }
         let secs = start.elapsed().as_secs_f64();
-        if secs <= 0.05 || bytes.len() < 65536 {
+        if secs <= 0.05 || bytes < THROUGHPUT_MIN_BYTES {
             return None;
         }
-        Some((bytes.len() as f64 / secs) as u64)
+        Some((bytes as f64 / secs) as u64)
     }
 
     /// The whole point of the lane: decide whether `node` can carry traffic right
     /// now, by actually dialling it through the relay.
-    pub async fn test_node(&self, name: &str, probe_url: &str) -> NodeVerdict {
-        match self.measure_member(name, probe_url).await {
+    pub async fn test_node(&self, name: &str) -> NodeVerdict {
+        match self.measure_member(name).await {
             Some(ms) => NodeVerdict { alive: true, latency_ms: Some(ms.max(1)) },
             None => NodeVerdict { alive: false, latency_ms: None },
         }
@@ -532,9 +636,118 @@ r#"  - name: {}
             gate: tokio::sync::Mutex::new(()),
             members: vec!["n0".to_string()],
         };
-        let verdict = lane.test_node("n0", "http://cp.cloudflare.com/generate_204").await;
+        let verdict = lane.test_node("n0").await;
         assert!(!verdict.alive);
         assert_eq!(verdict.latency_ms, None);
+    }
+
+    /// 一个探测站点不能决定生死:慢站点必须被快站点顶替,而不是把整个判定拖到超时。
+    #[tokio::test]
+    async fn the_first_probe_endpoint_to_answer_decides_and_the_others_are_dropped() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::Arc;
+
+        fn spawn(kind: &'static str) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let addr = listener.local_addr().unwrap();
+            let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let counter = hits.clone();
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { continue };
+                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let mut buf = [0u8; 1024];
+                    let _ = stream.read(&mut buf);
+                    if kind == "fast" {
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                    }
+                    // "blackhole": accept, never answer — the request dies in the
+                    // client's own timeout, exactly like a filtered probe host.
+                }
+            });
+            (format!("http://{}", addr), hits)
+        }
+
+        let (fast, fast_hits) = spawn("fast");
+        let (slow, slow_hits) = spawn("blackhole");
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(4))
+            .build()
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        // slow first in the list: order must not decide the outcome.
+        let ms = first_answer(&client, &[slow.as_str(), fast.as_str()], Duration::from_secs(6))
+            .await
+            .expect("一个站点答了就该有结论");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "慢站点把判定拖成了整段预算: {:?}",
+            started.elapsed()
+        );
+        assert!(ms >= 0);
+
+        // The blackholed request is aborted with the JoinSet, so it never
+        // re-connects after the verdict.
+        let after = fast_hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(after >= 1);
+        let slow_before = slow_hits.load(std::sync::atomic::Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            slow_hits.load(std::sync::atomic::Ordering::SeqCst),
+            slow_before,
+            "判定出来后还在继续拨剩下的站点"
+        );
+        let _ = after;
+    }
+
+    /// 全部站点都不应答时不能编出一个延迟,而且它们是**同时**被拨的 —— 判定回来时
+    /// 两个站点都已经握过手了。串行重试要等第一个预算到期才碰第二个,那样这里只会
+    /// 数到一次。墙钟只当兜底:这台机器在满载时能把 2 秒拖成 3 秒。
+    #[tokio::test]
+    async fn all_probe_endpoints_silent_costs_the_budget_once() {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                counter.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                // 收下就不答:每个请求都只能等到预算耗尽。
+            }
+        });
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap();
+        let started = std::time::Instant::now();
+        let got = first_answer(
+            &client,
+            &[&format!("http://{}/a", addr), &format!("http://{}/b", addr)],
+            Duration::from_secs(2),
+        )
+        .await;
+        assert_eq!(got, None, "没人应答就不能编出一个延迟");
+        // 判定回来的那一刻,第二个站点的请求可能还在连接队列里,给它一点时间落地;
+        // 串行实现要等第一个 2s 预算耗尽才开始第二个,这个宽限吞不掉它。
+        let mut settles = 0;
+        while hits.load(Ordering::SeqCst) < 2 && settles < 20 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            settles += 1;
+        }
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "两个站点没有同时被拨");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 
     /// End-to-end proof of the two things the whole liveness feature rests on,
@@ -707,9 +920,7 @@ r#"  - name: {}
 
         // and a node that cannot handshake is reported dead, quickly, not hanging
         let started = std::time::Instant::now();
-        let verdict = lane
-            .test_node("n0", "http://cp.cloudflare.com/generate_204")
-            .await;
+        let verdict = lane.test_node("n0").await;
         assert!(!verdict.alive, "a dropped tunnel must not read as alive");
         assert!(
             started.elapsed() < Duration::from_secs(10),
@@ -743,7 +954,11 @@ r#"  - name: {}
 
         assert_eq!(rank.group_members().await, vec!["c0".to_string()]);
         let rtt = rank
-            .measure_member("c0", "http://www.vpngate.net/api/iphone/")
+            .measure_member_on(
+                "c0",
+                &["http://www.vpngate.net/api/iphone/"],
+                Duration::from_secs(8),
+            )
             .await
             .expect("candidate behind a working tunnel must measure an RTT");
         assert!(rtt > 0, "rtt was {}", rtt);

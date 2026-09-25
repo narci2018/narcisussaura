@@ -1,32 +1,55 @@
 //! Which node should carry everyone else's traffic?
 //!
-//! Until now the answer was fabricated: `NodeManager::get_relay_candidates`
-//! pushed any listening 127.0.0.1 proxy port to the front with a hard-coded
-//! "1ms / 100Mbps", and every other candidate was ranked by a TCP handshake
-//! ping — a number that says nothing about whether the node tunnels traffic,
-//! let alone how fast. The chain then dialed whatever that list said first,
-//! which is why "auto" relay selection looked random at best.
+//! The old answer was fabricated: `NodeManager::get_relay_candidates` pushed any
+//! listening 127.0.0.1 proxy port to the front with a hard-coded "1ms / 100Mbps",
+//! and everything else was ranked by a TCP handshake ping. Then the ranking
+//! measured up to ten candidates serially, each with a 2MB download — a refresh
+//! that took minutes to say "没有可用中转".
 //!
-//! This module measures instead: a relay candidate is asked to carry a real
-//! HTTPS round trip (latency) and a 2MB download (bandwidth) through a probe
-//! lane, and the winner is written back onto the node record plus
-//! `settings.preferred_relay_id`. The Hong Kong fleet is tried first because
-//! it is the subset that is realistically both fast and fat — testing it first
-//! stops the search from wandering through half the subscription.
+//! This module does what the user asked for instead of an exhaustive survey:
+//! **Hong Kong first, then the rest of Asia, then everything else, and the first
+//! candidate that really carries a probe stops the search.** One round trip per
+//! candidate for the verdict, and the bandwidth sample is taken once — on the
+//! winner, because that is the node about to carry the tunnel. A candidate is
+//! only declared dead after [`ATTEMPTS_PER_CANDIDATE`] dials (the v0.2.111 rule:
+//! one failed dial convicts nobody), and each dial races every probe endpoint
+//! ([`crate::managers::lane_core::PROBE_204_URLS`]) so a single black-holed probe
+//! host cannot kill a working relay. The winner is written back onto the node
+//! record plus `settings.preferred_relay_id`.
+//!
+//! Why geography leads rather than stored latency: from this network the Hong Kong
+//! fleet is the subset that is realistically both fast and fat, and trying it
+//! first is what turns "test everything" into "test one".
+
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::managers::connection_manager::ConnectionManager;
-use crate::managers::lane_core::{Lane, PROBE_204_URL, THROUGHPUT_URL};
+use crate::managers::lane_core::Lane;
 use crate::managers::node_manager::NodeManager;
 use crate::models::{NodeStatus, UnifiedNode};
 
-/// Candidates that get a real dial. Each one is bounded by the lane's dial
-/// timeout, so this also bounds how long startup preference can take.
-pub const RANK_LIMIT: usize = 10;
-/// Of the measured candidates, the quickest few also get a bandwidth sample.
-pub const SPEED_TOP: usize = 3;
+/// Candidates that can be dialled, in the order they will be dialled. The search
+/// stops at the first usable one, so a generous cap costs nothing in practice and
+/// keeps a dead Hong Kong fleet from exhausting the whole subscription.
+pub const RANK_LIMIT: usize = 20;
+/// 一次拨号不能判死(v0.2.111 的教训),但也不必像测活那样拨三次 —— 后面还有
+/// 十九个候选等着。
+pub const ATTEMPTS_PER_CANDIDATE: usize = 2;
+/// Two dials of the same node back to back mostly re-test the same TCP path; a
+/// short gap lets a transient reset clear.
+const ATTEMPT_GAP: Duration = Duration::from_millis(400);
+/// How long one bulk host gets for the winner's bandwidth label. Two seconds is
+/// already 512Kbps of sustained flow — below that the node is not carrying the
+/// tunnel anyway — and the free fleet was measured RST-ing CDN connections for
+/// seconds at a time, so a longer window only delays the answer the user clicked
+/// for.
+const RANK_SPEED_WINDOW: Duration = Duration::from_secs(2);
+/// The panel gives this command 60s. Ten seconds of that margin is the lane's own
+/// startup, so the dial loop has to stop well before the UI gives up on it.
+pub const SELECTION_DEADLINE: Duration = Duration::from_secs(45);
 /// Ranking owns lane 0 (the index allocation lives in `lane_core`).
 const RANK_LANE_INDEX: usize = crate::managers::lane_core::LANE_RELAY_RANKING;
 
@@ -64,8 +87,15 @@ pub struct RelayRanking {
     pub aborted: bool,
 }
 
-/// Hong Kong first, then any local proxy, then the rest in the order the
-/// caller gave us. Truncated to [`RANK_LIMIT`].
+/// 亚洲其他地区 —— 用户给的顺序:香港不行就新加坡、日本、韩国这类近处。
+/// 中东/俄罗斯/印度以西不在这里:它们距离上已经属于"其余"。
+const ASIA_CODES: [&str; 16] = [
+    "SG", "JP", "KR", "TW", "MO", "TH", "MY", "ID", "VN", "PH", "KH", "LA", "MM", "BN", "NP",
+    "MN",
+];
+
+/// Hong Kong first, then any local proxy, then the rest of Asia, then everything
+/// else in the order the caller gave us. Truncated to [`RANK_LIMIT`].
 pub fn order_relay_candidates(candidates: Vec<UnifiedNode>) -> Vec<UnifiedNode> {
     // sort_by_key is stable, so neither the caller's priority order nor the
     // original order inside a class gets shuffled.
@@ -75,54 +105,31 @@ pub fn order_relay_candidates(candidates: Vec<UnifiedNode>) -> Vec<UnifiedNode> 
     ordered
 }
 
-/// Why Hong Kong leads: it is the subset of a subscription that is realistically
-/// both low-latency and high-bandwidth from this network, so trying it first
-/// keeps the search from wandering through the whole fleet.
 fn rank_class(n: &UnifiedNode) -> u8 {
-    if n.country_code.eq_ignore_ascii_case("HK") {
+    let cc = n.country_code.to_ascii_uppercase();
+    if cc == "HK" {
         0
     } else if n.group == "LocalProxy" {
+        // 本地代理端口是活的监听进程,拨它比拨大洋彼岸便宜,排在亚洲之前。
         1
-    } else {
+    } else if ASIA_CODES.contains(&cc.as_str()) {
         2
+    } else {
+        3
     }
 }
 
-/// Pick the winner from measured candidates: the fastest [`SPEED_TOP`] by
-/// latency, and among those the one with the most bandwidth. A node that never
-/// answered is out, whatever its stored numbers claim.
+/// The winner is simply the first candidate, in the order the operator chose,
+/// that carried a probe. Everything after it never gets dialled — that is the
+/// whole point of the early exit.
 pub fn choose_winner(measured: &[Measured]) -> Option<usize> {
-    let mut alive: Vec<usize> = (0..measured.len())
-        .filter(|&i| measured[i].latency_ms.is_some())
-        .collect();
-    if alive.is_empty() {
-        return None;
-    }
-    alive.sort_by_key(|&i| measured[i].latency_ms.unwrap_or(i64::MAX));
-
-    let contenders = &alive[..alive.len().min(SPEED_TOP)];
-    let any_speed = contenders.iter().any(|&i| measured[i].speed_bps.unwrap_or(0) > 0);
-    if !any_speed {
-        return Some(contenders[0]);
-    }
-    // contenders is already latency-ascending, and a strict `>` keeps the earlier
-    // index on ties: same bandwidth, faster node wins.
-    let mut best = contenders[0];
-    for &i in contenders {
-        if measured[i].speed_bps.unwrap_or(0) > measured[best].speed_bps.unwrap_or(0) {
-            best = i;
-        }
-    }
-    Some(best)
+    measured.iter().position(|m| m.latency_ms.is_some())
 }
 
-/// Measure the shortlist and return the winner, writing the observed latency
-/// and bandwidth back onto each node record.
-///
-/// Two things can stop it early, and both are deliberate: another ranking is
-/// already running (they own a fixed port pair), or the user opened a real
-/// tunnel — on a phone a second core is not a cost worth paying while traffic
-/// is flowing.
+/// Dial candidates in order and stop at the first one that carries traffic.
+/// Returns `(measured rows, winner index, aborted)`; only dialled candidates
+/// appear, so an untried node keeps whatever verdict it already had instead of
+/// being silently written off as dead by a search that never reached it.
 pub async fn select_preferred_relay(
     app: &AppHandle,
     node_manager: &NodeManager,
@@ -154,7 +161,9 @@ pub async fn select_preferred_relay(
     }
 
     let mut measured: Vec<Measured> = Vec::with_capacity(indexed.len());
+    let mut winner: Option<usize> = None;
     let mut aborted = false;
+    let started = Instant::now();
 
     if indexed.is_empty() {
         log::warn!("relay ranking: no candidate can be expressed in mihomo, nothing to measure");
@@ -182,30 +191,54 @@ pub async fn select_preferred_relay(
                 aborted = true;
                 break;
             }
-            let latency = lane.measure_member(name, PROBE_204_URL).await;
-            let speed = if latency.is_some() {
-                lane.measure_member_throughput(name, THROUGHPUT_URL).await
-            } else {
-                None
-            };
+            if started.elapsed() >= SELECTION_DEADLINE {
+                log::warn!(
+                    "relay ranking: gave up after {} candidates in {:?}, 面板会以为这个按钮没反应",
+                    measured.len(),
+                    started.elapsed()
+                );
+                break;
+            }
+
+            let latency = dial_until_alive(&lane, name).await;
             log::info!(
-                "relay ranking: {} -> {} ms, {} B/s",
+                "relay ranking: {} -> {} ms (累计 {:?})",
                 node.name,
                 latency.map(|l| l.to_string()).unwrap_or_else(|| "dead".to_string()),
-                speed.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string())
+                started.elapsed()
             );
             measured.push(Measured {
                 node: node.clone(),
                 latency_ms: latency,
-                speed_bps: speed,
+                speed_bps: None,
             });
+            // 第一个能用的就是它:剩下的候选不用再花一次拨号,用户要的是快。
+            winner = choose_winner(&measured);
+            if winner.is_some() {
+                break;
+            }
+        }
+
+        // 带宽只在胜者身上测一次 —— 它才是接下来承载隧道的节点,而且测不出来也不
+        // 改变结论:用户要的是"可用就选中",不是"最快最肥才选中"。窗口只有 2 秒,
+        // 因为实测这批免费节点会对整个 CDN 主机拒连,拿不到数就得马上说没有。
+        if let Some(i) = winner {
+            let name = &indexed[i].0;
+            let speed = lane.measure_throughput(name, RANK_SPEED_WINDOW).await;
+            measured[i].speed_bps = speed;
+            log::info!(
+                "relay ranking: winner {} bandwidth {} B/s (累计 {:?})",
+                measured[i].node.name,
+                speed.map(|s| s.to_string()).unwrap_or_else(|| "-".to_string()),
+                started.elapsed()
+            );
         }
         drop(lane);
 
         persist_measurements(node_manager, &measured)?;
     }
 
-    let winner = choose_winner(&measured).map(|i| &measured[i]);
+    let winner = winner.map(|i| &measured[i]);
     Ok(RelayRanking {
         preferred_id: winner.map(|m| m.node.id.clone()),
         preferred_name: winner.map(|m| m.node.name.clone()),
@@ -214,6 +247,20 @@ pub async fn select_preferred_relay(
         tested: measured.len(),
         aborted,
     })
+}
+
+/// One candidate's verdict: up to [`ATTEMPTS_PER_CANDIDATE`] dials, each of which
+/// races every probe endpoint inside its own budget.
+async fn dial_until_alive(lane: &Lane, name: &str) -> Option<i64> {
+    for attempt in 0..ATTEMPTS_PER_CANDIDATE {
+        if attempt > 0 {
+            tokio::time::sleep(ATTEMPT_GAP).await;
+        }
+        if let Some(ms) = lane.measure_member(name).await {
+            return Some(ms);
+        }
+    }
+    None
 }
 
 fn persist_measurements(node_manager: &NodeManager, measured: &[Measured]) -> Result<(), String> {
@@ -274,62 +321,77 @@ mod tests {
     }
 
     #[test]
-    fn hk_and_local_candidates_are_tried_before_the_rest() {
+    fn hong_kong_and_local_candidates_are_dialled_before_everything_else() {
         let list = vec![
             node("de", "DE", "Default", Some(30)),
             node("local", "LOCAL", "LocalProxy", Some(1)),
             node("hk2", "HK", "Default", Some(400)),
             node("jp", "JP", "Default", Some(50)),
+            node("us", "US", "Default", Some(20)),
             node("hk1", "HK", "Default", Some(900)),
         ];
         let ordered = order_relay_candidates(list);
         let ids: Vec<&str> = ordered.iter().map(|n| n.id.as_str()).collect();
-        assert_eq!(&ids[..3], &["hk2", "hk1", "local"], "HK first, then local, stable within a class: {:?}", ids);
+        assert_eq!(
+            &ids[..4],
+            &["hk2", "hk1", "local", "jp"],
+            "香港 → 本地 → 亚洲,同类内保持原序: {:?}",
+            ids
+        );
+    }
+
+    /// 用户点名的顺序:没有香港就找新加坡、日本、韩国,再往远处走。
+    #[test]
+    fn asia_is_dialled_before_europe_and_america() {
+        let list = vec![
+            node("us", "US", "Default", None),
+            node("sg", "SG", "Default", None),
+            node("kr", "KR", "Default", None),
+            node("de", "DE", "Default", None),
+            node("jp", "JP", "Default", None),
+            node("tw", "TW", "Default", None),
+        ];
+        let ordered = order_relay_candidates(list);
+        let ids: Vec<&str> = ordered.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(&ids, &["sg", "kr", "jp", "tw", "us", "de"], "{:?}", ids);
     }
 
     #[test]
     fn candidate_list_is_capped() {
-        let list: Vec<UnifiedNode> = (0..40).map(|i| node(&format!("n{}", i), "US", "Default", Some(i as i64))).collect();
+        let list: Vec<UnifiedNode> =
+            (0..40).map(|i| node(&format!("n{}", i), "US", "Default", Some(i as i64))).collect();
         assert_eq!(order_relay_candidates(list).len(), RANK_LIMIT);
     }
 
     #[test]
-    fn a_faster_but_skinnier_node_does_not_win() {
-        // 20ms/2Mbps vs 40ms/80Mbps vs 60ms/500Mbps — all three are inside the
-        // latency shortlist, so bandwidth decides.
+    fn the_first_usable_candidate_wins_and_the_rest_never_get_dialled() {
+        // 快慢不由带宽决定:第一个能用的就是它,刷新才有结果得快。
         let m = vec![
-            measured(Some(20), Some(2_000_000)),
-            measured(Some(40), Some(80_000_000)),
-            measured(Some(60), Some(500_000_000)),
+            measured(Some(120), Some(2_000_000)),
+            measured(Some(30), Some(500_000_000)),
         ];
+        assert_eq!(choose_winner(&m), Some(0));
+    }
+
+    #[test]
+    fn a_dead_hong_kong_node_falls_through_to_the_next_candidate() {
+        let m = vec![measured(None, None), measured(None, None), measured(Some(80), None)];
         assert_eq!(choose_winner(&m), Some(2));
-    }
-
-    #[test]
-    fn bandwidth_only_compares_the_latency_leaders() {
-        // A 900ms node with huge pipes must not beat a 30ms node: it never
-        // reaches the contenders.
-        let m = vec![
-            measured(Some(30), Some(5_000_000)),
-            measured(Some(40), Some(6_000_000)),
-            measured(Some(50), Some(6_000_000)),
-            measured(Some(900), Some(900_000_000)),
-        ];
-        assert_eq!(choose_winner(&m), Some(1));
-    }
-
-    #[test]
-    fn dead_candidates_never_win_on_stored_bandwidth() {
-        let m = vec![
-            measured(None, Some(900_000_000)),
-            measured(Some(300), None),
-        ];
-        assert_eq!(choose_winner(&m), Some(1));
     }
 
     #[test]
     fn all_dead_means_no_winner() {
         let m = vec![measured(None, None), measured(None, None)];
         assert_eq!(choose_winner(&m), None);
+        assert_eq!(choose_winner(&[]), None);
+    }
+
+    /// 没拨到的候选不能被判死 —— 早停之后剩下的节点保留原状态,下一次刷新还会试。
+    #[test]
+    fn only_dialled_candidates_reach_the_verdict_list() {
+        let list: Vec<UnifiedNode> =
+            (0..RANK_LIMIT + 5).map(|i| node(&format!("h{}", i), "HK", "Default", None)).collect();
+        let ordered = order_relay_candidates(list);
+        assert_eq!(ordered.len(), RANK_LIMIT, "候选表必须被截断,否则早停也救不了这一轮");
     }
 }

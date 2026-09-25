@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 use tokio::time::{sleep, Duration, Instant};
 
+use crate::managers::lane_core::{first_answer, PROBE_204_URLS, THROUGHPUT_URLS};
 use crate::models::{AppSettings, UnifiedNode};
 use crate::core::SingBoxAdapter;
 use crate::platform::{core_binary_name, hide_window_std};
@@ -251,12 +252,16 @@ impl InspectorManager {
             .timeout(Duration::from_secs(6))
             .build()?;
 
-        // 1. Measure real latency via standard generate_204 endpoint.
+        // 1. Measure real latency: every probe host is dialled at once and the
+        // first answer counts. Measuring against one host is how a working node
+        // got misrated as 6000ms — `cp.cloudflare.com` never once answered
+        // through this user's Hong Kong fleet (2026-09-26), while gstatic
+        // returned 204 in ~0.2s on the same lane.
         // https, not http:80 — nodes that only egress 443 RST port-80 tunnels
         // and were being misrated here.
-        let start = Instant::now();
-        let _ = client.get("https://cp.cloudflare.com/generate_204").send().await;
-        let latency = start.elapsed().as_millis() as u64;
+        let latency = first_answer(&client, PROBE_204_URLS, Duration::from_secs(6))
+            .await
+            .unwrap_or(6_000) as u64;
 
         // 2. Query accurate GeoIP via ip-api.com
         let mut cc = String::new();
@@ -306,18 +311,26 @@ impl InspectorManager {
             .timeout(Duration::from_secs(10))
             .build()?;
 
-        let start = Instant::now();
-        // Download 2MB
-        let res = client.get("https://speed.cloudflare.com/__down?bytes=2000000").send().await?;
-        let bytes = res.bytes().await?;
-        let elapsed = start.elapsed().as_secs_f64();
-        
-        if elapsed > 0.0 {
-            let bps = (bytes.len() as f64 / elapsed) as u64;
-            Ok(bps)
-        } else {
-            Ok(0)
+        // Each bulk host gets one shot, in order: `speed.cloudflare.com` is
+        // Cloudflare, and through this node fleet every Cloudflare endpoint
+        // measured 000, so a single-host download never produced a number at all.
+        let mut best: Option<u64> = None;
+        for url in THROUGHPUT_URLS {
+            let start = Instant::now();
+            let Ok(res) = client.get(*url).send().await else {
+                continue;
+            };
+            let Ok(bytes) = res.bytes().await else {
+                continue;
+            };
+            let elapsed = start.elapsed().as_secs_f64();
+            if elapsed > 0.0 && !bytes.is_empty() {
+                best = Some((bytes.len() as f64 / elapsed) as u64);
+                break;
+            }
         }
+
+        Ok(best.unwrap_or(0))
     }
 
     fn locate_sing_box(&self, app: &AppHandle) -> Result<PathBuf> {

@@ -3,19 +3,18 @@ import { Shield, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, 
 import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
 import { RelayBar } from './RelayBar';
-import { LivenessBadge, LivenessProgressTag, byLiveness, isLivenessRunning } from './liveness';
+import { LivenessBadge, LivenessProgressTag, ProbeOutcomeLine, byLiveness, isLivenessRunning, withProbeDeadline } from './liveness';
 
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 
 export const VPNGateView: React.FC = () => {
-  const { status, connectedNode, connect, disconnect, nodes, livenessProgress, refreshNodes } =
+  const { status, connectedNode, connect, disconnect, nodes, livenessProgress, probeOutcomes, setProbeOutcome, refreshNodes } =
     useAppStore();
   // 只用 store 里的节点:测活每写回一批结论都会 refreshNodes,本地再存一份快照
   // 就会把"未测"永远留在卡片上。清单本身由启动任务采集一次,进页面不再拉。
   const gateNodes = React.useMemo(() => nodes.filter((n) => n.group === 'VPNGate'), [nodes]);
   const [loading, setLoading] = useState(false);
   const [probing, setProbing] = useState<string | null>(null);
-  const [probeErrors, setProbeErrors] = useState<Record<string, string>>({});
   const [measureError, setMeasureError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [search, setSearch] = useState('');
@@ -52,20 +51,15 @@ export const VPNGateView: React.FC = () => {
     }
   };
 
+  // 单节点测活:结论一定要落到这张卡片上,而且一定要落成一句人话。四类结论(可用 /
+  // 出口不可用 / 中转不可用 / 未判定)由后端给出,前端只负责在 60 秒没回音时自己
+  // 补一句 —— 静默就是用户不知道自己有没有测过。
   const measureOne = async (id: string) => {
     setProbing(id);
-    setProbeErrors((prev) => {
-      if (!prev[id]) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
     try {
-      await api.measureNode(id);
+      const outcome = await withProbeDeadline(api.measureNode(id));
+      setProbeOutcome(id, outcome);
       await refreshNodes();
-    } catch (e) {
-      // 结论留在这张卡片上。顶部的横幅会被下一条错误顶掉,而用户刚点的就是这张。
-      setProbeErrors((prev) => ({ ...prev, [id]: e instanceof Error ? e.message : String(e) }));
     } finally {
       setProbing(null);
     }
@@ -254,11 +248,7 @@ export const VPNGateView: React.FC = () => {
                     )}
                   </div>
 
-                  {probeErrors[node.id] && (
-                    <div className="mt-2 text-[12px] leading-snug text-red-300">
-                      {`这个节点没能测活：${probeErrors[node.id]}`}
-                    </div>
-                  )}
+                  <ProbeOutcomeLine outcome={probeOutcomes[node.id]} />
                 </div>
               );
             })}

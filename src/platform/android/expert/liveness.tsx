@@ -1,6 +1,6 @@
 import React from 'react';
-import { CircleCheck, CircleDashed, CircleX } from 'lucide-react';
-import { LivenessProgress, NodeStatus, UnifiedNode } from '../../../types';
+import { CircleCheck, CircleDashed, CircleX, Clock } from 'lucide-react';
+import { LivenessProgress, NodeStatus, ProbeOutcome, UnifiedNode } from '../../../types';
 
 /**
  * 真连接测活的三态徽标。只有后台真实建联过的节点才有资格显示"可用/不可用",
@@ -89,5 +89,66 @@ export const LivenessProgressTag: React.FC<{ progress?: LivenessProgress }> = ({
       <CircleDashed className="w-3.5 h-3.5 animate-pulse text-blue-400" />
       <span>{`后台真连接测活中 · ${counts}`}</span>
     </span>
+  );
+};
+
+/**
+ * 单节点"测活"的兜底期限。一次探测最长的合法耗时是起一个后台核心(10 秒)+
+ * 拨号(6 秒)+ 中转自检;60 秒还没回话,这条 IPC 就再也不会回了。必须自己造一句
+ * 话出来 —— 干等和"没测过"在用户眼里一模一样,而这正是被投诉的静默。
+ */
+const PROBE_DEADLINE_MS = 60_000;
+
+export const withProbeDeadline = (run: Promise<ProbeOutcome>): Promise<ProbeOutcome> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      resolve({
+        verdict: 'not-judged',
+        message: `未判定:这次测活 ${PROBE_DEADLINE_MS / 1000} 秒没有回音(后台核心可能没能启动),节点状态未改动,请再点一次`,
+        node: null,
+        at: Date.now(),
+      });
+    }, PROBE_DEADLINE_MS);
+    run
+      .catch((e) => ({
+        verdict: 'not-judged' as const,
+        message: `未判定:${e instanceof Error ? e.message : String(e)}`,
+        node: null,
+      }))
+      .then((outcome) => {
+        clearTimeout(timer);
+        resolve({ ...outcome, at: Date.now() });
+      });
+  });
+
+/**
+ * 单节点测活的结论行,四种结论都成句、都带颜色:可用=绿,出口节点不可用=红,
+ * 中转不可用 / 未判定=黄 —— 后两种不是这个节点的错,不能把它判死。
+ */
+export const ProbeOutcomeLine: React.FC<{ outcome?: ProbeOutcome }> = ({ outcome }) => {
+  if (!outcome) return null;
+  const tone =
+    outcome.verdict === 'alive'
+      ? 'text-emerald-300'
+      : outcome.verdict === 'exit-dead'
+        ? 'text-red-300'
+        : 'text-amber-300';
+  const Icon = outcome.verdict === 'alive' ? CircleCheck : outcome.verdict === 'exit-dead' ? CircleX : CircleDashed;
+  const time = outcome.at
+    ? new Date(outcome.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    : '';
+  return (
+    <div className={`mt-2 flex items-start gap-1.5 text-[12px] leading-snug font-medium ${tone}`}>
+      <Icon className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+      <span>
+        {outcome.message}
+        {time && (
+          <span className="inline-flex items-center gap-1 ml-1.5 text-gray-500">
+            <Clock className="w-3 h-3" />
+            {time}
+          </span>
+        )}
+      </span>
+    </div>
   );
 };

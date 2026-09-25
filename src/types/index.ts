@@ -133,6 +133,19 @@ export interface LivenessProgress {
   at?: number;
 }
 
+// 单个节点"测活"的结论。message 永远是一句人话:这个入口存在的全部意义,就是让
+// 用户知道自己刚才到底测没测、测出了什么。
+export interface ProbeOutcome {
+  // alive=可用;exit-dead=出口节点不可用;relay-dead=中转不可用(节点未判定);
+  // not-judged=核心拒绝了这条 OpenVPN 配置(节点未判定)
+  verdict: 'alive' | 'exit-dead' | 'relay-dead' | 'not-judged';
+  message: string;
+  // 判定过才有值;没判定时卡片保持"未测",不留下假结论。
+  node?: UnifiedNode | null;
+  // 同上,前端本地盖的时间戳,用来说"几点测的"。
+  at?: number;
+}
+
 
 export interface SubscriptionTraffic {  upload: number;
   download: number;

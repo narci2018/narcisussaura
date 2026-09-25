@@ -637,13 +637,14 @@ async fn measure_group_nodes(
     Ok(())
 }
 
-/// Measure one server the user pointed at, and come back with its verdict.
+/// Measure one server the user pointed at. The answer is always a sentence the
+/// card can show — see [`liveness::ProbeOutcome`].
 #[tauri::command]
 async fn measure_node(
     app: AppHandle,
     state: State<'_, AppState>,
     node_id: String,
-) -> Result<UnifiedNode, String> {
+) -> Result<liveness::ProbeOutcome, String> {
     let preferred = state.settings.read().preferred_relay_id.clone();
     liveness::measure_one(
         &app,

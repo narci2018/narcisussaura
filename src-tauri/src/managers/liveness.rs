@@ -24,7 +24,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::managers::connection_manager::ConnectionManager;
-use crate::managers::lane_core::{Lane, NodeVerdict, LANE_LIVENESS_FIRST, PROBE_204_URL};
+use crate::managers::lane_core::{Lane, NodeVerdict, RELAY_MEMBER, LANE_LIVENESS_FIRST, PROBE_204_URL};
 use crate::managers::node_manager::NodeManager;
 use crate::models::{NodeStatus, ProtocolType, UnifiedNode};
 
@@ -244,6 +244,9 @@ struct GroupStats {
     /// Rows this list holds that a lane cannot dial (non-OpenVPN). Reported so
     /// "12 个未测" is never mistaken for "12 个待测".
     skipped: usize,
+    /// Nodes whose dial failed **while the relay itself was unreachable** — they
+    /// keep whatever status they had, and the summary has to blame the relay.
+    not_judged: usize,
     /// Why the sweep stopped, when it did. Becomes the final beat's message.
     note: Option<String>,
 }
@@ -267,7 +270,7 @@ fn prepare_lane(
     let relay = node_manager
         .get_best_relay_node(preferred_id)
         .ok_or_else(|| "没有可用的中转节点：测活要经它拨号，请先连接成功一次，或在面板里手动指定一个中转".to_string())?;
-    let relay_yaml = ConnectionManager::format_mihomo_relay_proxy(&relay, "relay")
+    let relay_yaml = ConnectionManager::format_mihomo_relay_proxy(&relay, RELAY_MEMBER)
         .ok_or_else(|| format!("中转节点「{}」的协议无法用于测活，请换一个中转", relay.name))?;
     Ok(LaneSetup {
         binary: conn.locate_binary(app, "mihomo")?,
@@ -300,7 +303,16 @@ pub async fn run_pass(
         for group in groups {
             match probe_group(app, node_manager, conn, preferred_id, group).await {
                 Ok(stats) => yielded = stats.map(|s| s.aborted).unwrap_or(true),
-                Err(e) => log::warn!("liveness {group}: {e}"),
+                Err(e) => {
+                    log::warn!("liveness {group}: {e}");
+                    // 这条路从前只写日志。一轮没能跑起来而面板上一个字都不提,和
+                    // 用户没点过这个按钮没有区别 —— 这正是被三次投诉的"静默"。
+                    emit_progress(
+                        app,
+                        &stopped_beat(group, 0, format!("测活本轮无法进行：{}", brief(&e))),
+                    );
+                    yielded = true;
+                }
             }
             if yielded {
                 break;
@@ -317,14 +329,21 @@ pub async fn run_pass(
     }
 }
 
-/// Dial one server the user pointed at, and store its verdict.
+/// Dial one server the user pointed at, and come back with its verdict.
+///
+/// The answer is a [`ProbeOutcome`], never a bare `()`: this entry point exists
+/// because the user wants to know, for this one card, whether they just measured
+/// it and what came of it. A dial that failed is only worth reporting once it has
+/// been *attributed* — 中转拨不通 and 出口节点拨不通 look identical from the node's
+/// side, and blaming the node for a broken relay is the misjudgment that made
+/// whole lists read 不可用.
 pub async fn measure_one(
     app: &AppHandle,
     node_manager: &NodeManager,
     conn: &ConnectionManager,
     node_id: &str,
     preferred_id: Option<&str>,
-) -> Result<UnifiedNode, String> {
+) -> Result<ProbeOutcome, String> {
     let node = node_manager
         .get_all()
         .into_iter()
@@ -340,7 +359,7 @@ pub async fn measure_one(
     let name = "p0".to_string();
     let blocks = vec![(
         name.clone(),
-        ConnectionManager::mihomo_openvpn_proxy_block(&node, &name, Some("relay")),
+        ConnectionManager::mihomo_openvpn_proxy_block(&node, &name, Some(RELAY_MEMBER)),
     )];
     let (b, d, r) = (setup.binary.clone(), setup.dir.clone(), setup.relay_yaml.clone());
     let lane = tokio::task::spawn_blocking(move || {
@@ -350,25 +369,154 @@ pub async fn measure_one(
     .map_err(|e| format!("测活任务被中断: {}", e))?
     .map_err(|e| format!("测活核心未能启动: {}", e))?;
 
-    let verdict = if lane.group_members().await.iter().any(|m| m == &name) {
-        lane.test_node(&name, PROBE_204_URL).await
-    } else {
-        return Err("核心拒绝了该节点的 OpenVPN 配置,无法判定".to_string());
-    };
+    // The core dropped this server's config, so nothing was ever dialled. That is
+    // not a verdict about the server, and saying so is the whole point.
+    if !lane.group_members().await.iter().any(|m| m == &name) {
+        drop(lane);
+        return Ok(ProbeOutcome::new(
+            "not-judged",
+            format!(
+                "未判定:核心拒绝了「{}」的 OpenVPN 配置(通常是不支持的加密或参数),这个节点没有被拨号",
+                node.name
+            ),
+            None,
+        ));
+    }
+
+    let verdict = lane.test_node(&name, PROBE_204_URL).await;
+    let mut relay = RelayWatch::new(setup.relay_name.clone());
+    let relay_reachable = if verdict.alive { true } else { relay.reachable(&lane).await };
+    let relay_name = setup.relay_name.clone();
     drop(lane);
 
-    let measured = record_verdict(&node, &verdict, chrono::Utc::now().timestamp());
-    node_manager
-        .update_nodes(std::slice::from_ref(&measured))
-        .map_err(|e| format!("测活结论未能保存: {}", e))?;
+    if !relay_reachable {
+        return Ok(ProbeOutcome::new(
+            "relay-dead",
+            format!(
+                "中转不可用:中转节点「{}」现在拨不通,所以这个出口节点未判定(不是它不可用)—— 在面板上方换一个中转,或断开重连让中转重新优选",
+                relay_name
+            ),
+            None,
+        ));
+    }
+
+    let measured = store_verdict(node_manager, &node, &verdict)?;
     log::info!(
         "liveness {group}: {}:{} 单节点测活 → {:?}",
         node.address,
         node.port,
         measured.status
     );
+    let outcome = if verdict.alive {
+        ProbeOutcome::new(
+            "alive",
+            format!(
+                "可用:经中转「{}」真连接成功,{} 毫秒",
+                relay_name,
+                measured.latency_ms.unwrap_or(0)
+            ),
+            Some(measured),
+        )
+    } else {
+        ProbeOutcome::new(
+            failure_verdict(true),
+            format!(
+                "出口节点不可用:中转「{}」自检正常,是这个出口节点自己连不上({}:{})",
+                relay_name, node.address, node.port
+            ),
+            Some(measured),
+        )
+    };
+    Ok(outcome)
+}
+
+/// 拨不通时唯一的两种解释 —— 分不清就不能给结论。
+fn failure_verdict(relay_reachable: bool) -> &'static str {
+    if relay_reachable {
+        "exit-dead"
+    } else {
+        "relay-dead"
+    }
+}
+
+/// Write one dial's verdict to the store and hand back the measured row.
+fn store_verdict(
+    node_manager: &NodeManager,
+    node: &UnifiedNode,
+    verdict: &NodeVerdict,
+) -> Result<UnifiedNode, String> {
+    let measured = record_verdict(node, verdict, chrono::Utc::now().timestamp());
+    node_manager
+        .update_nodes(std::slice::from_ref(&measured))
+        .map_err(|e| format!("测活结论未能保存: {}", e))?;
     Ok(measured)
 }
+
+/// 一次单节点测活的结论。`message` 一定是一句人话且永不为空:这个入口存在的意义
+/// 就是让用户知道"我刚才到底测没测、测出了什么"。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProbeOutcome {
+    /// `"alive"` | `"exit-dead"` | `"relay-dead"` | `"not-judged"`
+    pub verdict: &'static str,
+    pub message: String,
+    /// 只有真判定过才有值;没判定时卡片保持"未测",不留下假结论。
+    pub node: Option<UnifiedNode>,
+}
+
+impl ProbeOutcome {
+    /// 造一条结论。`message` 是硬约定:空话就等于"静默失败",而这个入口存在的
+    /// 理由就是不让它发生。
+    fn new(verdict: &'static str, message: impl Into<String>, node: Option<UnifiedNode>) -> Self {
+        let message = message.into();
+        debug_assert!(!message.trim().is_empty(), "测活结论必须带一句话");
+        debug_assert!(
+            (verdict == "relay-dead" || verdict == "not-judged") == node.is_none(),
+            "没判定就不该留下假的节点状态"
+        );
+        Self { verdict, message, node }
+    }
+}
+
+/// 中转自身是否拨得通。一次约 2 秒,所以同一批里复用,但过期后要重问一次 ——
+/// 中转会在跑的过程中挂掉。
+struct RelayWatch {
+    name: String,
+    last: Option<(bool, std::time::Instant)>,
+}
+
+/// 复用中转结论的时间窗。
+const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(60);
+
+impl RelayWatch {
+    fn new(name: String) -> Self {
+        Self { name, last: None }
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// 换一条 lane 就把上一次的答复忘掉:中转是在跑的过程中挂掉的,新 lane 上的
+    /// 第一次失败必须重新问一遍。
+    fn forget(&mut self) {
+        self.last = None;
+    }
+
+    /// 只在节点拨失败时问一次;答案在 [`RELAY_RECHECK`] 内复用。
+    async fn reachable(&mut self, lane: &Lane) -> bool {
+        if let Some((ok, at)) = self.last {
+            if at.elapsed() < RELAY_RECHECK {
+                return ok;
+            }
+        }
+        let ok = lane.measure_member(RELAY_MEMBER, PROBE_204_URL).await.is_some();
+        log::info!("liveness: 中转「{}」自检 → {}", self.name, if ok { "可用" } else { "拨不通" });
+        self.last = Some((ok, std::time::Instant::now()));
+        ok
+    }
+}
+
 
 /// Dial one list through the preferred relay, saying out loud what came of it.
 ///
@@ -422,6 +570,7 @@ async fn probe_group(
         skipped,
         ..Default::default()
     };
+    let mut relay = RelayWatch::new(setup.relay_name.clone());
     emit_progress(app, &beat(group, &stats, true, false, false));
     log::info!(
         "liveness {group}: dialling {} servers through {} in batches of {}",
@@ -448,7 +597,7 @@ async fn probe_group(
             let name = format!("p{}", i);
             blocks.push((
                 name.clone(),
-                ConnectionManager::mihomo_openvpn_proxy_block(node, &name, Some("relay")),
+                ConnectionManager::mihomo_openvpn_proxy_block(node, &name, Some(RELAY_MEMBER)),
             ));
             targets.push((name, node));
         }
@@ -488,6 +637,7 @@ async fn probe_group(
         };
 
         let accepted = lane.group_members().await;
+        relay.forget();
         if accepted.len() < targets.len() {
             log::warn!(
                 "liveness {group}: lane {} took {} of {} configs, the rest are left 未测",
@@ -516,6 +666,20 @@ async fn probe_group(
                 continue;
             }
             let verdict = lane.test_node(name, PROBE_204_URL).await;
+            if !verdict.alive && !relay.reachable(&lane).await {
+                // 失败的第一种解释是承载它的那台中转自己拨不通 —— 那时候把这些出口
+                // 节点标成"不可用"是假账:它们根本没被真正测到。停手,并说清是谁的问题。
+                stats.not_judged += 1;
+                stats.aborted = true;
+                stats.note = Some(format!(
+                    "中转节点「{}」拨不通，本轮中止：{} 个节点未判定（不是它们不可用），已测 {}/{} 个",
+                    relay.name(),
+                    stats.not_judged,
+                    stats.tested,
+                    stats.total
+                ));
+                break;
+            }
             if verdict.alive {
                 stats.alive += 1;
             }
@@ -569,13 +733,16 @@ async fn probe_group(
         Some(reason) => reason,
         None => {
             let mut summary = format!(
-                "测活完成：{}/{} 个可连通{}",
+                "测活完成（经中转「{}」）：{}/{} 个可连通{}",
+                setup.relay_name,
                 stats.alive,
                 stats.tested,
                 unmeasured_tail(stats.total, stats.tested)
             );
             if stats.tested > 0 && stats.alive == 0 {
-                summary.push_str("；整批无一可用，通常是中转或出口链路问题，不是这些服务器都死了");
+                // 走到这里说明每次失败后都验过中转(见 RelayWatch),所以这句
+                // "是出口节点连不上"是有依据的,不是猜的。
+                summary.push_str("；中转自检正常，是这些出口节点自己连不上");
             }
             if rejected > 0 {
                 summary.push_str(&format!(
@@ -750,6 +917,35 @@ mod tests {
         assert!(claim_single().is_err());
         assert_eq!(take_queued(), Vec::<&str>::new(), "单节点请求不排队");
         drop(held_again);
+    }
+
+    #[test]
+    fn a_dead_relay_is_not_the_exit_nodes_fault() {
+        assert_eq!(failure_verdict(true), "exit-dead");
+        assert_eq!(
+            failure_verdict(false),
+            "relay-dead",
+            "中转自己拨不通时,失败不能记到出口节点头上"
+        );
+    }
+
+    #[test]
+    fn every_single_node_verdict_leaves_a_sentence() {
+        let judged = node("v1", "VPNGate", ProtocolType::Openvpn, NodeStatus::Alive);
+        for (verdict, with_node) in [
+            ("alive", true),
+            ("exit-dead", true),
+            ("relay-dead", false),
+            ("not-judged", false),
+        ] {
+            let o = ProbeOutcome::new(
+                verdict,
+                format!("{verdict} 的结论"),
+                if with_node { Some(judged.clone()) } else { None },
+            );
+            assert!(!o.message.trim().is_empty(), "{verdict} 不能没有话 — 那就是静默");
+            assert_eq!(o.node.is_some(), with_node, "{verdict} 不该留下假的节点状态");
+        }
     }
 
     #[test]

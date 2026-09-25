@@ -46,6 +46,12 @@ const READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// HTTPS on purpose: nodes that only egress 443 RST plain-HTTP tunnels, and were
 /// misrated by the inspector's old port-80 probe (see inspector_manager).
 pub const PROBE_204_URL: &str = "https://cp.cloudflare.com/generate_204";
+
+/// The relay entry's name inside a lane. [`build_lane_config`] puts it in the
+/// PROBE group, so a probe caller can dial **the relay by itself** — that is what
+/// separates "this exit node is dead" from "the relay carrying it is dead", and a
+/// liveness verdict is worthless without that distinction.
+pub const RELAY_MEMBER: &str = "relay";
 /// 2MB is enough to separate a 5Mbps link from a 500Mbps one inside ~10s.
 pub const THROUGHPUT_URL: &str = "https://speed.cloudflare.com/__down?bytes=2000000";
 
@@ -98,7 +104,7 @@ pub fn build_lane_config(
 ) -> String {
     let mut names: Vec<String> = Vec::new();
     if relay_yaml.is_some() {
-        names.push("relay".to_string());
+        names.push(RELAY_MEMBER.to_string());
     }
     names.extend(nodes.iter().map(|(n, _)| n.clone()));
 
@@ -475,7 +481,10 @@ r#"  - name: {}
         assert!(cfg.contains("dns:\n  enable: false"), "lane DNS must stay off");
         assert!(cfg.contains(&format!("mixed-port: {}", LANE_PORT_BASE)));
         assert!(cfg.contains(&format!("external-controller: 127.0.0.1:{}", LANE_PORT_BASE + 1)));
-        assert!(cfg.contains("proxies: [relay, n0, n1]"));
+        assert!(
+            cfg.contains(&format!("proxies: [{}, n0, n1]", RELAY_MEMBER)),
+            "中转必须是 PROBE 组里可单拨的一员 —— 测活靠它把「中转不可用」和「出口不可用」分开"
+        );
         // second lane gets its own port pair, so lanes never fight over listeners
         assert!(build_lane_config(1, Some(relay), &[]).contains(&format!("mixed-port: {}", LANE_PORT_BASE + 2)));
     }

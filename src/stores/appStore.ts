@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../services/api';
 import { invoke } from '@tauri-apps/api/core';
-import { ActiveTab, AppSettings, ConnectionStatus, LivenessProgress, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
+import { ActiveTab, AppSettings, ConnectionStatus, LivenessProgress, ProbeOutcome, ProxyChain, RelayRanking, Subscription, TrafficStats, UnifiedNode } from '../types';
 
 
 export interface InspectReportItem {
@@ -75,6 +75,11 @@ interface AppStore {
   isRankingRelays: boolean;
   // 后台真连接测活进度,键是名单名(VPNGate / Residential)
   livenessProgress: Record<string, LivenessProgress>;
+  // 单节点"测活"的结论,键是节点 id。必须存在这里而不是面板组件的 state 里:
+  // 用户在等待时切走标签页,组件卸载后回来的 setState 会落空,回来就又是一张
+  // "不知道有没有测过"的卡片。
+  probeOutcomes: Record<string, ProbeOutcome>;
+  setProbeOutcome: (nodeId: string, outcome: ProbeOutcome) => void;
   fetchRelayCandidates: () => Promise<void>;
   rankRelays: () => Promise<void>;
   setRelayEnabled: (enabled: boolean) => void;
@@ -264,6 +269,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   preferredRelay: null,
   isRankingRelays: false,
   livenessProgress: {},
+  // 单节点测活的结论存在全局 store,不放面板组件的 state 里:等待期间用户切走
+  // 标签页,组件卸载,回来的 setState 就落空 —— 那张卡片又变成"不知道测没测过"。
+  probeOutcomes: {},
   setRelayEnabled: (enabled) => set({ relayEnabled: enabled }),
   setSelectedRelayNodeId: (id) => set({ selectedRelayNodeId: id }),
   fetchRelayCandidates: async () => {
@@ -404,6 +412,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSortMode: (sortMode) => set({ sortMode, sortBySpeed: sortMode === 'speed' }),
   setSelectedNodeId: (selectedNodeId) => set({ selectedNodeId }),
   setErrorMessage: (errorMessage) => set({ errorMessage }),
+  setProbeOutcome: (nodeId, outcome) =>
+    set({
+      probeOutcomes: { ...get().probeOutcomes, [nodeId]: { ...outcome, at: Date.now() } },
+    }),
   dismissCrashReport: () => set({ crashReport: null }),
   closeInspectReport: () => set({ inspectReport: null }),
 

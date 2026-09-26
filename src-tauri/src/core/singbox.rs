@@ -720,8 +720,20 @@ impl SingBoxAdapter {
         // would fail with "lookup failed" — misjudging healthy nodes as dead
         // (reproduced offline with a dead node pinned). Direct resolution
         // decouples the probe outcome from the node under test.
+        //
+        // Only hosts a Chinese public resolver answers *honestly* may be listed,
+        // because dns-direct is 223.5.5.5 and this rule applies to the user's own
+        // traffic too. Measured 2026-09-27 with the bundled sing-box 1.14.0 and a
+        // mixed inbound: while `www.google.com` sat in this list the log read
+        // `match[0] domain=[... www.google.com ...] => route(dns-direct)` then
+        // `exchanged A www.google.com 69.171.235.22` — a Facebook-range address,
+        // 223.5.5.5's standing lie about google. The tunnel then dialled that fake
+        // address for every google visit and Chrome reported
+        // ERR_SSL_VERSION_OR_CIPHER_MISMATCH, while a host absent from the list
+        // (www.ping0.cc) resolved and loaded normally. google stays probe-able: it
+        // just resolves through the tunnel now, which is where its answer is clean.
         dns_rules.push(json!({
-            "domain": ["cp.cloudflare.com", "www.google.com", "one.one.one.one", "ip-api.com"],
+            "domain": ["cp.cloudflare.com", "ip-api.com"],
             "server": "dns-direct"
         }));
         // ECH is resolved by sing-box itself (HTTPS record of the public name)

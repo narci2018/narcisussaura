@@ -132,6 +132,18 @@ fn android_smart_group_config_is_valid_json_structure() {
         .find(|r| r["domain"].as_array().map(|d| d.iter().any(|x| x == "cp.cloudflare.com")).unwrap_or(false))
         .expect("probe domains must resolve outside the tunnel");
     assert_eq!(probe_rule["server"], "dns-direct");
+    // The same rule is what the user's own browsing gets resolved by, and dns-direct
+    // is 223.5.5.5 — which lies about google (measured: www.google.com →
+    // 69.171.235.22, a Facebook-range address, and Chrome then reports
+    // ERR_SSL_VERSION_OR_CIPHER_MISMATCH). Anything added to this list must first be
+    // confirmed to resolve honestly from a Chinese public resolver.
+    let off_tunnel: Vec<&str> = probe_rule["domain"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d.as_str().unwrap())
+        .collect();
+    assert_eq!(off_tunnel, vec!["cp.cloudflare.com", "ip-api.com"]);
     // dns-remote must be DoH on 443, not DoT 853: 443-only nodes RST 853.
     let dns_servers = v["dns"]["servers"].as_array().unwrap();
     let remote = dns_servers.iter().find(|s| s["tag"] == "dns-remote").unwrap();

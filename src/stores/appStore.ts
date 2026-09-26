@@ -805,10 +805,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       await get().updateSubscription(defaultSub.id);
       await get().refreshNodes();
-      // test all nodes latency in background
-      await get().testAllNodes();
-      // test all nodes speed in background
-      await get().testAllSpeeds();
+      // 这里从前还跑 testAllNodes() + testAllSpeeds():启动即 TCP ping 全部节点
+      // (含 VPNGate / 住宅),把它们标成"可用/不可用"并盖上刚刚的时间戳 —— 用户
+      // 一句"我没点测活,为什么满屏结论"问的就是它。测活只有面板上那两个按钮。
       // Refresh auth token in background after subscription operations complete
       await get().checkAuth(true).catch(console.error);
     } catch (e) {

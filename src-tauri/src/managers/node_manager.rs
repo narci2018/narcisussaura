@@ -1,5 +1,6 @@
 use crate::models::{NodeStatus, ProtocolType, UnifiedNode};
 use parking_lot::RwLock;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,51 @@ use uuid::Uuid;
 pub struct NodeManager {
     nodes: Arc<RwLock<Vec<UnifiedNode>>>,
     data_path: PathBuf,
+    /// 真连接结论的账本(见 [`LivenessLedger`])。
+    ledger: Arc<RwLock<LivenessLedger>>,
+    ledger_path: PathBuf,
+}
+
+/// 哪些节点被真连接测活裁定过 —— 只有这里记了名的 id 才有资格显示"可用/不可用"。
+///
+/// 单独立一个文件,是因为节点行上的 `status` 谁都能写:0.2.115 之前启动时会自动
+/// TCP ping 全量节点(`test_all_nodes`),那既写了 Alive/Dead 又盖上"刚刚"的时间戳,
+/// 于是用户看到满屏结论,而它压根不是真连接测出来的。时间戳分不出这两种账,
+/// 签名可以 —— ping 拿不到章。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct LivenessLedger {
+    #[serde(default)]
+    verdicts: std::collections::BTreeMap<String, LedgerVerdict>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LedgerVerdict {
+    status: NodeStatus,
+    at: i64,
+}
+
+impl LivenessLedger {
+    fn load(path: &Path) -> Self {
+        fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    }
+
+    fn store(&mut self, id: &str, status: NodeStatus, at: i64) {
+        self.verdicts
+            .insert(id.to_string(), LedgerVerdict { status, at });
+    }
+
+    fn save(&self, path: &Path) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        let json_data = serde_json::to_string_pretty(&self)
+            .map_err(|e| format!("Failed to serialize liveness ledger: {}", e))?;
+        fs::write(path, json_data).map_err(|e| format!("Failed to write liveness.json: {}", e))?;
+        Ok(())
+    }
 }
 
 /// Whether a group sync may forget the servers that are no longer listed.
@@ -62,9 +108,22 @@ impl NodeManager {
             Self::downgrade_unstamped(node);
         }
 
+        // 然后只让账本说话:测过两次的行以账本为准,没签名的行(旧版自动 ping
+        // 写出来的那些"可用/不可用")洗回未测。
+        let ledger_path = app_data_dir.join("liveness.json");
+        let mut ledger = LivenessLedger::load(&ledger_path);
+        for node in &mut initial_nodes {
+            Self::apply_ledger(&ledger, node);
+        }
+        let live_ids: std::collections::HashSet<String> =
+            initial_nodes.iter().map(|n| n.id.clone()).collect();
+        ledger.verdicts.retain(|id, _| live_ids.contains(id));
+
         let mgr = Self {
             nodes: Arc::new(RwLock::new(initial_nodes)),
             data_path,
+            ledger: Arc::new(RwLock::new(ledger)),
+            ledger_path,
         };
         let _ = mgr.save();
         mgr
@@ -420,9 +479,8 @@ impl NodeManager {
         node
     }
 
-    /// Every real verdict writer (`record_verdict`, `update_latency`,
-    /// `update_speed`, the relay ranking) stamps `last_checked` in the same
-    /// breath, so a row that claims a status without one is a claim nobody made.
+    /// 只有真连接测活(`liveness::store_verdict`)和中转排序的真实建联才算结论,
+    /// 它们都盖 `last_checked`。所以一句"可用"却没有时间戳,就是没人说过这句话。
     fn downgrade_unstamped(node: &mut UnifiedNode) {
         if node.last_checked.is_some() {
             return;
@@ -430,6 +488,36 @@ impl NodeManager {
         node.latency_ms = None;
         node.speed_bps = None;
         node.status = NodeStatus::Unknown;
+    }
+
+    /// 测活名单(VPNGate / 住宅)的结论以账本为准:盖过章的按账本恢复,没盖章的
+    /// 一律未测。其他名单不经这里 —— 它们的可用与否来自中转排序的真实建联。
+    fn apply_ledger(ledger: &LivenessLedger, node: &mut UnifiedNode) {
+        if crate::managers::liveness::known_group(&node.group).is_none() {
+            return;
+        }
+        match ledger.verdicts.get(&node.id) {
+            Some(verdict) => {
+                node.status = verdict.status.clone();
+                node.last_checked = Some(verdict.at);
+            }
+            None => {
+                node.latency_ms = None;
+                node.speed_bps = None;
+                node.last_checked = None;
+                node.status = NodeStatus::Unknown;
+            }
+        }
+    }
+
+    /// 给真连接结论盖章。只有 `liveness` 调它,所以"可用/不可用"这个说法有一个可查
+    /// 的来源;TCP ping 和清单采集都造不出这句假账。
+    pub fn stamp_liveness(&self, measured: &[UnifiedNode]) -> Result<(), String> {
+        let mut lock = self.ledger.write();
+        for node in measured {
+            lock.store(&node.id, node.status.clone(), node.last_checked.unwrap_or(0));
+        }
+        lock.save(&self.ledger_path)
     }
 
     /// Returns suitable candidates for being a relay / dialer-proxy node.
@@ -692,15 +780,13 @@ impl NodeManager {
         Ok(group_now)
     }
 
+    /// 一次 TCP ping 的落点。它只回答"这个端口理不理我",不回答"能不能通过它上网",
+    /// 所以它既不写 `status` 也不写 `last_checked` —— 0.2.115 之前它两样都写,于是
+    /// 启动时那轮自动 ping 把整份名单标成了"可用/不可用 · 刚刚"。
     pub fn update_latency(&self, id: &str, latency: Option<i64>) {
         let mut lock = self.nodes.write();
         if let Some(node) = lock.iter_mut().find(|n| n.id == id) {
             node.latency_ms = latency;
-            node.last_checked = Some(chrono::Utc::now().timestamp());
-            node.status = match latency {
-                Some(lat) if lat > 0 => NodeStatus::Alive,
-                _ => NodeStatus::Dead,
-            };
         }
     }
 
@@ -708,7 +794,6 @@ impl NodeManager {
         let mut lock = self.nodes.write();
         if let Some(node) = lock.iter_mut().find(|n| n.id == id) {
             node.speed_bps = speed_bps;
-            node.last_checked = Some(chrono::Utc::now().timestamp());
         }
     }
 
@@ -1203,20 +1288,29 @@ mod tests {
         }
     }
 
-    /// 库存里"没有盖时间戳的结论"不是结论 —— 它是老版本预置模板留下的假账。
-    /// 只改代码不清库存,用户手机上那几张"可用"卡片会一直挂着。
+    /// 库存里的一句"可用"必须有真连接签名,否则它不是结论:老版本的预置模板自带
+    /// Alive,更早的启动自动 ping 更是连时间戳一起盖好了 —— 只改代码不清库存,
+    /// 用户手机上那几张"可用"卡片会一直挂着。
     #[test]
-    fn a_stored_verdict_without_a_timestamp_is_dropped_on_load() {
+    fn a_stored_verdict_without_a_liveness_signature_is_dropped_on_load() {
         let dir = std::env::temp_dir().join(format!("aura-nm-unstamped-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let mut faked = group_node("VPNGate", "seeded-claim", NodeStatus::Alive, Some(38));
         faked.speed_bps = Some(100_000_000);
+        // 0.2.115 之前启动那轮 TCP ping 留下的行:时间戳是真的,结论不是。
+        let mut pinged = group_node("VPNGate", "pinged-claim", NodeStatus::Alive, Some(41));
+        pinged.last_checked = Some(1_700_000_000);
         let mut earned = group_node("VPNGate", "measured-claim", NodeStatus::Alive, Some(75));
         earned.speed_bps = Some(8 * 1024 * 1024);
         earned.last_checked = Some(1_700_000_000);
         std::fs::write(
             dir.join("nodes.json"),
-            serde_json::to_string(&vec![faked, earned]).unwrap(),
+            serde_json::to_string(&vec![faked, pinged, earned]).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("liveness.json"),
+            r#"{"verdicts":{"measured-claim":{"status":"alive","at":1700000000}}}"#,
         )
         .unwrap();
 
@@ -1226,10 +1320,38 @@ mod tests {
         assert_eq!(seeded.status, NodeStatus::Unknown, "假账必须回到未测");
         assert_eq!(seeded.latency_ms, None);
         assert_eq!(seeded.speed_bps, None);
+        let pinged = all.iter().find(|n| n.id == "pinged-claim").expect("pinged row");
+        assert_eq!(
+            pinged.status,
+            NodeStatus::Unknown,
+            "ping 过的端口不是一句'可用',账本上没它"
+        );
+        assert_eq!(pinged.last_checked, None);
         let measured = all.iter().find(|n| n.id == "measured-claim").expect("measured row");
-        assert_eq!(measured.status, NodeStatus::Alive, "盖了时间戳的结论不能被抹掉");
+        assert_eq!(measured.status, NodeStatus::Alive, "签过名的结论不能被抹掉");
         assert_eq!(measured.latency_ms, Some(75));
         assert_eq!(measured.speed_bps, Some(8 * 1024 * 1024));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// TCP ping 只回答"这个端口理不理我"。它从前还顺手写 status 和 last_checked,
+    /// 于是启动期那轮自动 ping 把整份名单标成"可用/不可用 · 刚刚"。
+    #[test]
+    fn a_tcp_ping_leaves_no_verdict_and_no_timestamp() {
+        let dir = std::env::temp_dir().join(format!("aura-nm-ping-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let manager = NodeManager::new(&dir);
+        manager
+            .add_node(group_node("VPNGate", "dial-me", NodeStatus::Unknown, None))
+            .unwrap();
+
+        manager.update_latency("dial-me", Some(30));
+        manager.update_speed("dial-me", Some(1_000_000));
+        let row = manager.get_by_id("dial-me").expect("row");
+        assert_eq!(row.latency_ms, Some(30), "ping 测到的延迟照记");
+        assert_eq!(row.speed_bps, Some(1_000_000));
+        assert_eq!(row.status, NodeStatus::Unknown, "但它没有资格说'可用'");
+        assert_eq!(row.last_checked, None, "它也不该盖上'刚刚测过'的时间戳");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

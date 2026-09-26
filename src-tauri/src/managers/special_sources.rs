@@ -108,16 +108,17 @@ impl SpecialSources {
                             let tier = s.get("tier").and_then(|t| t.as_str()).unwrap_or("standard");
                             let speed_label = s.get("speed_label").and_then(|sl| sl.as_str()).unwrap_or("fast");
                             let proto = s.get("protocol").and_then(|p| p.as_str()).unwrap_or("");
-                            let resp_ms = s.get("response_ms").and_then(|r| r.as_i64()).unwrap_or(280);
-                            let bw_kbs = s.get("bandwidth_kbs").and_then(|b| b.as_u64()).unwrap_or(800);
 
                             node.id = format!("megav-online-{}", i + 1);
                             node.name = format!("MegaV [{}·{}] {} ({})", country_code, city, tier.to_uppercase(), speed_label.to_uppercase());
                             node.group = "MegaV".to_string();
                             node.city = city.to_string();
                             node.country_code = country_code.to_string();
-                            node.latency_ms = Some(resp_ms);
-                            node.speed_bps = Some(bw_kbs * 1024 * 8);
+                            // response_ms / bandwidth_kbs in the file are what whoever
+                            // published it measured, from where they stood. Claiming them
+                            // as ours is the lie the residential list used to tell.
+                            node.latency_ms = None;
+                            node.speed_bps = None;
                             node.tags = vec!["MegaV".to_string(), proto.to_string(), tier.to_string()];
 
                             if node_manager.get_by_id(&node.id).is_none() {
@@ -142,7 +143,10 @@ impl SpecialSources {
     }
 
     fn build_static_megav_nodes() -> Vec<UnifiedNode> {
-        // Real nodes from MegaV_Public JSON + community verified pools
+        // Real nodes from MegaV_Public JSON + community verified pools. They are
+        // seeds, not results: none of these rows says anything about latency,
+        // bandwidth or reachability — a card may only show those after a real
+        // dial has signed it (see NodeManager::stamp_liveness).
         vec![
             // NL Amsterdam - Trojan WS via Cloudflare Worker CDN (Verified Working)
             UnifiedNode {
@@ -157,10 +161,10 @@ impl SpecialSources {
                 group: "MegaV".to_string(),
                 tags: vec!["MegaV".to_string(), "Trojan".to_string(), "CDN".to_string()],
                 favorite: false,
-                latency_ms: Some(200),
-                speed_bps: Some(30 * 1024 * 1024),
+                latency_ms: None,
+                speed_bps: None,
                 last_checked: None,
-                status: NodeStatus::Alive,
+                status: NodeStatus::Unknown,
                 config: json!({
                     "password": "qILX2iK3__aseaW-T&Ab",
                     "security": "tls",
@@ -185,10 +189,10 @@ impl SpecialSources {
                 group: "MegaV".to_string(),
                 tags: vec!["MegaV".to_string(), "Trojan".to_string(), "CDN".to_string()],
                 favorite: false,
-                latency_ms: Some(200),
-                speed_bps: Some(30 * 1024 * 1024),
+                latency_ms: None,
+                speed_bps: None,
                 last_checked: None,
-                status: NodeStatus::Alive,
+                status: NodeStatus::Unknown,
                 config: json!({
                     "password": "qILX2iK3__aseaW-T&Ab",
                     "security": "tls",
@@ -213,10 +217,10 @@ impl SpecialSources {
                 group: "MegaV".to_string(),
                 tags: vec!["MegaV".to_string(), "Shadowsocks".to_string()],
                 favorite: false,
-                latency_ms: Some(250),
-                speed_bps: Some(20 * 1024 * 1024),
+                latency_ms: None,
+                speed_bps: None,
                 last_checked: None,
-                status: NodeStatus::Alive,
+                status: NodeStatus::Unknown,
                 config: json!({
                     "method": "chacha20-ietf-poly1305",
                     "password": "oZIoA69Q8yhcQV8ka3Pa3A"
@@ -235,10 +239,10 @@ impl SpecialSources {
                 group: "MegaV".to_string(),
                 tags: vec!["MegaV".to_string(), "Shadowsocks".to_string()],
                 favorite: false,
-                latency_ms: Some(180),
-                speed_bps: Some(25 * 1024 * 1024),
+                latency_ms: None,
+                speed_bps: None,
                 last_checked: None,
-                status: NodeStatus::Alive,
+                status: NodeStatus::Unknown,
                 config: json!({
                     "method": "chacha20-ietf-poly1305",
                     "password": "eDfN7SODQceIOmIAbtJJtK"

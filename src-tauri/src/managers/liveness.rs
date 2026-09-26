@@ -243,6 +243,13 @@ pub fn record_verdict(node: &UnifiedNode, verdict: &NodeVerdict, now: i64) -> Un
     measured
 }
 
+/// 真连接结论的唯一落笔处:节点行和账本签名同批写。分开两处写早晚会出现"行上有
+/// 结论、账本上没签名"(或反过来)的分家 —— 那正是这张卡一句"可用"一句"未测"的老路。
+fn commit_verdicts(node_manager: &NodeManager, measured: &[UnifiedNode]) -> Result<(), String> {
+    node_manager.update_nodes(measured)?;
+    node_manager.stamp_liveness(measured)
+}
+
 /// What one group's sweep got through.
 #[derive(Debug, Clone, Default)]
 struct GroupStats {
@@ -626,8 +633,7 @@ fn store_verdict(
     verdict: &NodeVerdict,
 ) -> Result<UnifiedNode, String> {
     let measured = record_verdict(node, verdict, chrono::Utc::now().timestamp());
-    node_manager
-        .update_nodes(std::slice::from_ref(&measured))
+    commit_verdicts(node_manager, std::slice::from_ref(&measured))
         .map_err(|e| format!("测活结论未能保存: {}", e))?;
     Ok(measured)
 }
@@ -1307,7 +1313,7 @@ fn flush(node_manager: &NodeManager, group: &str, pending: &mut Vec<UnifiedNode>
     if pending.is_empty() {
         return true;
     }
-    match node_manager.update_nodes(pending) {
+    match commit_verdicts(node_manager, pending) {
         Ok(()) => {
             pending.clear();
             true

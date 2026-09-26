@@ -1,4 +1,4 @@
-use crate::managers::node_manager::NodeManager;
+use crate::managers::node_manager::{GroupPrune, NodeManager};
 use crate::models::{NodeStatus, ProtocolType, UnifiedNode};
 use anyhow::Result;
 use serde_json::json;
@@ -526,17 +526,7 @@ impl SpecialSources {
                     .or_else(|| val.as_array());
 
                 if let Some(items) = nodes_array {
-                    // Remove old residential nodes before adding verified new ones
-                    let old_ids: Vec<String> = node_manager
-                        .get_all()
-                        .into_iter()
-                        .filter(|n| n.group == "Residential")
-                        .map(|n| n.id)
-                        .collect();
-                    for id in old_ids {
-                        let _ = node_manager.delete_node(&id);
-                    }
-
+                    let mut parsed: Vec<UnifiedNode> = Vec::new();
                     for s in items {
                         let ovpn_cfg = s.get("ovpn_config")
                             .or_else(|| s.get("openvpn_config_base64"))
@@ -611,8 +601,19 @@ impl SpecialSources {
                             }),
                         };
 
-                        let _ = node_manager.add_node(node.clone());
-                        result_nodes.push(node);
+                        parsed.push(node);
+                    }
+
+                    // 一次换掉整组,而不是"先删光再逐台加"。删+加会把上一轮真连接
+                    // 测活的结论一起抹掉:新行的 status 是 Unknown、没有延迟,卡片就
+                    // 回到"未测",而卡片下面那句"出口节点不可用"是前端自己记的账,
+                    // 它还留着 —— 同一张卡上两句相反的话就是 v0.2.115 的现场。
+                    // `replace_group` 认 id,同一台服务器保留它的测活结论和星标。
+                    if !parsed.is_empty() {
+                        match node_manager.replace_group("Residential", parsed, GroupPrune::DropMissing) {
+                            Ok(merged) => result_nodes = merged,
+                            Err(e) => log::warn!("Residential: 换组失败,原清单保持不动: {}", e),
+                        }
                     }
                 }
             }

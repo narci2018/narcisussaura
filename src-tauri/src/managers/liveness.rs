@@ -76,6 +76,13 @@ pub struct LivenessProgress {
     /// say why: silently learning nothing is what made the whole button feel
     /// pointless in the field (v0.2.107: "要么可用，要么不可用，要么报错，怎么能够静默").
     pub message: Option<String>,
+    /// 到目前为止,这一轮里有哪台中转被**实测**判死并记为不可用(只取最后一台)。
+    ///
+    /// 中转栏拿它把"已实测并自动选用「X」"立刻撤掉。从前这个事件只带一句话,栏上
+    /// 那半句绿的还留着,于是同一屏出现两个相反的结论 —— 用户据此判定 app 在撒谎
+    /// (v0.2.114 现场:红字"连拨 3 次都不通"和"已实测并自动选用"同屏)。
+    /// 本地故障不会填这个字段:那种情形没有任何中转被定罪。
+    pub relay_retired: Option<String>,
 }
 
 fn emit_progress(app: &AppHandle, p: &LivenessProgress) {
@@ -93,6 +100,7 @@ fn beat(group: &str, stats: &GroupStats, running: bool, aborted: bool, persisted
         aborted,
         persisted,
         message: None,
+        relay_retired: stats.relay_retired.clone(),
     }
 }
 
@@ -131,6 +139,7 @@ fn stopped_beat(group: &str, total: usize, message: impl Into<String>) -> Livene
         aborted: true,
         persisted: false,
         message: Some(message.into()),
+        relay_retired: None,
     }
 }
 
@@ -249,6 +258,9 @@ struct GroupStats {
     not_judged: usize,
     /// Why the sweep stopped, when it did. Becomes the final beat's message.
     note: Option<String>,
+    /// 这一轮里被实测判死、已经记为不可用的那台中转(最后一台)。见
+    /// [`LivenessProgress::relay_retired`]。
+    relay_retired: Option<String>,
 }
 
 /// The relay, core binary and writable dir a probe lane needs.
@@ -327,9 +339,12 @@ fn retire_relay(app: &AppHandle, node_manager: &NodeManager, setup: &LaneSetup) 
     }
 }
 
-/// 一台中转被判死之后要对用户说的那半句:光说"中转不可用"等于把球踢回给用户,
-/// 而这一台已经不会再被用到了。
-const RELAY_RETIRED_TAIL: &str = "已把这台中转记为不可用，下一轮测活会自动改用其他中转（若列表里还有）";
+/// 一台中转被判死、而且**本轮已经没有第二台可换**时的那半句。
+///
+/// 光说"中转不可用"等于把球踢回给用户。这句必须如实交代"换不了"这件事 —— 因为
+/// 同一轮里换成功的时候是会说"已改用某某继续"的,两种话术的差别就是用户判断 app
+/// 有没有在做事的依据。
+const RELAY_RETIRED_TAIL: &str = "本轮已经没有第二台可换的中转；它已被记为不可用，下次测活会重新实测它，也可以先在中转栏里换一台";
 
 /// Dial every server of one list, publishing as it goes.
 ///
@@ -403,25 +418,115 @@ pub async fn measure_one(
     }
     let _guard = claim_single()?;
 
-    let setup = prepare_lane(app, node_manager, conn, preferred_id)?;
+    let mut setup = prepare_lane(app, node_manager, conn, preferred_id)?;
+    // 单节点也换机,但只换一次:用户问的是一个节点,不是整份名单。第二次仍拨不通
+    // 就停下来,因为那时"再点一次"也不会给出别的答案,必须如实说清楚。
+    let mut switches = 0usize;
+    let mut convicted: Vec<String> = Vec::new();
+    loop {
+        let dead_id = setup.relay_id.clone();
+        let single = measure_once(node_manager, group, &node, &setup).await;
+        match single {
+            Single::Done(outcome) => return Ok(outcome),
+            Single::RelayDown(reason) => {
+                convicted.push(setup.relay_name.clone());
+                retire_relay(app, node_manager, &setup);
+                let next = (switches < 1)
+                    .then(|| prepare_lane(app, node_manager, conn, None).ok())
+                    .flatten()
+                    .filter(|n| n.relay_id != dead_id);
+                if let Some(next) = next {
+                    switches += 1;
+                    log::warn!(
+                        "liveness {group}: 中转「{}」拨不通({}),单节点测活改用「{}」重试",
+                        convicted.last().unwrap(),
+                        reason,
+                        next.relay_name
+                    );
+                    setup = next;
+                    continue;
+                }
+                let who = if convicted.len() == 1 {
+                    format!("中转节点「{}」", convicted[0])
+                } else {
+                    format!("中转节点「{}」", convicted.join("」「"))
+                };
+                return Ok(ProbeOutcome::new(
+                    "relay-dead",
+                    format!(
+                        "{}连拨 {} 次都不通(最后一次:{}),所以这个出口节点未判定 —— 不是它不可用。已把这些中转记为不可用；再点一次「测活」会重测这个节点,列表里还有别的可用中转时会自动改用",
+                        who, RELAY_ATTEMPTS, reason
+                    ),
+                    None,
+                ));
+            }
+            Single::LaneSick(reason) => {
+                return Ok(ProbeOutcome::new(
+                    "not-judged",
+                    format!(
+                        "未判定:{} —— 这是本机测活核心的问题,没有把中转记为不可用,也没有给这个节点任何结论；再点一次「测活」可以重试",
+                        reason
+                    ),
+                    None,
+                ));
+            }
+        }
+    }
+}
+
+/// 一次单节点拨号的结果:要么已经有最终结论,要么这次失败根本不该算在节点头上。
+enum Single {
+    Done(ProbeOutcome),
+    /// 中转被实测判死,带着那句理由。
+    RelayDown(String),
+    /// 核心没能把流量交给中转 —— 本地故障,不定任何人的罪。
+    LaneSick(String),
+}
+
+async fn measure_once(
+    node_manager: &NodeManager,
+    group: &'static str,
+    node: &UnifiedNode,
+    setup: &LaneSetup,
+) -> Single {
     let name = "p0".to_string();
     let blocks = vec![(
         name.clone(),
-        ConnectionManager::mihomo_openvpn_proxy_block(&node, &name, Some(RELAY_MEMBER)),
+        ConnectionManager::mihomo_openvpn_proxy_block(node, &name, Some(RELAY_MEMBER)),
     )];
     let (b, d, r) = (setup.binary.clone(), setup.dir.clone(), setup.relay_yaml.clone());
-    let lane = tokio::task::spawn_blocking(move || {
+    let lane = match tokio::task::spawn_blocking(move || {
         Lane::start(LANE_LIVENESS_FIRST, &d, &b, Some(r.as_str()), &blocks)
     })
     .await
-    .map_err(|e| format!("测活任务被中断: {}", e))?
-    .map_err(|e| format!("测活核心未能启动: {}", e))?;
+    {
+        Ok(Ok(lane)) => lane,
+        // 核心没能启动 / 任务被中断:同样是"没有被拨号",不是"拨不通"。这些话留在
+        // 结论里,而不是变成一条转瞬即逝的 reject —— 用户投诉过那个形态。
+        Ok(Err(e)) => {
+            return Single::Done(ProbeOutcome::new(
+                "not-judged",
+                format!("未判定:测活核心未能启动({}),这个节点没有被拨号", brief(&e)),
+                None,
+            ))
+        }
+        Err(e) => {
+            return Single::Done(ProbeOutcome::new(
+                "not-judged",
+                format!(
+                    "未判定:测活任务被系统中断({}),这个节点没有被拨号",
+                    brief(&e.to_string())
+                ),
+                None,
+            ))
+        }
+    };
 
     // The core dropped this server's config, so nothing was ever dialled. That is
     // not a verdict about the server, and saying so is the whole point.
     if !lane.group_members().await.iter().any(|m| m == &name) {
         drop(lane);
-        return Ok(ProbeOutcome::new(
+        return Single::Done(ProbeOutcome::new(
             "not-judged",
             format!(
                 "未判定:核心拒绝了「{}」的 OpenVPN 配置(通常是不支持的加密或参数),这个节点没有被拨号",
@@ -432,31 +537,57 @@ pub async fn measure_one(
     }
 
     let verdict = lane.test_node(&name).await;
-    let mut relay = RelayWatch::new(setup.relay_name.clone());
-    let relay_reachable = if verdict.alive { true } else { relay.reachable(&lane).await };
+    if verdict.alive {
+        // 这台中转刚刚真的把一条拨号送出去了:给后面每一次"中转死了"的指控留一份
+        // 硬证据(见 [`RELAY_CARRIED_PROOF`])。
+        note_carried(&setup.relay_name);
+    }
+    let mut watch = RelayWatch::new(setup.relay_name.clone());
+    let relay_verdict = if verdict.alive {
+        RelayVerdict::Reachable
+    } else {
+        watch.judge(&lane).await
+    };
     let relay_name = setup.relay_name.clone();
     drop(lane);
 
-    if !relay_reachable {
-        retire_relay(app, node_manager, &setup);
-        return Ok(ProbeOutcome::new(
-            "relay-dead",
-            format!(
-                "中转不可用:中转节点「{}」连拨 {} 次都不通,所以这个出口节点未判定(不是它不可用)—— {}；再点一次「测活」可重试这个节点",
-                relay_name, RELAY_ATTEMPTS, RELAY_RETIRED_TAIL
-            ),
-            None,
-        ));
+    // 单节点也要两条核心都说不通才定中转的罪:否则一次误判就把用户正在用的中转
+    // 记成不可用,而屏幕上几秒前还写着"已实测并自动选用"。
+    let relay_verdict = match relay_verdict {
+        RelayVerdict::Unreachable(reason) => match second_opinion(
+            &relay_name,
+            reason,
+            confirm_relay_dead(LANE_LIVENESS_FIRST, &setup).await,
+        ) {
+            RelayFate::Convicted(r) => RelayVerdict::Unreachable(r),
+            RelayFate::NotConvicted(r) => RelayVerdict::LocalFault(r),
+        },
+        other => other,
+    };
+
+    match relay_verdict {
+        RelayVerdict::Unreachable(reason) => return Single::RelayDown(reason),
+        RelayVerdict::LocalFault(reason) => return Single::LaneSick(reason),
+        RelayVerdict::Reachable => {}
     }
 
-    let measured = store_verdict(node_manager, &node, &verdict)?;
+    let measured = match store_verdict(node_manager, node, &verdict) {
+        Ok(m) => m,
+        Err(e) => {
+            return Single::Done(ProbeOutcome::new(
+                "not-judged",
+                format!("未判定:已经拨过号,但结论没能存下来({}),卡片仍是未测", brief(&e)),
+                None,
+            ))
+        }
+    };
     log::info!(
         "liveness {group}: {}:{} 单节点测活 → {:?}",
         node.address,
         node.port,
         measured.status
     );
-    let outcome = if verdict.alive {
+    Single::Done(if verdict.alive {
         ProbeOutcome::new(
             "alive",
             format!(
@@ -475,9 +606,9 @@ pub async fn measure_one(
             ),
             Some(measured),
         )
-    };
-    Ok(outcome)
+    })
 }
+
 
 /// 拨不通时唯一的两种解释 —— 分不清就不能给结论。
 fn failure_verdict(relay_reachable: bool) -> &'static str {
@@ -527,12 +658,29 @@ impl ProbeOutcome {
     }
 }
 
+/// 节点拨失败时,对"这是谁的锅"的三种回答。
+///
+/// 从前这里只有"通 / 不通"两格,而"不通"混装了两种完全相反的事实:中转真的拨不
+/// 通,以及本机核心没能把流量交给中转(API 拒绝、客户端建不起来)。后者是本地故障,
+/// 拿它去写死一台中转,就是屏幕上"几秒前才实测可用"和"连拨 3 次都不通"同时出现的
+/// 原因(v0.2.114 现场)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RelayVerdict {
+    /// 中转经得住拨号:那次失败该记在出口节点头上。
+    Reachable,
+    /// 连拨 [`RELAY_ATTEMPTS`] 次都没有任何探测站点经它应答 —— 判死的唯一证据。
+    Unreachable(String),
+    /// 本地故障:核心没有把流量交给中转。既不定中转的罪,也不定出口节点的罪。
+    LocalFault(String),
+}
+
 /// 中转自身是否拨得通。一次判定要连续拨 [`RELAY_ATTEMPTS`] 次才算数 —— 只拨一次
 /// 的话,一条刚失败过的 openvpn 拨号留下的抖动会把中转误判成死了,而"几秒前才
 /// 用它测出可用"和"中转不可用"同时出现在屏幕上(v0.2.110 现场就是这个矛盾)。
 struct RelayWatch {
     name: String,
-    last: Option<(bool, std::time::Instant)>,
+    /// 最近一次"通"的时刻。"不通"不缓存:下一张卡片必须重新问一遍。
+    alive_at: Option<std::time::Instant>,
 }
 
 /// 判定"中转不可用"所需的连续失败次数。每一次都是真实握手 + 一个 204 往返。
@@ -543,9 +691,52 @@ const RELAY_RETRY_GAP: std::time::Duration = std::time::Duration::from_millis(60
 /// 复用"通"这个结论的时间窗。"不通"不复用:下一张卡片必须重新问一遍。
 const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// 「不在场证明」的有效期:这台中转多久之前还真的把某个节点的流量送出去过。
+///
+/// 比 `RELAY_RECHECK` 短得多是故意的。自检是在**问**中转"你还在吗",而一次成功的
+/// 节点拨号是它**已经答过**的事 —— 请求经它出去、204 经它回来。v0.2.113/.114 的
+/// 现场矛盾都是同一件事:同一轮里十来个节点经这台中转拨通,下一个失败之后自检却
+/// 说"连拨 3 次都不通"。硬证据不该被一次自检的抖动推翻。
+///
+/// 代价要说清楚:如果中转真的在跑的过程中死了,最多有 `RELAY_CARRIED_PROOF` 这一
+/// 窗(约两三个节点)会被记成"出口节点不可用";窗口一过,三次自检 + 换核心复核还
+/// 是会定它的罪。冤枉一台中转要推翻整轮的结论,反过来只影响几个节点。
+const RELAY_CARRIED_PROOF: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// 最近一次"某台中转真的送出去过流量":(中转名, 时刻)。
+static LAST_CARRIED: std::sync::Mutex<Option<(String, std::time::Instant)>> =
+    std::sync::Mutex::new(None);
+
+fn note_carried_at(relay_name: &str, at: std::time::Instant) {
+    if let Ok(mut guard) = LAST_CARRIED.lock() {
+        *guard = Some((relay_name.to_string(), at));
+    }
+}
+
+/// 记一笔"这台中转刚刚把一条拨号送出去了"。
+fn note_carried(relay_name: &str) {
+    note_carried_at(relay_name, std::time::Instant::now());
+}
+
+/// 这台中转在 `within` 之内有没有真的送出去过流量(返回距那次成功的时长)。
+/// 名字必须对得上:换过中转之后,上一台的功劳不能替它顶罪。
+fn carried_within(
+    relay_name: &str,
+    within: std::time::Duration,
+    now: std::time::Instant,
+) -> Option<std::time::Duration> {
+    let guard = LAST_CARRIED.lock().ok()?;
+    let (name, at) = guard.as_ref()?;
+    if name != relay_name {
+        return None;
+    }
+    let ago = now.checked_duration_since(*at)?;
+    (ago < within).then_some(ago)
+}
+
 impl RelayWatch {
     fn new(name: String) -> Self {
-        Self { name, last: None }
+        Self { name, alive_at: None }
     }
 
     fn name(&self) -> &str {
@@ -555,28 +746,63 @@ impl RelayWatch {
     /// 换一条 lane 就把上一次的答复忘掉:中转是在跑的过程中挂掉的,新 lane 上的
     /// 第一次失败必须重新问一遍。
     fn forget(&mut self) {
-        self.last = None;
+        self.alive_at = None;
     }
 
     /// 节点拨失败时问一次中转:连拨 `RELAY_ATTEMPTS` 次都不通才说它不可用。
-    async fn reachable(&mut self, lane: &Lane) -> bool {
-        if let Some((true, at)) = self.last {
+    async fn judge(&mut self, lane: &Lane) -> RelayVerdict {
+        if let Some(at) = self.alive_at {
             if at.elapsed() < RELAY_RECHECK {
-                return true;
+                return RelayVerdict::Reachable;
             }
         }
+        // 自检之前先问一条更硬的证据:这台中转多久之前还真的把某个节点的流量送出
+        // 去(见 RELAY_CARRIED_PROOF)。有这份证明在,就不必拿一次抖动去定它的罪。
+        if let Some(ago) = carried_within(&self.name, RELAY_CARRIED_PROOF, std::time::Instant::now())
+        {
+            log::info!(
+                "liveness: 中转「{}」{} 秒前还承载过一次成功拨号 —— 不用再问它自己",
+                self.name,
+                ago.as_secs()
+            );
+            return RelayVerdict::Reachable;
+        }
+        let mut last_reason: Option<String> = None;
         for attempt in 0..RELAY_ATTEMPTS {
             if attempt > 0 {
                 tokio::time::sleep(RELAY_RETRY_GAP).await;
             }
-            if lane.check_relay().await.is_some() {
-                log::info!(
-                    "liveness: 中转「{}」自检 → 可用(第 {} 次拨通)",
-                    self.name,
-                    attempt + 1
-                );
-                self.last = Some((true, std::time::Instant::now()));
-                return true;
+            match lane.check_relay().await {
+                Ok(_) => {
+                    log::info!(
+                        "liveness: 中转「{}」自检 → 可用(第 {} 次拨通)",
+                        self.name,
+                        attempt + 1
+                    );
+                    self.alive_at = Some(std::time::Instant::now());
+                    return RelayVerdict::Reachable;
+                }
+                Err(failure) if failure.is_local_fault() => {
+                    // 本地故障不必拨满三次:重拨问的是同一个生病的核心,能救它的是
+                    // 换一条 lane,而不是再多花 24 秒。
+                    log::warn!(
+                        "liveness: 中转「{}」自检遇到本地故障(第 {} 次)—— 这不记在中转头上: {}",
+                        self.name,
+                        attempt + 1,
+                        failure.brief()
+                    );
+                    return RelayVerdict::LocalFault(failure.brief());
+                }
+                Err(failure) => {
+                    log::warn!(
+                        "liveness: 中转「{}」第 {}/{} 次自检拨不通: {}",
+                        self.name,
+                        attempt + 1,
+                        RELAY_ATTEMPTS,
+                        failure.brief()
+                    );
+                    last_reason = Some(failure.brief());
+                }
             }
         }
         log::warn!(
@@ -584,9 +810,117 @@ impl RelayWatch {
             self.name,
             RELAY_ATTEMPTS
         );
-        self.last = Some((false, std::time::Instant::now()));
-        false
+        RelayVerdict::Unreachable(last_reason.unwrap_or_else(|| {
+            format!("连拨 {} 次都没有一个探测站点经它应答", RELAY_ATTEMPTS)
+        }))
     }
+}
+
+/// 两条核心一起给出的最终意见:要么定罪,要么谁都不定罪。
+///
+/// 只有这一种两格划分,才不会让"一条核心说不通"被顺手当成"中转死了" —— 之前就是
+/// 这种混装让屏幕上同时出现"已实测并自动选用"和"连拨 3 次都不通"。
+enum RelayFate {
+    /// 两条不同的核心都连拨 3 次拨不通:记为不可用,换一台继续。
+    Convicted(String),
+    /// 没能凑够证据:不写 Dead,按本地故障处理。
+    NotConvicted(String),
+}
+
+/// 换一条**全新的核心**再问一遍这台中转。
+///
+/// 同一条 lane 上连拨三次都不通,证明的只是"这条 lane 出不去"。核心是在测活过程
+/// 里一台一台往下拨的,它中途垮掉之后控制端口就不再应答,而那份账会被记在中转头
+/// 上 —— v0.2.114 的现场就是这样:一台刚实测过 403ms/37Mbps 的 HK 中转,在顺利测
+/// 完 13 个节点之后被判"连拨 3 次都不通"。一台中转的死罪要两个不同的核心共同签字。
+/// 调用之前必须已经把原来那条 lane drop 掉,否则会连上旧进程假装就绪。
+async fn confirm_relay_dead(index: usize, setup: &LaneSetup) -> RelayVerdict {
+    let (b, d, r) = (
+        setup.binary.clone(),
+        setup.dir.clone(),
+        setup.relay_yaml.clone(),
+    );
+    let lane = match tokio::task::spawn_blocking(move || {
+        Lane::start(index, &d, &b, Some(r.as_str()), &[])
+    })
+    .await
+    {
+        Ok(Ok(lane)) => lane,
+        Ok(Err(e)) => {
+            return RelayVerdict::LocalFault(format!(
+                "复核用的新核心没能启动（{}），这台中转的\"不通\"没有被确认",
+                brief(&e)
+            ))
+        }
+        Err(e) => {
+            return RelayVerdict::LocalFault(format!(
+                "复核用的新核心被系统中断（{}），这台中转的\"不通\"没有被确认",
+                brief(&e.to_string())
+            ))
+        }
+    };
+    let verdict = RelayWatch::new(setup.relay_name.clone()).judge(&lane).await;
+    drop(lane);
+    verdict
+}
+
+/// 第二条核心的意见合进第一条的结论里。
+///
+/// 新核心**通了**是最要紧的一种:它说明死的是刚才那条 lane,中转一个节点都没失去,
+/// 所以这里把它折算成本地故障 —— 后面那条路径不会写 Dead,也不会中止整轮。
+fn second_opinion(relay_name: &str, first_reason: String, verdict: RelayVerdict) -> RelayFate {
+    match verdict {
+        RelayVerdict::Unreachable(second) => RelayFate::Convicted(format!(
+            "{}；换一条全新的测活核心复核后依然不通（{}）",
+            first_reason, second
+        )),
+        RelayVerdict::LocalFault(reason) => RelayFate::NotConvicted(reason),
+        RelayVerdict::Reachable => RelayFate::NotConvicted(format!(
+            "刚才那条测活核心出不去（{}），但一条全新的核心经中转「{}」是能通的 —— 出问题的是本机核心，不是中转",
+            first_reason, relay_name
+        )),
+    }
+}
+
+/// 换中转的预算。一轮里最多换这么几台;超过之后必须停下来,因为连着数台中转都拨
+/// 不通说明问题在这台机器的出口网络上,继续换只会让用户看着进度条空转。
+const RELAY_ROTATIONS_MAX: usize = 2;
+/// 本地故障后重建测活核心的预算。
+const LANE_REBUILDS_MAX: usize = 2;
+
+/// 一条 lane 为什么提前结束 —— 三种原因的处置完全不同,所以必须分开说。
+enum LaneStop {
+    /// 用户开了真隧道,让路。
+    Yielded,
+    /// 中转被实测判定拨不通(有证据):定罪它,然后换一台继续。
+    RelayDown(String),
+    /// 本机核心没能把流量交给中转(无证据):不定罪任何人,重建一条 lane 继续。
+    LaneSick(String),
+}
+
+/// 一轮还在跑、但刚刚发生了一件必须让用户看见的事(换中转、重启核心)时的一拍。
+fn message_beat(group: &str, stats: &GroupStats, message: &str) -> LivenessProgress {
+    let mut p = beat(group, stats, true, false, true);
+    p.message = Some(message.to_string());
+    p
+}
+
+/// 换中转那一拍的话。
+///
+/// 它必须说"正在改用哪一台",而不是"本轮中止" —— 从前这里只留下一句定罪,而屏幕上
+/// 那台中转几秒前才刚被实测选用,用户只能得出一个结论:app 在撒谎。
+fn rotation_message(dead: &str, reason: &str, next: &str) -> String {
+    format!(
+        "中转节点「{dead}」连拨 {attempts} 次都不通（{reason}），已记为不可用，现在改用「{next}」继续测：刚才那个节点会用新中转重测",
+        attempts = RELAY_ATTEMPTS
+    )
+}
+
+/// 本地故障那一拍的话。**不许出现"记为不可用"** —— 什么都没有发生,谁也不该定罪。
+fn local_fault_message(reason: &str) -> String {
+    format!(
+        "测活核心自身出了问题（{reason}），正在重启测活核心后继续：刚才那个节点没有经过中转，不算它的结论"
+    )
 }
 
 
@@ -628,7 +962,7 @@ async fn probe_group(
             ..Default::default()
         }));
     }
-    let setup = match prepare_lane(app, node_manager, conn, preferred_id) {
+    let mut setup = match prepare_lane(app, node_manager, conn, preferred_id) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("liveness {group}: {e}");
@@ -653,7 +987,16 @@ async fn probe_group(
 
     let now = chrono::Utc::now().timestamp();
     let mut rejected = 0usize;
-    for (batch_no, chunk) in rows.chunks(BATCH_SIZE).enumerate() {
+    // 换机与重建的预算。上限不是为了省时间,而是不让"再换一台试试"变成死循环:
+    // 连着几台中转都拨不通,那不是中转运气差,是这台机器出不去网络 —— 那种事必须
+    // 停下来如实说,而不是把剩下的节点一路"未判定"下去。
+    let mut rotations = 0usize;
+    let mut rebuilds = 0usize;
+    // cursor 精确停在"下一个还没有判定的节点":换中转或重建 lane 之后从它重拨,
+    // 一个节点都不会被跳过,也不会被算两次。
+    let mut cursor = 0usize;
+    let mut round = 0usize;
+    while cursor < rows.len() {
         if tunnel_took_over(conn) {
             stats.aborted = true;
             stats.note = Some(format!(
@@ -662,6 +1005,9 @@ async fn probe_group(
             ));
             break;
         }
+        let start = cursor;
+        let end = (start + BATCH_SIZE).min(rows.len());
+        let chunk = &rows[start..end];
 
         let mut blocks: Vec<(String, String)> = Vec::with_capacity(chunk.len());
         let mut targets: Vec<(String, &UnifiedNode)> = Vec::with_capacity(chunk.len());
@@ -674,7 +1020,8 @@ async fn probe_group(
             targets.push((name, node));
         }
 
-        let index = lane_index_for(batch_no);
+        let index = lane_index_for(round);
+        round += 1;
         let (b, d, r, bl) = (setup.binary.clone(), setup.dir.clone(), setup.relay_yaml.clone(), blocks);
         let lane = match tokio::task::spawn_blocking(move || {
             Lane::start(index, &d, &b, Some(r.as_str()), &bl)
@@ -722,39 +1069,42 @@ async fn probe_group(
         let batch_start = std::time::Instant::now();
         let alive_before_batch = stats.alive;
         let mut pending: Vec<UnifiedNode> = Vec::with_capacity(targets.len());
-        for (name, node) in &targets {
+        // 这一条 lane 为什么结束;None 表示这一段节点全都有结论了。
+        let mut stop: Option<LaneStop> = None;
+        for (i, (name, node)) in targets.iter().enumerate() {
+            cursor = start + i;
             if tunnel_took_over(conn) {
-                stats.aborted = true;
-                stats.note = Some(format!(
-                    "已让路给你正在使用的连接：测了 {}/{} 个，其余未测",
-                    stats.tested, stats.total
-                ));
+                stop = Some(LaneStop::Yielded);
                 break;
             }
             // The core refused this server's OpenVPN config, so nothing was ever
             // dialled: that is not evidence about the server.
             if !accepted.iter().any(|m| m == name) {
                 rejected += 1;
+                cursor += 1;
                 continue;
             }
             let verdict = lane.test_node(name).await;
-            if !verdict.alive && !relay.reachable(&lane).await {
-                // 失败的第一种解释是承载它的那台中转自己拨不通 —— 那时候把这些出口
-                // 节点标成"不可用"是假账:它们根本没被真正测到。停手,并说清是谁的问题。
-                stats.not_judged += 1;
-                stats.aborted = true;
-                retire_relay(app, node_manager, &setup);
-                stats.note = Some(format!(
-                    "中转节点「{}」连拨 {} 次都不通，本轮中止：{} 个节点未判定（不是它们不可用），已测 {}/{} 个；{}",
-                    relay.name(),
-                    RELAY_ATTEMPTS,
-                    stats.not_judged,
-                    stats.tested,
-                    stats.total,
-                    RELAY_RETIRED_TAIL
-                ));
-                break;
+            if verdict.alive {
+                // 每一张拨通的卡片都在给这台中转作不在场证明(见 RELAY_CARRIED_PROOF)。
+                note_carried(relay.name());
             }
+            if !verdict.alive {
+                match relay.judge(&lane).await {
+                    RelayVerdict::Reachable => {
+                        // 中转自检正常,这一票就记在出口节点自己身上。
+                    }
+                    RelayVerdict::Unreachable(reason) => {
+                        stop = Some(LaneStop::RelayDown(reason));
+                        break;
+                    }
+                    RelayVerdict::LocalFault(reason) => {
+                        stop = Some(LaneStop::LaneSick(reason));
+                        break;
+                    }
+                }
+            }
+            cursor += 1;
             if verdict.alive {
                 stats.alive += 1;
             }
@@ -772,17 +1122,16 @@ async fn probe_group(
         // One whole batch with no reachable server is not bad luck at fifty
         // volunteer relays — it is the dial path failing, and the core's own log
         // is the only witness. This app's phone diagnostic channel is its log.
-        let core_tail = if stats.alive == alive_before_batch {
-            lane.tail_log(20)
-        } else {
-            String::new()
-        };
+        // 本地故障那一拍同样要留证据:核心中途死了(select 拨不动)只有它的日志知道。
+        let want_tail =
+            stats.alive == alive_before_batch || matches!(&stop, Some(LaneStop::LaneSick(_)));
+        let core_tail = if want_tail { lane.tail_log(20) } else { String::new() };
         drop(lane);
 
         if !core_tail.is_empty() {
             log::warn!(
                 "liveness {group}: batch {} dialled {} servers, none connected — core log tail: {}",
-                batch_no,
+                round - 1,
                 targets.len(),
                 core_tail
             );
@@ -792,14 +1141,114 @@ async fn probe_group(
         emit_progress(app, &beat(group, &stats, true, false, stored));
         log::info!(
             "liveness {group}: batch {} of {} servers in {:.0}s ({}/{} measured)",
-            batch_no,
+            round - 1,
             chunk.len(),
             batch_start.elapsed().as_secs_f64(),
             stats.tested,
             stats.total
         );
-        if stats.aborted {
-            break;
+
+        // 停下来的三种原因里,只有"中转被实测拨不通"才会写死它,也只有"实在换不动
+        // 了"才中止整轮。v0.2.113 之前这里一律 break,所以那句"下一轮会自动改用
+        // 其他中转"从来不成立 —— 用户只能再点一次,再看一次同样的红字。
+        let Some(stop) = stop else { continue };
+        // 一条 lane 说的"不通"要换一条全新的核心复核过才算数(见 confirm_relay_dead)。
+        let stop = match stop {
+            LaneStop::RelayDown(reason) => {
+                let name = relay.name().to_string();
+                emit_progress(
+                    app,
+                    &message_beat(
+                        group,
+                        &stats,
+                        &format!(
+                            "中转节点「{name}」在这条测活核心上连拨 {attempts} 次都不通，先换一条全新的核心复核一遍再定它 —— 现在下结论还太早",
+                            attempts = RELAY_ATTEMPTS
+                        ),
+                    ),
+                );
+                let verdict = confirm_relay_dead(lane_index_for(round - 1), &setup).await;
+                match second_opinion(&name, reason, verdict) {
+                    RelayFate::Convicted(reason) => LaneStop::RelayDown(reason),
+                    RelayFate::NotConvicted(reason) => LaneStop::LaneSick(reason),
+                }
+            }
+            other => other,
+        };
+        match stop {
+            LaneStop::Yielded => {
+                stats.aborted = true;
+                stats.note = Some(format!(
+                    "已让路给你正在使用的连接：测了 {}/{} 个，其余未测",
+                    stats.tested, stats.total
+                ));
+                break;
+            }
+            LaneStop::RelayDown(reason) => {
+                let dead_name = relay.name().to_string();
+                let dead_id = setup.relay_id.clone();
+                retire_relay(app, node_manager, &setup);
+                stats.relay_retired = Some(dead_name.clone());
+                let next = (rotations < RELAY_ROTATIONS_MAX)
+                    .then(|| prepare_lane(app, node_manager, conn, None).ok())
+                    .flatten()
+                    .filter(|n| n.relay_id != dead_id);
+                if let Some(next) = next {
+                    rotations += 1;
+                    setup = next;
+                    relay = RelayWatch::new(setup.relay_name.clone());
+                    let message = rotation_message(&dead_name, &reason, &setup.relay_name);
+                    log::warn!("liveness {group}: {message}");
+                    emit_progress(app, &message_beat(group, &stats, &message));
+                    continue;
+                }
+                // 换不动了:要么列表里没有第二台中转,要么已经换到预算上限。
+                stats.not_judged += 1;
+                stats.aborted = true;
+                let tail = if rotations > 0 {
+                    format!(
+                        "本轮已换用 {} 台中转，它们都拨不通 —— 这是这台机器出不去网络，不是出口节点的问题",
+                        rotations
+                    )
+                } else {
+                    RELAY_RETIRED_TAIL.to_string()
+                };
+                stats.note = Some(format!(
+                    "中转节点「{}」连拨 {} 次都不通（{}）：本轮中止，{} 个节点未判定（不是它们不可用），已测 {}/{} 个{}；{}",
+                    dead_name,
+                    RELAY_ATTEMPTS,
+                    reason,
+                    stats.not_judged,
+                    stats.tested,
+                    stats.total,
+                    unmeasured_tail(stats.total, stats.tested),
+                    tail
+                ));
+                break;
+            }
+            LaneStop::LaneSick(reason) => {
+                // 本地故障:中转一个都没被拨到,所以它既不能被定罪,这一轮也还有救
+                // —— 换一条全新的 lane 就是比重拨三次更强的补救。
+                if rebuilds < LANE_REBUILDS_MAX {
+                    rebuilds += 1;
+                    let message = local_fault_message(&reason);
+                    log::warn!("liveness {group}: {message}");
+                    emit_progress(app, &message_beat(group, &stats, &message));
+                    continue;
+                }
+                stats.not_judged += 1;
+                stats.aborted = true;
+                stats.note = Some(format!(
+                    "测活核心自身出了问题（{}），重启 {} 次仍未能把流量交给中转，本轮中止：已测 {}/{} 个{}，{} 个节点未判定（不是它们不可用，中转也没有因此被记为不可用）",
+                    reason,
+                    rebuilds,
+                    stats.tested,
+                    stats.total,
+                    unmeasured_tail(stats.total, stats.tested),
+                    stats.not_judged
+                ));
+                break;
+            }
         }
     }
 
@@ -814,6 +1263,13 @@ async fn probe_group(
                 stats.tested,
                 unmeasured_tail(stats.total, stats.tested)
             );
+            if rotations > 0 {
+                // 报最后那台中转的名字会撒谎:前面的节点是经被换掉的那几台测的。
+                summary.push_str(&format!(
+                    "；本轮换用过 {} 台中转，前面的节点是经旧中转测得的",
+                    rotations
+                ));
+            }
             if stats.tested > 0 && stats.alive == 0 {
                 // 走到这里说明每次失败后都验过中转(见 RelayWatch),所以这句
                 // "是出口节点连不上"是有依据的,不是猜的。
@@ -1002,6 +1458,127 @@ mod tests {
             "relay-dead",
             "中转自己拨不通时,失败不能记到出口节点头上"
         );
+    }
+
+    /// 冤案的形状:本机核心没能把流量交给中转,却说成"中转连拨 3 次都不通"。
+    #[test]
+    fn a_local_fault_blames_the_probe_core_and_convicts_nobody() {
+        let message = local_fault_message("核心没能把流量交给中转(本地故障:connection refused)");
+        assert!(message.contains("测活核心"), "{message}");
+        assert!(
+            !message.contains("不可用"),
+            "本地故障的一句话里不许出现任何定罪: {message}"
+        );
+        assert!(!message.contains("本轮中止"), "{message}");
+        assert!(
+            message.contains("没有经过中转"),
+            "要说清楚这次失败为什么不算节点的: {message}"
+        );
+    }
+
+    /// 一台中转的死罪要**两条不同的核心**共同签字。旧核心说不通、刚起来的新核心
+    /// 说得通,屏幕上必须是"出问题的是本机核心",不能把用户正在用的中转记死 ——
+    /// v0.2.114 的现场就是几分钟前才实测 37Mbps 的中转被判了死刑。
+    #[test]
+    fn one_core_saying_no_is_not_a_death_sentence() {
+        let fate = second_opinion(
+            "HK 01",
+            "8 秒内没有任何一个探测站点经它应答".to_string(),
+            RelayVerdict::Reachable,
+        );
+        let RelayFate::NotConvicted(message) = fate else {
+            panic!("新核心答得出来时绝不能定罪");
+        };
+        assert!(message.contains("不是中转"), "{message}");
+        assert!(message.contains("HK 01"), "要点名是哪台中转没死: {message}");
+        assert!(!message.contains("不可用"), "{message}");
+    }
+
+    #[test]
+    fn two_cores_agreeing_is_the_only_death_sentence() {
+        let fate = second_opinion(
+            "HK 01",
+            "旧核心:8 秒内无人应答".to_string(),
+            RelayVerdict::Unreachable("新核心:8 秒内无人应答".to_string()),
+        );
+        let RelayFate::Convicted(message) = fate else {
+            panic!("两条核心都拨不通就是证据,必须定罪");
+        };
+        assert!(message.contains("旧核心") && message.contains("新核心"), "{message}");
+    }
+
+    /// 复核本身没跑起来(新核心起不来)是第三种情况:它既不能定罪,也不能说没事。
+    #[test]
+    fn a_recheck_that_never_ran_convicts_nobody() {
+        let fate = second_opinion(
+            "HK 01",
+            "旧核心:8 秒内无人应答".to_string(),
+            RelayVerdict::LocalFault("复核用的新核心没能启动（binary not found）".to_string()),
+        );
+        let RelayFate::NotConvicted(message) = fate else {
+            panic!("复核没跑起来就没有第二种意见: 不能定罪");
+        };
+        assert!(message.contains("新核心"), "{message}");
+        assert!(!message.contains("记为不可用"), "{message}");
+    }
+
+    /// 比自检更硬的证据:这台中转**刚刚真的把某个节点的流量送出去了**。v0.2.113
+    /// 的现场是同一轮 13 个节点经它拨通、第 14 个失败之后自检说它"连拨 3 次都不通"
+    /// —— 有这份不在场证明在,自检的抖动根本不该进入定罪流程。
+    #[test]
+    fn a_relay_that_just_carried_a_successful_dial_is_not_asked_again() {
+        use std::time::Duration;
+        let now = std::time::Instant::now();
+        note_carried_at("proof-carried-recent", now - Duration::from_secs(3));
+        assert!(carried_within("proof-carried-recent", RELAY_CARRIED_PROOF, now).is_some());
+    }
+
+    /// 证明会过期,也只替它自己那一台说话:换过中转之后,上一台的功劳不能给新一台
+    /// 脱罪,否则一轮里第一台中转的死罪就永远定不下来了。
+    #[test]
+    fn a_carried_proof_expires_and_never_covers_another_relay() {
+        use std::time::Duration;
+        let now = std::time::Instant::now();
+        note_carried_at("proof-stale", now - (RELAY_CARRIED_PROOF + Duration::from_secs(2)));
+        assert!(
+            carried_within("proof-stale", RELAY_CARRIED_PROOF, now).is_none(),
+            "过期之后的成功拨号不能再替中转脱罪"
+        );
+        note_carried_at("proof-other", now - Duration::from_secs(1));
+        assert!(
+            carried_within("proof-another", RELAY_CARRIED_PROOF, now).is_none(),
+            "别的中转的功劳不能顶这一台的罪"
+        );
+    }
+
+    /// 换机成功那一拍必须报出"改用谁",而且要让人看出来轮还没结束 —— 屏幕上那台
+    /// 中转刚刚才被实测选用,再念一遍"中止"就是自相矛盾。
+    #[test]
+    fn switching_relay_names_the_replacement_and_keeps_the_sweep_running() {
+        let message = rotation_message("HK 01", "8 秒内没有任何一个探测站点经它应答", "JP 02");
+        assert!(message.contains("HK 01") && message.contains("JP 02"), "{message}");
+        assert!(message.contains("继续测"), "换机之后轮还在跑: {message}");
+        assert!(!message.contains("中止"), "{message}");
+        assert!(
+            message.contains(&format!("连拨 {RELAY_ATTEMPTS} 次")),
+            "定罪的理由要和那句话里的次数一致: {message}"
+        );
+    }
+
+    #[test]
+    fn a_mid_pass_switch_beat_is_not_an_end_of_round() {
+        let stats = GroupStats {
+            tested: 13,
+            total: 98,
+            alive: 3,
+            not_judged: 1,
+            ..Default::default()
+        };
+        let p = message_beat("Residential", &stats, "已改用「JP 02」继续测");
+        assert!(p.running && !p.aborted && !p.done, "这一拍之后还要接着拨");
+        assert_eq!(p.message.as_deref(), Some("已改用「JP 02」继续测"));
+        assert_eq!(p.tested, 13, "换中转不能让进度倒退");
+        assert!(p.persisted, "换机之前已经把已有结论写回库存");
     }
 
     #[test]

@@ -79,7 +79,16 @@ interface AppStore {
   // 用户在等待时切走标签页,组件卸载后回来的 setState 会落空,回来就又是一张
   // "不知道有没有测过"的卡片。
   probeOutcomes: Record<string, ProbeOutcome>;
-  setProbeOutcome: (nodeId: string, outcome: ProbeOutcome) => void;
+  // 刚刚那一次单节点测活。卡片会被重排送走(判死的沉底、列表重新拉取),所以这句
+  // 话必须另外钉在面板顶部 —— 用户投诉的"提示一闪而过"就是这个意思。
+  lastProbe: { nodeId: string; nodeName: string; outcome: ProbeOutcome } | null;
+  setProbeOutcome: (nodeId: string, outcome: ProbeOutcome, nodeName?: string) => void;
+  dismissLastProbe: () => void;
+  // 单节点测活之后只改这一行,不重拉整份清单:全量刷新 + 重排会把刚测完的那张
+  // 卡片送到看不见的地方,用户回来只看到一片"未测"。
+  applyMeasuredNode: (node: UnifiedNode) => void;
+  // 某台中转被测活判定不可用:中转栏上关于它的"已实测/自动选用"必须当场作废。
+  relayConvicted: (relayName: string) => void;
   fetchRelayCandidates: () => Promise<void>;
   rankRelays: () => Promise<void>;
   // 中转栏"刷新"这一下的结论,必须成句显示在栏上。从前这个按钮只重新拉一次候选
@@ -301,6 +310,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   // 单节点测活的结论存在全局 store,不放面板组件的 state 里:等待期间用户切走
   // 标签页,组件卸载,回来的 setState 就落空 —— 那张卡片又变成"不知道测没测过"。
   probeOutcomes: {},
+  lastProbe: null,
   setRelayEnabled: (enabled) => set({ relayEnabled: enabled }),
   setSelectedRelayNodeId: (id) => set({ selectedRelayNodeId: id }),
   fetchRelayCandidates: async () => {
@@ -459,6 +469,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
         if (progress.persisted || !progress.running) {
           get().refreshNodes().catch(() => {});
         }
+        // 这一轮里某台中转被实测判死了。栏上那句绿色的"已实测并自动选用「X」"
+        // 必须在这一拍改掉 —— 同屏两个相反结论就是用户说的"中转没问题,你在撒谎"。
+        if (progress.relay_retired) {
+          get().relayConvicted(progress.relay_retired);
+        }
       }).catch(() => {});
 
       // Surface a captured crash from the previous run (Android only; the
@@ -484,10 +499,45 @@ export const useAppStore = create<AppStore>((set, get) => ({
   setSortMode: (sortMode) => set({ sortMode, sortBySpeed: sortMode === 'speed' }),
   setSelectedNodeId: (selectedNodeId) => set({ selectedNodeId }),
   setErrorMessage: (errorMessage) => set({ errorMessage }),
-  setProbeOutcome: (nodeId, outcome) =>
+  setProbeOutcome: (nodeId, outcome, nodeName) => {
+    const stamped = { ...outcome, at: Date.now() };
     set({
-      probeOutcomes: { ...get().probeOutcomes, [nodeId]: { ...outcome, at: Date.now() } },
-    }),
+      probeOutcomes: { ...get().probeOutcomes, [nodeId]: stamped },
+      lastProbe: { nodeId, nodeName: nodeName ?? '', outcome: stamped },
+    });
+    // 单节点测活也能把中转定罪。那一刻中转栏上"已实测并自动选用「X」"就是假的,
+    // 必须和整组测活一样当场作废 —— 两处说法相反,用户只会认为 app 在编。
+    if (outcome.verdict === 'relay-dead') {
+      // 换过一次机时这句话里有两个名字:「A」「B」。锚在"连拨"上,别把句中的
+      // 「测活」也当成中转的名字。
+      const named = /中转节点「(.+?)」连拨/.exec(outcome.message);
+      if (named) for (const name of named[1].split('」「')) get().relayConvicted(name);
+    }
+  },
+  dismissLastProbe: () => set({ lastProbe: null }),
+  applyMeasuredNode: (node) =>
+    set({ nodes: get().nodes.map((n) => (n.id === node.id ? node : n)) }),
+  relayConvicted: (relayName) => {
+    const st = get();
+    // 整组测活之后每一拍都带着"本轮判死了哪台中转",同一个名字不能反复触发重拉候选。
+    if (st.relayRank?.message.includes(`中转「${relayName}」已被测活判定不可用`)) return;
+    // 只作废"关于这一台"的说法:另一台中转的实测结论还是真的。
+    const aboutIt = st.preferredRelay?.preferred_name === relayName;
+    const chosen = st.relayCandidates.find((n) => n.name === relayName);
+    set({
+      preferredRelay: aboutIt ? null : st.preferredRelay,
+      selectedRelayNodeId:
+        st.selectedRelayNodeId !== 'auto' && chosen && st.selectedRelayNodeId === chosen.id
+          ? 'auto'
+          : st.selectedRelayNodeId,
+      relayRank: {
+        message: `中转「${relayName}」已被测活判定不可用${aboutIt ? '，自动优选已取消' : ''}，请点中转栏的刷新重新实测一台`,
+        ok: false,
+      },
+    });
+    // 候选要被重新拉一次:那台中转现在带着"实测不通"的记录,下拉框里看得见。
+    st.fetchRelayCandidates().catch(() => {});
+  },
   dismissCrashReport: () => set({ crashReport: null }),
   closeInspectReport: () => set({ inspectReport: null }),
 

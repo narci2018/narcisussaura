@@ -1,5 +1,5 @@
 import React from 'react';
-import { CircleCheck, CircleDashed, CircleX, Clock } from 'lucide-react';
+import { CircleCheck, CircleDashed, CircleX, Clock, X } from 'lucide-react';
 import { LivenessProgress, NodeStatus, ProbeOutcome, UnifiedNode } from '../../../types';
 
 const measuredStamp = (ts: number) => {
@@ -40,10 +40,11 @@ export const byLiveness = (a: UnifiedNode, b: UnifiedNode) => rank(a.status) - r
 
 const rank = (status: NodeStatus) => (status === 'alive' ? 0 : status === 'dead' ? 2 : 1);
 
-/** 一轮测活多久没动静就算它已经没了。在跑时每拨一个节点(~6 秒)就有一拍,
- * 最长的合法空档是启动一个核心(10 秒)+ 写回一批结论;45 秒收不到拍就说明
- * 这一轮再也不会播报了 —— 此时必须让用户能再点一次,而不是把按钮灰死。 */
-const LIVENESS_SILENCE_MS = 45_000;
+/** 一轮测活多久没动静就算它已经没了。在跑时每拨一个节点(~6 秒)就有一拍;最长的
+ * 合法空档是一串:一次失败拨号(6 秒)+ 中转自检 3 次(~25 秒)+ 换一条全新核心
+ * 复核(起核心 10 秒 + 再拨 3 次 ~25 秒)。60 秒收不到拍就说明这一轮再也不会播报
+ * 了 —— 此时必须让用户能再点一次,而不是把按钮灰死。 */
+const LIVENESS_SILENCE_MS = 60_000;
 
 export const isLivenessRunning = (progress?: LivenessProgress, now: number = Date.now()): boolean =>
   !!progress?.running && now - (progress.at ?? 0) < LIVENESS_SILENCE_MS;
@@ -105,11 +106,13 @@ export const LivenessProgressTag: React.FC<{ progress?: LivenessProgress }> = ({
 };
 
 /**
- * 单节点"测活"的兜底期限。一次探测最长的合法耗时是起一个后台核心(10 秒)+
- * 拨号(6 秒)+ 中转自检;60 秒还没回话,这条 IPC 就再也不会回了。必须自己造一句
- * 话出来 —— 干等和"没测过"在用户眼里一模一样,而这正是被投诉的静默。
+ * 单节点"测活"的兜底期限。一次探测最长的合法耗时是起一个后台核心(10 秒)+ 拨号
+ * (6 秒)+ 中转自检(3 次 × 8 秒 ≈ 25 秒),而"中转不通"这个结论还要再起一条全新的
+ * 核心复核一遍(≈35 秒);单节点还允许换一台中转再来一回 —— 两趟就是 ≈150 秒。
+ * 期限必须比这个最坏值宽,否则后端还在认真复核,前端已经先讲了一句假话。干等和
+ * "没测过"在用户眼里一模一样,所以到点仍要自己造一句话出来。
  */
-const PROBE_DEADLINE_MS = 60_000;
+const PROBE_DEADLINE_MS = 240_000;
 
 export const withProbeDeadline = (run: Promise<ProbeOutcome>): Promise<ProbeOutcome> =>
   new Promise((resolve) => {
@@ -161,6 +164,37 @@ export const ProbeOutcomeLine: React.FC<{ outcome?: ProbeOutcome }> = ({ outcome
           </span>
         )}
       </span>
+    </div>
+  );
+};
+
+/**
+ * 上一次单节点测活的结论,钉在面板顶部,不跟着卡片走。
+ *
+ * 卡片上同样有这一句,但卡片会被重排送走 —— 刚判死的沉到清单末尾,用户眼睁睁看着
+ * 那句话消失,这就是"提示一闪而过"。放在这里它就不依赖滚动位置了。
+ */
+export const LastProbeBanner: React.FC<{
+  outcome?: ProbeOutcome;
+  nodeName?: string;
+  onDismiss: () => void;
+}> = ({ outcome, nodeName, onDismiss }) => {
+  if (!outcome) return null;
+  return (
+    <div className="flex items-start gap-2 px-2.5 py-2 rounded-xl bg-[#12151f] border border-[#23293d]">
+      <div className="flex-1 min-w-0">
+        {nodeName ? (
+          <div className="text-[11px] text-gray-500 truncate">{`「${nodeName}」的测活结论`}</div>
+        ) : null}
+        <ProbeOutcomeLine outcome={outcome} />
+      </div>
+      <button
+        onClick={onDismiss}
+        title="知道了"
+        className="p-1 text-gray-500 hover:text-gray-300 shrink-0"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
     </div>
   );
 };

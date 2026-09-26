@@ -3,13 +3,25 @@ import { Shield, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, 
 import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
 import { RelayBar } from './RelayBar';
-import { LivenessBadge, LivenessProgressTag, ProbeOutcomeLine, byLiveness, isLivenessRunning, withProbeDeadline } from './liveness';
+import { LivenessBadge, LivenessProgressTag, LastProbeBanner, ProbeOutcomeLine, byLiveness, isLivenessRunning, withProbeDeadline } from './liveness';
 
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
+import { UnifiedNode } from '../../../types';
 
 export const VPNGateView: React.FC = () => {
-  const { status, connectedNode, connect, disconnect, nodes, livenessProgress, probeOutcomes, setProbeOutcome, refreshNodes } =
-    useAppStore();
+  const {
+    status,
+    connectedNode,
+    connect,
+    disconnect,
+    nodes,
+    livenessProgress,
+    probeOutcomes,
+    setProbeOutcome,
+    lastProbe,
+    dismissLastProbe,
+    applyMeasuredNode,
+  } = useAppStore();
   // 只用 store 里的节点:测活每写回一批结论都会 refreshNodes,本地再存一份快照
   // 就会把"未测"永远留在卡片上。清单本身由启动任务采集一次,进页面不再拉。
   const gateNodes = React.useMemo(() => nodes.filter((n) => n.group === 'VPNGate'), [nodes]);
@@ -52,20 +64,27 @@ export const VPNGateView: React.FC = () => {
   };
 
   // 单节点测活:结论一定要落到这张卡片上,而且一定要落成一句人话。四类结论(可用 /
-  // 出口不可用 / 中转不可用 / 未判定)由后端给出,前端只负责在 60 秒没回音时自己
+  // 出口不可用 / 中转不可用 / 未判定)由后端给出,前端只负责在兜底期限到了还没回音时自己
   // 补一句 —— 静默就是用户不知道自己有没有测过。
-  const measureOne = async (id: string) => {
-    setProbing(id);
+  const measureOne = async (node: UnifiedNode) => {
+    setProbing(node.id);
     try {
-      const outcome = await withProbeDeadline(api.measureNode(id));
-      setProbeOutcome(id, outcome);
-      await refreshNodes();
+      const outcome = await withProbeDeadline(api.measureNode(node.id));
+      setProbeOutcome(node.id, outcome, node.name);
+      // 只就地改这一行:重拉清单 + 重排会把刚测完的卡片送走,那句结论就成了
+      // "一闪而过"(v0.2.114 投诉)。
+      if (outcome.node) applyMeasuredNode(outcome.node);
     } finally {
       setProbing(null);
     }
   };
 
-  const filtered = gateNodes.filter((n) => matchNodeKeywords(n, search)).sort(byLiveness);
+  // 刚测过的那一张钉在最前面:用户问的就是它,不该被排序挪走。
+  const pinnedId = lastProbe?.nodeId ?? null;
+  const filtered = gateNodes
+    .filter((n) => matchNodeKeywords(n, search))
+    .sort((a, b) => (a.id === pinnedId ? -1 : b.id === pinnedId ? 1 : byLiveness(a, b)));
+  const lastHere = pinnedId && gateNodes.some((n) => n.id === pinnedId) ? lastProbe : null;
 
   return (
     <div className="flex-1 flex flex-col h-full bg-[#08090d] text-gray-100 overflow-hidden">
@@ -109,6 +128,15 @@ export const VPNGateView: React.FC = () => {
 
         {measureError && (
           <div className="text-[12px] leading-snug text-red-300">{measureError}</div>
+        )}
+
+        {/* 刚才那一次单节点测活的结论钉在这里:卡片会随重排走远,这句话不能走。 */}
+        {lastHere && (
+          <LastProbeBanner
+            outcome={lastHere.outcome}
+            nodeName={lastHere.nodeName}
+            onDismiss={dismissLastProbe}
+          />
         )}
       </div>
 
@@ -210,7 +238,7 @@ export const VPNGateView: React.FC = () => {
                         <span>{node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : '未测'}</span>
                       </div>
                       <button
-                        onClick={() => measureOne(node.id)}
+                        onClick={() => measureOne(node)}
                         disabled={probing !== null}
                         className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[#2a3145] text-[12px] text-gray-300 active:border-emerald-500/50 active:text-emerald-300 disabled:opacity-40 transition-colors"
                         title="只测这一个节点:经当前中转建立一次真实连接"

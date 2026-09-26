@@ -36,10 +36,14 @@ export const RelayBar: React.FC<RelayBarProps> = ({
 
   // 「自动优选」不再等于列表第一个:启动期实测出的胜者才算数。
   // 没实测过之前退回启发式首位,且不显示带宽(那是握手延迟而已)。
+  // 但刚被实测判死的那台不能继续当"已实测的自动优选" —— 同一屏测活已经说它不通,
+  // 中转栏却还写着选中了它,这就是被投诉的自相矛盾。
+  const usable = relayCandidates.filter((n) => n.status !== 'dead');
   const measured = preferredRelay?.preferred_id
-    ? relayCandidates.find((n) => n.id === preferredRelay.preferred_id) ?? null
+    ? usable.find((n) => n.id === preferredRelay.preferred_id) ?? null
     : null;
-  const bestCandidate = measured ?? (relayCandidates.length > 0 ? relayCandidates[0] : null);
+  const bestCandidate = usable.length > 0 ? (measured ?? usable[0]) : null;
+  const noneUsable = relayCandidates.length > 0 && usable.length === 0;
   const autoDetail = bestCandidate
     ? [
         bestCandidate.country_code,
@@ -47,7 +51,9 @@ export const RelayBar: React.FC<RelayBarProps> = ({
         measured ? formatBandwidth(preferredRelay?.speed_bps ?? bestCandidate.speed_bps) : null,
       ].filter(Boolean).join(' · ')
     : '';
-  const autoLabel = `⚡ 自动优选${measured ? '（已实测）' : ''}${autoDetail ? ` (${autoDetail})` : ''}`;
+  const autoLabel = noneUsable
+    ? '⚡ 暂无可用中转（点刷新重测）'
+    : `⚡ 自动优选${measured ? '（已实测）' : ''}${autoDetail ? ` (${autoDetail})` : ''}`;
 
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);

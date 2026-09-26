@@ -236,7 +236,7 @@ export const VPNGateView: React.FC = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 my-3">
-                      <LivenessBadge status={node.status} />
+                      <LivenessBadge status={node.status} measuredAt={node.last_checked} />
                       <span className="px-1.5 py-0.5 bg-[#171b28] text-gray-400 rounded text-[10px] border border-[#23293d]">
                         Public Relay
                       </span>

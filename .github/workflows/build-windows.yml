@@ -101,6 +101,10 @@ jobs:
             exit 1
           }
 
+          Write-Host "=== Verifying PE Machine Type (core engines must be AMD64) ==="
+          pwsh -NoProfile -File .github/verify-pe-arch.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
           Write-Host "SUCCESS: All 10 core engines, drivers and routing rules verified for packaging."
 
       - name: Install Frontend Dependencies

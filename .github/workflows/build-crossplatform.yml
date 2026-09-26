@@ -73,6 +73,15 @@ jobs:
           Expand-Archive mihomo.zip -DestinationPath mh_temp
           Get-ChildItem -Path mh_temp -Filter "*.exe" -Recurse | Copy-Item -Destination src-tauri/binaries/mihomo.exe -Force
 
+      - name: Verify Core Engine Architecture
+        shell: pwsh
+        run: |
+          # psiphon-tunnel-core.exe and aether.exe come from the repo (Git LFS), not from a
+          # download, so nothing else in this job would notice a 32-bit engine. v0.2.116 shipped
+          # an i386 psiphon and os error 216 hit the user's Win11 machine at spawn time.
+          pwsh -NoProfile -File .github/verify-pe-arch.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Install Frontend Dependencies
         run: pnpm install
 
@@ -229,6 +238,14 @@ jobs:
           # Pin the same revision the bundled Windows exe was built from
           # (buildinfo: Psiphon-Labs/psiphon-tunnel-core 96f782c6f6), so all
           # platforms speak the same protocol/server-entry format.
+          #
+          # The bundled src-tauri/binaries/psiphon-tunnel-core.exe comes from this same
+          # revision, built with:
+          #   GOTOOLCHAIN=go1.26.5 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
+          #     go build -trimpath -ldflags "-s -w" -o psiphon-tunnel-core.exe ./ConsoleClient
+          # Keep it AMD64 (see .github/verify-pe-arch.ps1) and keep Go on the 1.26 line:
+          # with go1.27 the binary panics before main, because psiphon-tls asserts that its
+          # mirrored ConnectionState has the same field count as crypto/tls (18 vs 17).
           mkdir -p "$RUNNER_TEMP/ptc"
           cd "$RUNNER_TEMP/ptc"
           git init -q

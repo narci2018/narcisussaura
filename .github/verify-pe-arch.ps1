@@ -1,7 +1,8 @@
 # Fails the build unless every shipped core engine is an AMD64 PE image.
-# A 32-bit (i386, machine 0x014C) psiphon-tunnel-core.exe passed the "file exists and is
-# big enough" check, shipped in v0.2.116, and then died at spawn time on the user's Win11
-# box with ERROR_EXE_MACHINE_TYPE_MISMATCH (os error 216).
+# Two real escapes this gate would have caught: v0.2.116 shipped an i386 (machine 0x014C)
+# psiphon-tunnel-core.exe that died at spawn with os error 216, and the cross-platform job
+# checked out with lfs disabled, so psiphon/aether/wintun were packaged as 133-byte Git LFS
+# pointer text files instead of engines.
 param(
   [string[]]$Files = @(
     "src-tauri/binaries/sing-box.exe",
@@ -34,11 +35,23 @@ function Get-PeMachineName([int]$machine) {
   }
 }
 
+function Test-GitLfsPointer([string]$path) {
+  if (-not (Test-Path $path)) { return $false }
+  $first = Get-Content -LiteralPath $path -TotalCount 1 -ErrorAction SilentlyContinue
+  return ($first -like "version https://git-lfs.github.com*")
+}
+
 $failed = $false
 foreach ($file in $Files) {
   $machine = Get-PeMachine $file
   if ($null -eq $machine) {
-    Write-Host "ERROR: $file is missing or is not a PE image (an un-pulled Git LFS pointer reads as text)"
+    if (-not (Test-Path $file)) {
+      Write-Host "ERROR: $file is missing from the checkout"
+    } elseif (Test-GitLfsPointer $file) {
+      Write-Host "ERROR: $file is a Git LFS pointer that was never pulled - the checkout must run with lfs: true"
+    } else {
+      Write-Host "ERROR: $file is not a PE image"
+    }
     $failed = $true
   } elseif ($machine -ne $ExpectedMachine) {
     Write-Host ("ERROR: {0} is 0x{1:X4} ({2}); the installer ships {3} engines only" -f `

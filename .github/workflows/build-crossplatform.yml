@@ -27,6 +27,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # psiphon-tunnel-core.exe, aether.exe and wintun.dll are Git LFS objects; with
+          # smudge disabled the installer ships 133-byte pointer text in their place.
+          lfs: true
+
+      - name: Checkout LFS objects
+        shell: pwsh
+        run: git lfs checkout
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
@@ -77,8 +85,10 @@ jobs:
         shell: pwsh
         run: |
           # psiphon-tunnel-core.exe and aether.exe come from the repo (Git LFS), not from a
-          # download, so nothing else in this job would notice a 32-bit engine. v0.2.116 shipped
-          # an i386 psiphon and os error 216 hit the user's Win11 machine at spawn time.
+          # download, so nothing else in this job would notice a 32-bit engine or an
+          # un-pulled LFS pointer. Both happened: the bundled psiphon was i386 (os error 216
+          # on the user's Win11 box) and this job used to check out with lfs disabled, which
+          # shipped 133-byte pointer text as the engine.
           pwsh -NoProfile -File .github/verify-pe-arch.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

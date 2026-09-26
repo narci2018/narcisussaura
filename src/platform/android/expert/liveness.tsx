@@ -2,11 +2,24 @@ import React from 'react';
 import { CircleCheck, CircleDashed, CircleX, Clock } from 'lucide-react';
 import { LivenessProgress, NodeStatus, ProbeOutcome, UnifiedNode } from '../../../types';
 
+const measuredStamp = (ts: number) => {
+  const d = new Date(ts * 1000);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
 /**
  * 真连接测活的三态徽标。只有后台真实建联过的节点才有资格显示"可用/不可用",
  * 没测过的一律"未测"——来源列表自称在线不算结论。
+ *
+ * 结论必须带上它是何时得出的:用户没点"测活"时看到"可用",唯一的疑问就是
+ * "这是谁测的、什么时候测的"。把时间钉在徽标上,昨天测的就不会被当成刚刚
+ * 自动测出来的。
  */
-export const LivenessBadge: React.FC<{ status: NodeStatus }> = ({ status }) => {
+export const LivenessBadge: React.FC<{ status: NodeStatus; measuredAt?: number | null }> = ({
+  status,
+  measuredAt,
+}) => {
   const cfg =
     status === 'alive'
       ? { Icon: CircleCheck, cls: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30', label: '可用' }
@@ -18,6 +31,7 @@ export const LivenessBadge: React.FC<{ status: NodeStatus }> = ({ status }) => {
     <span className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-medium border ${cls}`}>
       <Icon className="w-3 h-3" />
       <span>{label}</span>
+      {measuredAt ? <span className="text-[10px] opacity-60">{measuredStamp(measuredAt)}</span> : null}
     </span>
   );
 };

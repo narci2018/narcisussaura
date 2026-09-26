@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Minus, Square, Copy, X, Shield, Smartphone, Sun, Moon } from 'lucide-react';
 import { getVersion } from '@tauri-apps/api/app';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { api } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 // 平台差异一律经 src/platform 分发（规则见仓库根 AGENTS.md）——
@@ -24,9 +25,22 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
   const [appVersion, setAppVersion] = useState('');
 
   useEffect(() => {
-    if (profile.windowChrome) {
-      api.isWindowMaximized().then(setIsMaximized).catch(() => {});
-    }
+    if (!profile.windowChrome) return;
+    api.isWindowMaximized().then(setIsMaximized).catch(() => {});
+    // 双击标题栏的最大化是 Tauri 注入脚本自己 invoke internal_toggle_maximize 完成的,
+    // 组件拿不到回调,只能跟着窗口尺寸事件回读真实状态(否则按钮图标会停留在旧值)。
+    // async 包装:纯浏览器里没有 __TAURI_INTERNALS__,getCurrentWindow() 会同步抛错。
+    let stop: (() => void) | undefined;
+    const watchResize = async () => {
+      stop = await getCurrentWindow().onResized(() => {
+        api.isWindowMaximized().then(setIsMaximized).catch(() => {});
+      });
+    };
+    watchResize().catch(() => {});
+    return () => stop?.();
+  }, []);
+
+  useEffect(() => {
     getVersion().then(v => setAppVersion(`v${v}`)).catch(() => setAppVersion(`v${pkg.version}`));
   }, []);
 
@@ -54,12 +68,11 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSwitchToSimple }) => {
 
   return (
     <div
-      {...(profile.windowChrome && { 'data-tauri-drag-region': true })}
-      onDoubleClick={profile.windowChrome ? handleToggleMaximize : undefined}
+      {...(profile.windowChrome && { 'data-tauri-drag-region': 'deep' })}
       className="h-10 bg-[#090a0f] border-b border-[#1c1f2b] flex items-center justify-between px-3 select-none z-50 text-xs font-medium text-gray-400 cursor-default"
     >
       {/* Left: Brand & Status pill */}
-      <div className="flex items-center gap-2.5 pointer-events-none" {...(profile.windowChrome && { 'data-tauri-drag-region': true })}>
+      <div className="flex items-center gap-2.5 pointer-events-none">
         <div className="w-5 h-5 rounded-md bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white shadow-sm shadow-blue-500/20">
           <Shield className="w-3.5 h-3.5" />
         </div>

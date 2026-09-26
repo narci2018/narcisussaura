@@ -543,10 +543,25 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   connect: async (overrideId, relayIdOverride) => {
     const connectSeq = ++currentConnectSeq;
+    // 点下 Connect 的那一刻就要看见"连接中",别的卡片也要立刻按不动 —— 认证那
+    // 一下可能要走网络,那段空白里用户以为没点上,就会去点第二台。
+    const dialling = overrideId ? (get().nodes.find((n) => n.id === overrideId) ?? null) : null;
+    if (dialling) {
+      set({
+        status: 'connecting',
+        selectedNodeId: dialling.id,
+        connectedNode: dialling,
+        connectedChainId: null,
+        errorMessage: null,
+        tunnelStage: null,
+      });
+    }
     // Auth Check
     const isAuth = await get().checkAuth();
     if (!isAuth) {
       if (connectSeq === currentConnectSeq) {
+        // 认证没过就等于没拨号:状态必须收回去,否则所有 Connect 永久锁死。
+        if (dialling) set({ status: 'error', connectedNode: null });
         const authText = get().authDisplayText || '请联系服务商授权';
         set({ errorMessage: authText });
       }

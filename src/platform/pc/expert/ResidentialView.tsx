@@ -3,7 +3,7 @@ import { Home, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, Al
 import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
 import { RelayBar } from './RelayBar';
-import { LivenessBadge, LivenessProgressTag, LastProbeBanner, ProbeOutcomeLine, byLiveness, cardVerdict, isLivenessRunning, latencyText, withProbeDeadline } from './liveness';
+import { LivenessBadge, LivenessProgressTag, LastProbeBanner, ProbeOutcomeLine, byLiveness, cardVerdict, isLivenessRunning, latencyText, ProbingBanner, ProbingChip, withProbeDeadline } from './liveness';
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 import { UnifiedNode } from '../../../types';
 
@@ -33,6 +33,7 @@ export const ResidentialView: React.FC = () => {
   const residentialNodes = React.useMemo(() => nodes.filter((n) => n.group === 'Residential'), [nodes]);
   const [loading, setLoading] = useState(false);
   const [probing, setProbing] = useState<string | null>(null);
+  const [probeStartedAt, setProbeStartedAt] = useState(0);
   const [measureError, setMeasureError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [search, setSearch] = useState('');
@@ -67,12 +68,16 @@ export const ResidentialView: React.FC = () => {
   const beat = livenessProgress['Residential'];
   const measuring = isLivenessRunning(beat, now);
   // 一轮在跑时靠新播报刷新;一轮死了就没有新播报,所以自己也要定时看一眼,
-  // 否则"没有响应"这条永远来不及显示。
+  // 否则"没有响应"这条永远来不及显示。单节点拨号中要按秒走,那个计数才动。
   useEffect(() => {
+    if (probing !== null) {
+      const t = setInterval(() => setNow(Date.now()), 1000);
+      return () => clearInterval(t);
+    }
     if (!beat?.running) return;
     const t = setInterval(() => setNow(Date.now()), 3000);
     return () => clearInterval(t);
-  }, [beat?.running]);
+  }, [beat?.running, probing]);
 
   // 一个节点实测约 5 秒,整轮只能由用户主动发起。
   const measureAll = async () => {
@@ -90,6 +95,10 @@ export const ResidentialView: React.FC = () => {
   // 兜底期限到了还没回音时自己补一句 —— 静默就是用户不知道自己有没有测过。
   const measureOne = async (node: UnifiedNode) => {
     setProbing(node.id);
+    setProbeStartedAt(Date.now());
+    // 上一台节点的结论不能压在这一轮拨号头上:卡片会重排,横幅不会 —— 用户看到的
+    // 就是"下面写着出口节点不可用,上面这张卡却还在测活"(v0.2.116 投诉)。
+    dismissLastProbe();
     try {
       const outcome = await withProbeDeadline(api.measureNode(node.id));
       setProbeOutcome(node.id, outcome, node.name);
@@ -101,6 +110,7 @@ export const ResidentialView: React.FC = () => {
     }
   };
 
+  const probingNode = probing === null ? null : residentialNodes.find((n) => n.id === probing) ?? null;
   // 刚测过的那一张钉在最前面:用户问的就是它,不该被排序挪走。
   const pinnedId = lastProbe?.nodeId ?? null;
   // 一条隧道只容得下一个连接:正在连接时,别的卡片的 Connect 必须按不动,直到用户
@@ -156,14 +166,19 @@ export const ResidentialView: React.FC = () => {
         )}
       </div>
 
-      {/* 刚才那一次单节点测活的结论钉在这里:卡片会随重排走远,这句话不能走。 */}
-      {lastHere && (
+      {/* 刚才那一次单节点测活的结论钉在这里:卡片会随重排走远,这句话不能走。
+          正在拨下一个时,这里改说"是谁在测、测了几秒",不拿旧结论冒充新结论。 */}
+      {(probingNode || lastHere) && (
         <div className="px-6 pt-3">
-          <LastProbeBanner
-            outcome={lastHere.outcome}
-            nodeName={lastHere.nodeName}
-            onDismiss={dismissLastProbe}
-          />
+          {probingNode ? (
+            <ProbingBanner nodeName={probingNode.name} startedAt={probeStartedAt} now={now} />
+          ) : (
+            <LastProbeBanner
+              outcome={lastHere!.outcome}
+              nodeName={lastHere!.nodeName}
+              onDismiss={dismissLastProbe}
+            />
+          )}
         </div>
       )}
 
@@ -275,7 +290,11 @@ export const ResidentialView: React.FC = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 my-3">
-                      <LivenessBadge status={verdict.status} measuredAt={verdict.measuredAt} />
+                      {probing === node.id ? (
+                        <ProbingChip startedAt={probeStartedAt} now={now} />
+                      ) : (
+                        <LivenessBadge status={verdict.status} measuredAt={verdict.measuredAt} />
+                      )}
                       <span className="flex items-center gap-1 px-1.5 py-0.5 bg-[#171b28] text-amber-300/90 rounded text-[10px] border border-[#23293d]">
                         <Building2 className="w-3 h-3 text-amber-400" />
                         <span className="max-w-[140px] truncate">{ispName}</span>
@@ -295,7 +314,7 @@ export const ResidentialView: React.FC = () => {
                         title="经中转真连接测得的往返延迟"
                       >
                         <Signal className={`w-3.5 h-3.5 ${node.latency_ms && node.latency_ms > 0 ? 'text-emerald-400' : 'text-gray-500'}`} />
-                        <span>{latencyText(node, verdict.status)}</span>
+                        <span>{probing === node.id ? '拨号中…' : latencyText(node, verdict.status)}</span>
                       </div>
                       <button
                         onClick={() => measureOne(node)}

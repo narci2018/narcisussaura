@@ -1,5 +1,5 @@
 import React from 'react';
-import { CircleCheck, CircleDashed, CircleX, Clock, X } from 'lucide-react';
+import { CircleCheck, CircleDashed, CircleX, Clock, Loader2, X } from 'lucide-react';
 import { LivenessProgress, NodeStatus, ProbeOutcome, UnifiedNode } from '../../../types';
 
 const measuredStamp = (ts: number) => {
@@ -37,6 +37,38 @@ export const LivenessBadge: React.FC<{ status: NodeStatus; measuredAt?: number |
 
 /** 可用的排前面,没测的居中,不可用的沉底。 */
 export const byLiveness = (a: UnifiedNode, b: UnifiedNode) => rank(a.status) - rank(b.status);
+
+/**
+ * 一次单节点测活最长要 150 秒左右:起后台核心(10s)+ 拨号(6s)+ 中转自检 3 次
+ * (24s)+ 判死还要换一条全新核心复核(35s),最坏两趟。干等这么久,卡片上却只有
+ * 按钮换了两个字、徽标还写着"未测",头顶又压着上一台节点的红色结论 —— 用户读到
+ * 的就是自相矛盾。所以进行中要说出"是谁在测、测了几秒、还要多久"。
+ */
+export const PROBE_WORST_SECONDS = 150;
+
+export const elapsedSeconds = (startedAt: number, now: number): number =>
+  Math.max(0, Math.floor((now - startedAt) / 1000));
+
+export const ProbingChip: React.FC<{ startedAt: number; now: number }> = ({ startedAt, now }) => (
+  <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium border bg-blue-500/10 text-blue-300 border-blue-500/30">
+    <Loader2 className="w-3 h-3 animate-spin" />
+    <span>{`测活中 · ${elapsedSeconds(startedAt, now)}s`}</span>
+  </span>
+);
+
+export const ProbingBanner: React.FC<{ nodeName: string; startedAt: number; now: number }> = ({
+  nodeName,
+  startedAt,
+  now,
+}) => (
+  <div className="flex items-start gap-2 px-2.5 py-2 rounded-xl bg-[#12151f] border border-[#23293d]">
+    <Loader2 className="w-3.5 h-3.5 mt-0.5 shrink-0 animate-spin text-blue-400" />
+    <div className="text-[12px] leading-snug text-gray-300">
+      <div>{`正在对「${nodeName}」做真连接测活 · 已 ${elapsedSeconds(startedAt, now)} 秒`}</div>
+      <div className="text-gray-500">{`最长约 ${PROBE_WORST_SECONDS} 秒:起后台核心 → 拨号 → 中转自检 → 判死前还要换一条核心复核`}</div>
+    </div>
+  </div>
+);
 
 const rank = (status: NodeStatus) => (status === 'alive' ? 0 : status === 'dead' ? 2 : 1);
 

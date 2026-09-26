@@ -55,6 +55,13 @@ impl NodeManager {
             }
         }
 
+        // Phones that installed the old templates still carry their claims in
+        // nodes.json, so the code fix alone would not clear the user's screen: a
+        // verdict with no timestamp was never measured by anything.
+        for node in &mut initial_nodes {
+            Self::downgrade_unstamped(node);
+        }
+
         let mgr = Self {
             nodes: Arc::new(RwLock::new(initial_nodes)),
             data_path,
@@ -332,6 +339,9 @@ impl NodeManager {
                 }),
             },
         ]
+        .into_iter()
+        .map(Self::unmeasured_template)
+        .collect()
     }
 
     pub fn get_all(&self) -> Vec<UnifiedNode> {
@@ -393,6 +403,33 @@ impl NodeManager {
                 }),
             },
         ]
+        .into_iter()
+        .map(Self::unmeasured_template)
+        .collect()
+    }
+
+    /// A template row is a starting point, not a measurement. These three fields
+    /// belong to the liveness pass and the relay ranking alone; seeding them used
+    /// to hand a card a "可用 · 38ms · 95Mbps" badge nobody ever earned, which on
+    /// 2026-09-26 read to the user as "app 又在后台自动测活了".
+    fn unmeasured_template(mut node: UnifiedNode) -> UnifiedNode {
+        node.latency_ms = None;
+        node.speed_bps = None;
+        node.last_checked = None;
+        node.status = NodeStatus::Unknown;
+        node
+    }
+
+    /// Every real verdict writer (`record_verdict`, `update_latency`,
+    /// `update_speed`, the relay ranking) stamps `last_checked` in the same
+    /// breath, so a row that claims a status without one is a claim nobody made.
+    fn downgrade_unstamped(node: &mut UnifiedNode) {
+        if node.last_checked.is_some() {
+            return;
+        }
+        node.latency_ms = None;
+        node.speed_bps = None;
+        node.status = NodeStatus::Unknown;
     }
 
     /// Returns suitable candidates for being a relay / dialer-proxy node.
@@ -1106,6 +1143,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_template_row_never_ships_with_a_verdict() {
+        // 出厂预置的行不是测量结果。它们曾经带着"可用 + 延迟 + 带宽"出现在卡片上,
+        // 用户据此认定 app 又在后台自动测活(v0.2.112 现场)。
+        let templates = NodeManager::sample_nodes()
+            .into_iter()
+            .chain(NodeManager::build_seed_relay_nodes());
+        for node in templates {
+            assert!(
+                node.latency_ms.is_none()
+                    && node.speed_bps.is_none()
+                    && node.last_checked.is_none()
+                    && node.status == NodeStatus::Unknown,
+                "预置行「{}」带着结论出厂: {:?} / {:?}ms / {:?}",
+                node.name,
+                node.status,
+                node.latency_ms,
+                node.speed_bps
+            );
+        }
+    }
+
+    #[test]
     fn vless_ws_link_keeps_transport_and_ech_params() {
         // Exact shape of the current freesubplus links (France 122): without
         // path/host/ech/fp the core can never speak to these nodes — v2rayN
@@ -1142,6 +1201,36 @@ mod tests {
             status,
             config: json!({}),
         }
+    }
+
+    /// 库存里"没有盖时间戳的结论"不是结论 —— 它是老版本预置模板留下的假账。
+    /// 只改代码不清库存,用户手机上那几张"可用"卡片会一直挂着。
+    #[test]
+    fn a_stored_verdict_without_a_timestamp_is_dropped_on_load() {
+        let dir = std::env::temp_dir().join(format!("aura-nm-unstamped-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut faked = group_node("VPNGate", "seeded-claim", NodeStatus::Alive, Some(38));
+        faked.speed_bps = Some(100_000_000);
+        let mut earned = group_node("VPNGate", "measured-claim", NodeStatus::Alive, Some(75));
+        earned.speed_bps = Some(8 * 1024 * 1024);
+        earned.last_checked = Some(1_700_000_000);
+        std::fs::write(
+            dir.join("nodes.json"),
+            serde_json::to_string(&vec![faked, earned]).unwrap(),
+        )
+        .unwrap();
+
+        let manager = NodeManager::new(&dir);
+        let all = manager.get_all();
+        let seeded = all.iter().find(|n| n.id == "seeded-claim").expect("seeded row");
+        assert_eq!(seeded.status, NodeStatus::Unknown, "假账必须回到未测");
+        assert_eq!(seeded.latency_ms, None);
+        assert_eq!(seeded.speed_bps, None);
+        let measured = all.iter().find(|n| n.id == "measured-claim").expect("measured row");
+        assert_eq!(measured.status, NodeStatus::Alive, "盖了时间戳的结论不能被抹掉");
+        assert_eq!(measured.latency_ms, Some(75));
+        assert_eq!(measured.speed_bps, Some(8 * 1024 * 1024));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 判死的中转不能再被"自动优选"复用 —— 否则每一轮测活都会怪同一台中转。

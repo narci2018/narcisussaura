@@ -420,10 +420,27 @@ impl Lane {
     /// Ask the relay itself whether it can carry traffic right now, on a longer
     /// clock than a node dial gets: a slow-but-working relay must not be written
     /// off as dead by a budget tuned for openvpn handshakes.
+    ///
+    /// It **selects [`RELAY_MEMBER`] before dialling**, and that is the whole
+    /// point of the function existing. Every caller asks after a node dial just
+    /// failed — i.e. while the group still has that dead exit node selected — so
+    /// "dial through whatever is selected" re-dialled the very server that had
+    /// just failed, three times, and then printed the *relay's* name on the
+    /// verdict. A working Hong Kong relay was convicted of 中转不可用 that way
+    /// (v0.2.113): the answer was never about the relay.
+    ///
+    /// `None` therefore means "the relay itself did not carry a probe", and it
+    /// requires a lane built with a relay member — [`crate::managers::liveness`]
+    /// refuses to run a pass without one.
     pub async fn check_relay(&self) -> Option<i64> {
-        let _guard = self.gate.lock().await;
-        let client = self.proxy_client(RELAY_CHECK_TIMEOUT).ok()?;
-        first_answer(&client, PROBE_204_URLS, RELAY_CHECK_TIMEOUT).await
+        self.check_relay_on(PROBE_204_URLS).await
+    }
+
+    /// `check_relay` with the endpoint set spelled out, for the regression test
+    /// that runs against a local fixture instead of the real probe hosts.
+    async fn check_relay_on(&self, urls: &[&str]) -> Option<i64> {
+        self.measure_member_on(RELAY_MEMBER, urls, RELAY_CHECK_TIMEOUT)
+            .await
     }
 
     /// Bandwidth of a member, trying each bulk host until one really streams.
@@ -639,6 +656,111 @@ r#"  - name: {}
         let verdict = lane.test_node("n0").await;
         assert!(!verdict.alive);
         assert_eq!(verdict.latency_ms, None);
+    }
+
+    /// 问中转"你通不通",必须真的去拨中转自己。v0.2.112 的实现拨的是"当前选中的
+    /// 成员" —— 而每一次问它的时机都是刚有一台出口拨失败,也就是那台死出口还挂着
+    /// 的时候。于是同一台死出口被连拨 3 次,结论却写在中转名下:活中转被判"中转不可
+    /// 用"。这条测试用假 controller 把选中的名字记下来,顺序错了就红。
+    #[tokio::test]
+    async fn the_relay_self_check_dials_the_relay_and_not_the_node_that_just_failed() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+
+        const IDX: usize = 9;
+        let selections: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+        fn read_request(s: &mut std::net::TcpStream) -> String {
+            let mut acc = String::new();
+            let mut buf = [0u8; 1024];
+            loop {
+                match s.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        acc.push_str(&String::from_utf8_lossy(&buf[..n]));
+                        if !acc.contains("\r\n\r\n") {
+                            continue;
+                        }
+                        let want = acc
+                            .to_ascii_lowercase()
+                            .split("content-length:")
+                            .nth(1)
+                            .and_then(|t| {
+                                t.trim_start()
+                                    .chars()
+                                    .take_while(|c| c.is_ascii_digit())
+                                    .collect::<String>()
+                                    .parse::<usize>()
+                                    .ok()
+                            });
+                        let have = acc.splitn(2, "\r\n\r\n").nth(1).unwrap_or("").len();
+                        if want.map(|w| have >= w).unwrap_or(true) {
+                            break;
+                        }
+                    }
+                }
+            }
+            acc
+        }
+
+        // the controller: record which member each PUT selects
+        let ctrl = TcpListener::bind(("127.0.0.1", lane_api_port(IDX))).expect("controller port free");
+        let rec = selections.clone();
+        std::thread::spawn(move || {
+            for conn in ctrl.incoming() {
+                let Ok(mut stream) = conn else { continue };
+                let req = read_request(&mut stream);
+                let name = req
+                    .split("\"name\":\"")
+                    .nth(1)
+                    .and_then(|tail| tail.split('"').next())
+                    .unwrap_or_default()
+                    .to_string();
+                if !name.is_empty() {
+                    rec.lock().unwrap().push(name);
+                }
+                let _ = stream.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+            }
+        });
+
+        // the mixed port: anything asked of it answers, so a dial is "alive"
+        let proxy = TcpListener::bind(("127.0.0.1", lane_mixed_port(IDX))).expect("mixed port free");
+        std::thread::spawn(move || {
+            for conn in proxy.incoming() {
+                let Ok(mut stream) = conn else { continue };
+                let mut buf = [0u8; 256];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+
+        let lane = Lane {
+            index: IDX,
+            app_data_dir: std::env::temp_dir(),
+            mixed_port: lane_mixed_port(IDX),
+            api_port: lane_api_port(IDX),
+            child: None,
+            gate: tokio::sync::Mutex::new(()),
+            members: vec![RELAY_MEMBER.to_string(), "n0".to_string()],
+        };
+        // An http:// target: reqwest sends the absolute URI to an HTTP proxy, so
+        // the fixture above can answer without pretending to be a tunnel.
+        let target = format!("http://127.0.0.1:{}/probe", lane_mixed_port(IDX));
+        let urls = [target.as_str()];
+
+        let node = lane.measure_member_on("n0", &urls, Duration::from_secs(5)).await;
+        assert!(node.is_some(), "假代理应该把这次出口拨号判成通");
+        let relay = lane.check_relay_on(&urls).await;
+        assert!(relay.is_some(), "中转自检走的是同一个假代理,不该拨不通");
+
+        assert_eq!(
+            selections.lock().unwrap().clone(),
+            vec!["n0".to_string(), RELAY_MEMBER.to_string()],
+            "节点拨完之后再问中转,必须重新选中 {RELAY_MEMBER};否则问的还是那台刚失败的出口"
+        );
     }
 
     /// 一个探测站点不能决定生死:慢站点必须被快站点顶替,而不是把整个判定拖到超时。

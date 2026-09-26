@@ -41,6 +41,39 @@ export const byLiveness = (a: UnifiedNode, b: UnifiedNode) => rank(a.status) - r
 
 const rank = (status: NodeStatus) => (status === 'alive' ? 0 : status === 'dead' ? 2 : 1);
 
+/**
+ * 一张卡片的结论:节点行和它自己那句测活话,谁新听谁的。
+ *
+ * 卡片下半句写着"出口节点不可用",徽标却写"未测"(v0.2.115 现场),是因为整组
+ * 重新采集把后端那一行换回了默认值,而那句结论记在前端。两边都可能落后,所以
+ * 不认"哪个字段",只认时间。而且只有真判定过的结论才有资格改状态:中转不通 /
+ * 未判定本来就是"这个节点没有结论",拿它去点亮徽标就是造假。
+ */
+export const cardVerdict = (
+  node: UnifiedNode,
+  outcome?: ProbeOutcome
+): { status: NodeStatus; measuredAt?: number | null } => {
+  const decided = outcome && (outcome.verdict === 'alive' || outcome.verdict === 'exit-dead');
+  // 结论时间戳是毫秒,节点行的 last_checked 是秒。
+  const newer = (outcome?.at ?? 0) > (node.last_checked ?? 0) * 1000;
+  if (!decided || !newer) return { status: node.status, measuredAt: node.last_checked };
+  return {
+    status: outcome!.verdict === 'alive' ? 'alive' : 'dead',
+    measuredAt: Math.floor((outcome!.at ?? 0) / 1000),
+  };
+};
+
+/**
+ * 延迟位的话术:拨过而没通,那就是"超时" —— 它测过了,说"未测"等于把结论抹掉;
+ * 压根没拨过的才写"未测"。
+ */
+export const latencyText = (node: UnifiedNode, status: NodeStatus): string =>
+  node.latency_ms && node.latency_ms > 0
+    ? `${node.latency_ms}ms`
+    : status === 'dead'
+      ? '超时'
+      : '未测';
+
 /** 一轮测活多久没动静就算它已经没了。在跑时每拨一个节点(~6 秒)就有一拍;最长的
  * 合法空档是一串:一次失败拨号(6 秒)+ 中转自检 3 次(~25 秒)+ 换一条全新核心
  * 复核(起核心 10 秒 + 再拨 3 次 ~25 秒)。60 秒收不到拍就说明这一轮再也不会播报

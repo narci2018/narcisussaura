@@ -708,24 +708,32 @@ export const ServerList: React.FC = () => {
                       <span>断开</span>
                     </button>
                   ) : isThisConnecting ? (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        disconnect();
-                      }}
-                      className="px-2.5 py-1.5 rounded-lg bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 text-[13px] font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95 shrink-0"
-                      title="点击终止当前连接"
-                    >
-                      <Square className="w-3 h-3 fill-red-400 text-red-400 animate-pulse" />
-                      <span>终止</span>
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="flex items-center gap-1 text-[13px] font-medium text-red-300">
+                        <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+                        <span>连接中</span>
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          disconnect();
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 text-[13px] font-medium transition-all flex items-center gap-1.5 shadow-sm shadow-red-500/10 active:scale-95"
+                        title="点击终止当前连接"
+                      >
+                        <Square className="w-3 h-3 fill-red-400 text-red-400" />
+                        <span>终止</span>
+                      </button>
+                    </div>
                   ) : (
                     <button
                       onClick={() => {
                         setSelectedNodeId(node.id);
                         connect(node.id);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 active:bg-blue-600 text-white text-[13px] font-medium transition-all active:scale-95 shrink-0"
+                      disabled={status === 'connecting'}
+                      className="px-3 py-1.5 rounded-lg bg-blue-600/80 active:bg-blue-600 text-white text-[13px] font-medium transition-all active:scale-95 shrink-0 disabled:opacity-40"
+                      title={status === 'connecting' ? '正在连接其他节点,先点“终止”再换' : undefined}
                     >
                       Connect
                     </button>

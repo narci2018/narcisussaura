@@ -3,7 +3,7 @@ import { Shield, RefreshCw, CheckCircle2, Signal, ArrowUpRight, Search, Globe2, 
 import { api } from '../../../services/api';
 import { useAppStore } from '../../../stores/appStore';
 import { RelayBar } from './RelayBar';
-import { LivenessBadge, LivenessProgressTag, LastProbeBanner, ProbeOutcomeLine, byLiveness, isLivenessRunning, withProbeDeadline } from './liveness';
+import { LivenessBadge, LivenessProgressTag, LastProbeBanner, ProbeOutcomeLine, byLiveness, cardVerdict, isLivenessRunning, latencyText, withProbeDeadline } from './liveness';
 
 import { matchNodeKeywords } from '../../../components/SimpleMode/countries';
 import { UnifiedNode } from '../../../types';
@@ -81,6 +81,9 @@ export const VPNGateView: React.FC = () => {
 
   // 刚测过的那一张钉在最前面:用户问的就是它,不该被排序挪走。
   const pinnedId = lastProbe?.nodeId ?? null;
+  // 一条隧道只容得下一个连接:正在连接时别的卡片的 Connect 必须按不动,直到用户点
+  // "终止"。只认 connecting —— 连接失败会把状态留在 error,拿它当"忙"就锁死按钮。
+  const connectBusy = status === 'connecting';
   const filtered = gateNodes
     .filter((n) => matchNodeKeywords(n, search))
     .sort((a, b) => (a.id === pinnedId ? -1 : b.id === pinnedId ? 1 : byLiveness(a, b)));
@@ -181,6 +184,8 @@ export const VPNGateView: React.FC = () => {
             {filtered.map((node) => {
               const isConnected = connectedNode?.id === node.id && status === 'connected';
               const isConnecting = connectedNode?.id === node.id && status === 'connecting';
+              // 徽标/延迟位和卡片下面那句结论必须同源,不能一个写"未测"一个写"不可用"。
+              const verdict = cardVerdict(node, probeOutcomes[node.id]);
 
               return (
                 <div
@@ -216,7 +221,7 @@ export const VPNGateView: React.FC = () => {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-1.5 my-3">
-                      <LivenessBadge status={node.status} measuredAt={node.last_checked} />
+                      <LivenessBadge status={verdict.status} measuredAt={verdict.measuredAt} />
                       <span className="px-1.5 py-0.5 bg-[#171b28] text-gray-400 rounded text-[12px] border border-[#23293d]">
                         Public Relay
                       </span>
@@ -235,7 +240,7 @@ export const VPNGateView: React.FC = () => {
                         title="经中转真连接测得的往返延迟"
                       >
                         <Signal className={`w-3.5 h-3.5 ${node.latency_ms && node.latency_ms > 0 ? 'text-emerald-400' : 'text-gray-500'}`} />
-                        <span>{node.latency_ms && node.latency_ms > 0 ? `${node.latency_ms}ms` : '未测'}</span>
+                        <span>{latencyText(node, verdict.status)}</span>
                       </div>
                       <button
                         onClick={() => measureOne(node)}
@@ -257,18 +262,26 @@ export const VPNGateView: React.FC = () => {
                         <span>Connected</span>
                       </button>
                     ) : isConnecting ? (
-                      <button
-                        onClick={() => disconnect()}
-                        className="px-3.5 py-1.5 bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
-                        title="点击终止连接"
-                      >
-                        <Square className="w-3.5 h-3.5 fill-red-400 text-red-400 animate-pulse" />
-                        <span>终止</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1.5 text-[13px] font-medium text-red-300">
+                          <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+                          <span>连接中</span>
+                        </span>
+                        <button
+                          onClick={() => disconnect()}
+                          className="px-3.5 py-1.5 bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
+                          title="点击终止连接"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-red-400 text-red-400" />
+                          <span>终止</span>
+                        </button>
+                      </div>
                     ) : (
                       <button
                         onClick={() => connect(node.id)}
-                        className="px-3.5 py-1.5 bg-blue-600 active:bg-blue-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-blue-600/20 flex items-center gap-1.5 active:scale-95"
+                        disabled={connectBusy}
+                        className="px-3.5 py-1.5 bg-blue-600 active:bg-blue-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-blue-600/20 flex items-center gap-1.5 active:scale-95 disabled:opacity-40"
+                        title={connectBusy ? '正在连接其他节点,先点“终止”再换' : undefined}
                       >
                         <ArrowUpRight className="w-3.5 h-3.5" />
                         <span>Connect</span>

@@ -186,18 +186,26 @@ export const MegaVView: React.FC = () => {
                         <span>Connected</span>
                       </button>
                     ) : isConnecting ? (
-                      <button
-                        onClick={() => disconnect()}
-                        className="px-3.5 py-1.5 bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
-                        title="点击终止连接"
-                      >
-                        <Square className="w-3.5 h-3.5 fill-red-400 text-red-400 animate-pulse" />
-                        <span>终止</span>
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="flex items-center gap-1.5 text-[13px] font-medium text-red-300">
+                          <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
+                          <span>连接中</span>
+                        </span>
+                        <button
+                          onClick={() => disconnect()}
+                          className="px-3.5 py-1.5 bg-red-600/25 active:bg-red-600/40 border border-red-500/40 text-red-300 active:text-red-100 rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-red-500/10 flex items-center gap-1.5 active:scale-95"
+                          title="点击终止连接"
+                        >
+                          <Square className="w-3.5 h-3.5 fill-red-400 text-red-400" />
+                          <span>终止</span>
+                        </button>
+                      </div>
                     ) : (
                       <button
                         onClick={() => connect(node.id)}
-                        className="px-3.5 py-1.5 bg-blue-600 active:bg-blue-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-blue-600/20 flex items-center gap-1.5 active:scale-95"
+                        disabled={status === 'connecting'}
+                        className="px-3.5 py-1.5 bg-blue-600 active:bg-blue-500 text-white rounded-xl text-[13px] font-medium transition-all shadow-sm shadow-blue-600/20 flex items-center gap-1.5 active:scale-95 disabled:opacity-40"
+                        title={status === 'connecting' ? '正在连接其他节点,先点“终止”再换' : undefined}
                       >
                         <ArrowUpRight className="w-3.5 h-3.5" />
                         <span>Connect</span>
